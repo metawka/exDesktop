@@ -38,29 +38,37 @@ jobs:
       - name: Install ATL for Breakpad
         shell: pwsh
         run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-          if (-not $vsPath) { throw "Visual Studio installation not found" }
-          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
-          & $installer modify --installPath $vsPath --add Microsoft.VisualStudio.Component.VC.14.44.17.14.ATL --quiet --wait --norestart
-          if ($LASTEXITCODE -ne 0) { throw "Failed to install ATL (exit code $LASTEXITCODE)" }
-          $atlHeaders = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Filter atlbase.h -Recurse -ErrorAction SilentlyContinue
-          if (-not $atlHeaders) { throw "ATL headers still missing after installation" }
-          $atlInclude = $atlHeaders[0].DirectoryName
-          "ATL_INCLUDE=$atlInclude" >> $env:GITHUB_ENV
+          $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
+          $vswhere = Join-Path $installer 'vswhere.exe'
+          $setup = Join-Path $installer 'setup.exe'
+          $toolsComponent = 'Microsoft.VisualStudio.Component.VC.14.44.17.14.x86.x64'
+          $atlComponent = 'Microsoft.VisualStudio.Component.VC.14.44.17.14.ATL'
+          $vsPath = @(& $vswhere -latest -products '*' -requires $toolsComponent -property installationPath)[0]
+          if (-not $vsPath) { throw "No Visual Studio instance provides $toolsComponent." }
 
-      - name: Find vcvars64.bat
-        shell: pwsh
-        run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-          echo "VCVARS64=$vsPath\VC\Auxiliary\Build\vcvars64.bat" >> $env:GITHUB_ENV
+          $toolset = Get-ChildItem (Join-Path $vsPath 'VC\Tools\MSVC') -Directory |
+            Where-Object { $_.Name -like '14.44.*' } |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $toolset) { throw "The selected Visual Studio instance has no 14.44 toolset." }
+          $header = Join-Path $toolset.FullName 'atlmfc\include\atlbase.h'
+
+          if (-not (Test-Path $header)) {
+            $process = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList @(
+              'modify', '--installPath', "`"$vsPath`"", '--add', $atlComponent,
+              '--quiet', '--wait', '--norestart', '--nocache'
+            )
+            if ($process.ExitCode -notin @(0, 3010)) { throw "Visual Studio Installer exited with $($process.ExitCode)." }
+          }
+          if (-not (Test-Path $header)) { throw "ATL for 14.44 was not installed at $header." }
+          "VCVARS64=$vsPath\VC\Auxiliary\Build\vcvars64.bat" >> $env:GITHUB_ENV
 
       - name: Build ThirdParty libraries
         shell: cmd
         run: |
           call "%VCVARS64%" -vcvars_ver=14.44
-          set "CL=/I^"%ATL_INCLUDE%^""
+          if not exist "%VCToolsInstallDir%atlmfc\include\atlbase.h" (echo ATL for selected toolset is missing & exit /b 1)
+          echo %INCLUDE% | findstr /I /C:"%VCToolsInstallDir%atlmfc\include" >nul || (echo ATL include path is missing from INCLUDE & exit /b 1)
           Telegram\build\prepare\win.bat silent
 
       # Plugin engine links against an embedded Python 3.11, expected at
