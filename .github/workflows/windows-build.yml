@@ -44,9 +44,10 @@ jobs:
           $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
           & $installer modify --installPath $vsPath --add Microsoft.VisualStudio.Component.VC.14.44.17.14.ATL --quiet --wait --norestart
           if ($LASTEXITCODE -ne 0) { throw "Failed to install ATL (exit code $LASTEXITCODE)" }
-          if (-not (Get-ChildItem "$vsPath\VC\Tools\MSVC" -Filter atlbase.h -Recurse -ErrorAction SilentlyContinue)) {
-            throw "ATL headers still missing after installation"
-          }
+          $atlHeaders = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Filter atlbase.h -Recurse -ErrorAction SilentlyContinue
+          if (-not $atlHeaders) { throw "ATL headers still missing after installation" }
+          $atlInclude = $atlHeaders[0].DirectoryName
+          "ATL_INCLUDE=$atlInclude" >> $env:GITHUB_ENV
 
       - name: Find vcvars64.bat
         shell: pwsh
@@ -59,6 +60,7 @@ jobs:
         shell: cmd
         run: |
           call "%VCVARS64%" -vcvars_ver=14.44
+          set "INCLUDE=%ATL_INCLUDE%;%INCLUDE%"
           Telegram\build\prepare\win.bat silent
 
       # Plugin engine links against an embedded Python 3.11, expected at
