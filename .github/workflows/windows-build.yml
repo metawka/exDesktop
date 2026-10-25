@@ -60,7 +60,7 @@ jobs:
         shell: cmd
         run: |
           call "%VCVARS64%" -vcvars_ver=14.44
-          set "INCLUDE=%ATL_INCLUDE%;%INCLUDE%"
+          set "CL=/I^"%ATL_INCLUDE%^""
           Telegram\build\prepare\win.bat silent
 
       # Plugin engine links against an embedded Python 3.11, expected at
