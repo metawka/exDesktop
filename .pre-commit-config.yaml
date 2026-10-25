@@ -1,0 +1,32 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        files: ^(\.github/|Telegram/build/prepare/)
+      - id: end-of-file-fixer
+        files: ^(\.github/|Telegram/build/prepare/)
+      - id: check-yaml
+        files: ^\.github/
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        files: ^(\.github/|Telegram/build/prepare/)
+
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.11.0-1
+    hooks:
+      - id: shfmt
+        args: ["-i", "4", "-ci"]
+        files: ^Telegram/build/prepare/.*\.sh$
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        args: ["-S", "error"]
+        files: ^Telegram/build/prepare/.*\.sh$
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.7
+    hooks:
+      - id: actionlint

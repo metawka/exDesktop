@@ -18,6 +18,19 @@ This fork follows the existing style already used throughout the codebase (it's 
 
 There's no `.clang-format` config and no plan to add one that auto-reformats the whole tree — that would produce a diff nobody could review. If you want an editor to help, configure it manually (tabs, same-line braces) rather than relying on a formatter.
 
+## Local lint/format on commit
+
+There's a `.pre-commit-config.yaml` covering the same things CI checks, plus `shfmt` to format the build shell scripts. Install it once:
+
+```
+pip install pre-commit
+pre-commit install
+```
+
+After that it runs automatically on `git commit`, only on the files you're touching. Run it on everything manually with `pre-commit run --all-files`.
+
+It's scoped to `.github/` and `Telegram/build/prepare/` — it does not touch the C++ codebase, for the same reason there's no `.clang-format`: a repo-wide auto-format would be an unreviewable diff.
+
 ## CI checks
 
 Every PR runs `.github/workflows/pr-checks.yml`:
