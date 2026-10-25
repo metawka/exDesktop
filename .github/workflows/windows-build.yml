@@ -42,7 +42,7 @@ jobs:
           $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
           if (-not $vsPath) { throw "Visual Studio installation not found" }
           $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
-          & $installer modify --installPath $vsPath --add Microsoft.VisualStudio.Component.VC.ATL --quiet --wait --norestart
+          & $installer modify --installPath $vsPath --add Microsoft.VisualStudio.Component.VC.14.44.17.14.ATL --quiet --wait --norestart
           if ($LASTEXITCODE -ne 0) { throw "Failed to install ATL (exit code $LASTEXITCODE)" }
           if (-not (Get-ChildItem "$vsPath\VC\Tools\MSVC" -Filter atlbase.h -Recurse -ErrorAction SilentlyContinue)) {
             throw "ATL headers still missing after installation"
