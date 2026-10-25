@@ -39,6 +39,20 @@ jobs:
         shell: cmd
         run: Telegram\build\prepare\win.bat silent
 
+      # Plugin engine links against an embedded Python 3.11, expected at
+      # Libraries/win64/python311 with include/, libs/python311.lib and embed/.
+      - name: Fetch embedded Python 3.11
+        shell: pwsh
+        run: |
+          $dest = Join-Path (Split-Path $env:GITHUB_WORKSPACE) "Libraries\win64\python311"
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          Invoke-WebRequest "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip" -OutFile embed.zip
+          Expand-Archive embed.zip "$dest\embed" -Force
+          Invoke-WebRequest "https://www.nuget.org/api/v2/package/python/3.11.9" -OutFile python.nupkg.zip
+          Expand-Archive python.nupkg.zip nuget -Force
+          Copy-Item nuget\tools\include "$dest\include" -Recurse -Force
+          Copy-Item nuget\tools\libs "$dest\libs" -Recurse -Force
+
       - name: Find vcvars64.bat
         shell: pwsh
         run: |
@@ -51,16 +65,23 @@ jobs:
       # this will fail and needs adjusting to whatever is actually there.
       - name: Configure and build
         shell: cmd
+        env:
+          API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
         run: |
           call "%VCVARS64%" -vcvars_ver=14.44
           cd Telegram
-          call configure.bat x64 -D TDESKTOP_API_ID=${{ secrets.TDESKTOP_API_ID }} -D TDESKTOP_API_HASH=${{ secrets.TDESKTOP_API_HASH }}
-          cd ..\out
-          msbuild Telegram.slnx /t:Telegram /p:Configuration=Release /m
+          call configure.bat x64 -D TDESKTOP_API_ID=%API_ID% -D TDESKTOP_API_HASH=%API_HASH%
+          cd ..
+          cmake --build out --config Release --target Telegram
 
       - name: Package
         shell: pwsh
-        run: Compress-Archive -Path out\Release\Telegram.exe -DestinationPath exteraDesktop-windows-x64.zip
+        run: |
+          New-Item -ItemType Directory -Force pkg | Out-Null
+          Copy-Item out\Release\Telegram.exe pkg\
+          Copy-Item out\Release\python pkg\python -Recurse
+          Compress-Archive -Path pkg\* -DestinationPath exteraDesktop-windows-x64.zip
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
