@@ -48,9 +48,18 @@ jobs:
             throw "ATL headers still missing after installation"
           }
 
+      - name: Find vcvars64.bat
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          echo "VCVARS64=$vsPath\VC\Auxiliary\Build\vcvars64.bat" >> $env:GITHUB_ENV
+
       - name: Build ThirdParty libraries
         shell: cmd
-        run: Telegram\build\prepare\win.bat silent
+        run: |
+          call "%VCVARS64%" -vcvars_ver=14.44
+          Telegram\build\prepare\win.bat silent
 
       # Plugin engine links against an embedded Python 3.11, expected at
       # Libraries/win64/python311 with include/, libs/python311.lib and embed/.
@@ -65,13 +74,6 @@ jobs:
           Expand-Archive python.nupkg.zip nuget -Force
           Copy-Item nuget\tools\include "$dest\include" -Recurse -Force
           Copy-Item nuget\tools\libs "$dest\libs" -Recurse -Force
-
-      - name: Find vcvars64.bat
-        shell: pwsh
-        run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-          echo "VCVARS64=$vsPath\VC\Auxiliary\Build\vcvars64.bat" >> $env:GITHUB_ENV
 
       # -vcvars_ver=14.44 is what docs/building-win.md pins for Windows 7
       # support. If a runner's VS install doesn't ship that exact toolset
