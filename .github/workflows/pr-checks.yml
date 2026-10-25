@@ -4,20 +4,45 @@ on:
   pull_request:
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      workflows: ${{ steps.filter.outputs.workflows }}
+      preparepy: ${{ steps.filter.outputs.preparepy }}
+      shell: ${{ steps.filter.outputs.shell }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            workflows:
+              - '.github/workflows/**'
+            preparepy:
+              - 'Telegram/build/prepare/prepare.py'
+            shell:
+              - 'Telegram/build/prepare/**/*.sh'
+
   lint:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true' || needs.changes.outputs.preparepy == 'true' || needs.changes.outputs.shell == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Lint workflow files
+        if: needs.changes.outputs.workflows == 'true'
         uses: raven-actions/actionlint@v2
 
       - name: Check prepare.py syntax
+        if: needs.changes.outputs.preparepy == 'true'
         run: python3 -m py_compile Telegram/build/prepare/prepare.py
 
       - name: Install shellcheck
+        if: needs.changes.outputs.shell == 'true'
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
       - name: Shellcheck build scripts
+        if: needs.changes.outputs.shell == 'true'
         run: find Telegram/build/prepare -name '*.sh' -print0 | xargs -0 -r shellcheck -S error
