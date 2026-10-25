@@ -56,7 +56,7 @@ jobs:
           if (-not (Test-Path $header)) {
             $process = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList @(
               'modify', '--installPath', "`"$vsPath`"", '--add', $atlComponent,
-              '--quiet', '--wait', '--norestart', '--nocache'
+              '--quiet', '--norestart', '--nocache'
             )
             if ($process.ExitCode -notin @(0, 3010)) { throw "Visual Studio Installer exited with $($process.ExitCode)." }
           }
