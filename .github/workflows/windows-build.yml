@@ -78,12 +78,11 @@ jobs:
           LIBS_CACHE_HIT: ${{ steps.libs.outputs.cache-hit }}
         run: |
           call "%VCVARS64%" -vcvars_ver=14.44
-          if /I "%LIBS_CACHE_HIT%"=="true" (
-            echo Exact ThirdParty cache hit; skipping ATL validation
-          ) else (
-            if not exist "%VCToolsInstallDir%atlmfc\include\atlbase.h" (echo ATL for selected toolset is missing & exit /b 1)
-            echo %INCLUDE% | findstr /I /C:"%VCToolsInstallDir%atlmfc\include" >nul || (echo ATL include path is missing from INCLUDE & exit /b 1)
-          )
+          if /I "%LIBS_CACHE_HIT%"=="true" goto skipAtlValidation
+          if not exist "%VCToolsInstallDir%atlmfc\include\atlbase.h" (echo ATL for selected toolset is missing & exit /b 1)
+          echo %INCLUDE% | findstr /I /C:"%VCToolsInstallDir%atlmfc\include" >nul
+          if errorlevel 1 (echo ATL include path is missing from INCLUDE & exit /b 1)
+          :skipAtlValidation
           tdesktop\Telegram\build\prepare\win.bat silent
 
       - name: Remove temporary Qt build tree
