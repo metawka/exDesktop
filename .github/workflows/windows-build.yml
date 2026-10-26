@@ -9,6 +9,8 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 360
+    env:
+      SCCACHE_GHA_ENABLED: "true"
     permissions:
       contents: write
     steps:
@@ -108,6 +110,10 @@ jobs:
         shell: pwsh
         run: choco install innosetup --yes --no-progress
 
+      - name: Enable sccache
+        id: sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
       # -vcvars_ver=14.44 is what docs/building-win.md pins for Windows 7
       # support. If a runner's VS install doesn't ship that exact toolset
       # this will fail and needs adjusting to whatever is actually there.
@@ -125,9 +131,14 @@ jobs:
             set "CREDS=-D TDESKTOP_API_TEST=ON"
           )
           cd tdesktop\Telegram
-          call configure.bat x64 %CREDS%
+          call configure.bat x64 %CREDS% -D CMAKE_C_COMPILER_LAUNCHER=sccache -D CMAKE_CXX_COMPILER_LAUNCHER=sccache
           cd ..\out
           msbuild Telegram.slnx /t:Telegram /p:Configuration=Release /m
+
+      - name: Report sccache statistics
+        if: steps.sccache.outcome == 'success'
+        shell: pwsh
+        run: '& $env:SCCACHE_PATH --show-stats'
 
       - name: Package
         shell: pwsh
