@@ -11,7 +11,6 @@ jobs:
     timeout-minutes: 360
     env:
       CLEAR_QT_BUILD_TREE: "1"
-      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,9 +23,6 @@ jobs:
 
       - name: Install build dependencies
         run: brew install automake libtool cmake wget pkg-config gnu-tar ninja nasm meson
-
-      - name: Enable sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Restore ThirdParty libraries
         id: libs
@@ -65,18 +61,11 @@ jobs:
             echo "No API secrets, using TEST ONLY credentials"
             creds=(-D TDESKTOP_API_TEST=ON)
           fi
-          ./configure.sh "${creds[@]}" \
-            -D CMAKE_OSX_ARCHITECTURES=arm64 \
-            -D CMAKE_C_COMPILER_LAUNCHER=sccache \
-            -D CMAKE_CXX_COMPILER_LAUNCHER=sccache
+          ./configure.sh "${creds[@]}" -D CMAKE_OSX_ARCHITECTURES=arm64
 
       - name: Build
         working-directory: tdesktop/out
         run: cmake --build . --config Release --target Telegram
-
-      - name: Report sccache statistics
-        if: always()
-        run: sccache --show-stats
 
       - name: Package
         working-directory: tdesktop/out/Release
