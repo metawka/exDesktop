@@ -1,4 +1,4 @@
-import os, sys, pprint, re, json, pathlib, hashlib, subprocess, glob, tempfile, plistlib
+import os, sys, pprint, re, json, pathlib, hashlib, subprocess, glob, tempfile, plistlib, shutil
 
 executePath = os.getcwd()
 sys.dont_write_bytecode = True
@@ -276,6 +276,19 @@ def writeCacheKey(stage):
     with open(key, 'w') as file:
         file.write(stage['key'])
 
+def clearQtBuildTree(stage):
+    if (os.environ.get('CLEAR_QT_BUILD_TREE') != '1'
+            or not (win or mac)
+            or not stage['name'].startswith('qt_')):
+        return
+    directory = os.path.join(stage['directory'], stage['name'])
+    if os.path.isdir(directory):
+        for entry in os.scandir(directory):
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(entry.path)
+            else:
+                os.remove(entry.path)
+
 stages = []
 
 def removeDir(folder):
@@ -458,6 +471,7 @@ def runStages():
         checkResult = 'Forced' if len(onlyStages) > 0 else checkCacheKey(stage)
         if checkResult == 'Good':
             print('SKIPPING')
+            clearQtBuildTree(stage)
             continue
         elif checkResult == 'NotFound':
             print('NOT FOUND, ', end='')
@@ -498,6 +512,7 @@ def runStages():
             print(prefix + ': FAILED')
             finish(1)
         writeCacheKey(stage)
+        clearQtBuildTree(stage)
 
 if customRunCommand:
     os.chdir(executePath)

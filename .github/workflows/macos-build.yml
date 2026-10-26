@@ -9,17 +9,15 @@ jobs:
   build:
     runs-on: macos-14
     timeout-minutes: 360
+    env:
+      CLEAR_QT_BUILD_TREE: "1"
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      # prepare.py hardcodes fetch_archive.py as $ROOT_DIR/tdesktop/..., where
-      # $ROOT_DIR is the checkout's parent directory, so it needs a sibling
-      # named "tdesktop" pointing back at the actual checkout.
-      - name: Link checkout as tdesktop
-        run: ln -s "$GITHUB_WORKSPACE" "$(dirname "$GITHUB_WORKSPACE")/tdesktop"
+          path: tdesktop
 
       - name: Select Xcode
         run: sudo xcode-select -s "$(find /Applications -maxdepth 1 -name 'Xcode*.app' | sort -V | tail -1)"
@@ -27,29 +25,34 @@ jobs:
       - name: Install build dependencies
         run: brew install automake libtool cmake wget pkg-config gnu-tar ninja nasm meson
 
+      - name: Enable sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
       - name: Restore ThirdParty libraries
         id: libs
         uses: actions/cache/restore@v4
         with:
           path: |
-            ${{ github.workspace }}/../Libraries
-            ${{ github.workspace }}/../ThirdParty
-          key: mac-libs-${{ hashFiles('Telegram/build/prepare/prepare.py', 'Telegram/build/prepare/mac.sh') }}
+            ${{ github.workspace }}/Libraries
+            ${{ github.workspace }}/ThirdParty
+          key: mac-libs-${{ hashFiles('tdesktop/Telegram/build/prepare/prepare.py', 'tdesktop/Telegram/build/prepare/mac.sh') }}
+          restore-keys: |
+            mac-libs-
 
       - name: Build ThirdParty libraries
-        run: ./Telegram/build/prepare/mac.sh silent
+        run: ./tdesktop/Telegram/build/prepare/mac.sh silent
 
       - name: Save ThirdParty libraries
         if: steps.libs.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
-            ${{ github.workspace }}/../Libraries
-            ${{ github.workspace }}/../ThirdParty
+            ${{ github.workspace }}/Libraries
+            ${{ github.workspace }}/ThirdParty
           key: ${{ steps.libs.outputs.cache-primary-key }}
 
       - name: Configure
-        working-directory: Telegram
+        working-directory: tdesktop/Telegram
         env:
           API_ID: ${{ secrets.TDESKTOP_API_ID }}
           API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
@@ -62,14 +65,21 @@ jobs:
             echo "No API secrets, using TEST ONLY credentials"
             creds=(-D TDESKTOP_API_TEST=ON)
           fi
-          ./configure.sh "${creds[@]}" -D CMAKE_OSX_ARCHITECTURES=arm64
+          ./configure.sh "${creds[@]}" \
+            -D CMAKE_OSX_ARCHITECTURES=arm64 \
+            -D CMAKE_C_COMPILER_LAUNCHER=sccache \
+            -D CMAKE_CXX_COMPILER_LAUNCHER=sccache
 
       - name: Build
-        working-directory: out
+        working-directory: tdesktop/out
         run: cmake --build . --config Release --target Telegram
 
+      - name: Report sccache statistics
+        if: always()
+        run: sccache --show-stats
+
       - name: Package
-        working-directory: out/Release
+        working-directory: tdesktop/out/Release
         run: |
           ditto -c -k --sequesterRsrc --keepParent Telegram.app \
             "$GITHUB_WORKSPACE/exteraDesktop-macos-arm64.zip"

@@ -11,6 +11,7 @@ jobs:
     timeout-minutes: 360
     env:
       SCCACHE_GHA_ENABLED: "true"
+      CLEAR_QT_BUILD_TREE: "1"
     permissions:
       contents: write
     steps:
