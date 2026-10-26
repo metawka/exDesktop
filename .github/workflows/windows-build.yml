@@ -133,9 +133,14 @@ jobs:
             set "CREDS=-D TDESKTOP_API_TEST=ON"
           )
           cd tdesktop\Telegram
-          call configure.bat x64 %CREDS% -D CMAKE_C_COMPILER_LAUNCHER=sccache -D CMAKE_CXX_COMPILER_LAUNCHER=sccache
+          call configure.bat %CREDS% ^
+            -G "Ninja Multi-Config" ^
+            -D CMAKE_C_COMPILER_LAUNCHER=sccache ^
+            -D CMAKE_CXX_COMPILER_LAUNCHER=sccache ^
+            -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded ^
+            -D CMAKE_POLICY_CMP0141=NEW
           cd ..\out
-          msbuild Telegram.slnx /t:Telegram /p:Configuration=Release /m
+          cmake --build . --config Release --target Telegram --parallel
 
       - name: Report sccache statistics
         if: steps.sccache.outcome == 'success'
