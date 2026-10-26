@@ -21,6 +21,9 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s "$(find /Applications -maxdepth 1 -name 'Xcode*.app' | sort -V | tail -1)"
 
+      - name: Patch tgcalls CryptoHelper.h for C++ linkage
+        run: python3 .github/patches/fix_tgcalls_crypto.py
+
       - name: Install build dependencies
         run: brew install automake libtool cmake wget pkg-config gnu-tar ninja nasm meson
 
