@@ -38,6 +38,7 @@ jobs:
             win-libs-
 
       - name: Install ATL for Breakpad
+        if: steps.libs.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
