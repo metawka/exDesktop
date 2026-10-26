@@ -38,8 +38,9 @@ jobs:
             win-libs-
 
       - name: Install ATL for Breakpad
-        if: steps.libs.outputs.cache-hit != 'true'
         shell: pwsh
+        env:
+          LIBS_CACHE_HIT: ${{ steps.libs.outputs.cache-hit }}
         run: |
           $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
           $vswhere = Join-Path $installer 'vswhere.exe'
@@ -55,6 +56,12 @@ jobs:
             Select-Object -First 1
           if (-not $toolset) { throw "The selected Visual Studio instance has no 14.44 toolset." }
           $header = Join-Path $toolset.FullName 'atlmfc\include\atlbase.h'
+          "VCVARS64=$vsPath\VC\Auxiliary\Build\vcvars64.bat" >> $env:GITHUB_ENV
+
+          if ($env:LIBS_CACHE_HIT -eq 'true') {
+            Write-Host 'Exact ThirdParty cache hit; skipping ATL installation.'
+            exit 0
+          }
 
           if (-not (Test-Path $header)) {
             $process = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList @(
@@ -64,7 +71,6 @@ jobs:
             if ($process.ExitCode -notin @(0, 3010)) { throw "Visual Studio Installer exited with $($process.ExitCode)." }
           }
           if (-not (Test-Path $header)) { throw "ATL for 14.44 was not installed at $header." }
-          "VCVARS64=$vsPath\VC\Auxiliary\Build\vcvars64.bat" >> $env:GITHUB_ENV
 
       - name: Build ThirdParty libraries
         shell: cmd
