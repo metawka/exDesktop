@@ -30,7 +30,9 @@ jobs:
           path: |
             Libraries
             ThirdParty
-          key: win-libs-${{ hashFiles('tdesktop/Telegram/build/prepare/prepare.py', 'tdesktop/Telegram/build/prepare/win.bat') }}
+          key: win-libs-v2-${{ hashFiles('tdesktop/Telegram/build/prepare/prepare.py', 'tdesktop/Telegram/build/prepare/win.bat') }}
+          restore-keys: |
+            win-libs-
 
       - name: Install ATL for Breakpad
         shell: pwsh
@@ -68,6 +70,17 @@ jobs:
           echo %INCLUDE% | findstr /I /C:"%VCToolsInstallDir%atlmfc\include" >nul || (echo ATL include path is missing from INCLUDE & exit /b 1)
           tdesktop\Telegram\build\prepare\win.bat silent
 
+      - name: Remove temporary Qt build tree
+        shell: pwsh
+        run: |
+          $libraryRoot = Join-Path $env:GITHUB_WORKSPACE 'Libraries\win64'
+          $installedQt = Get-ChildItem -LiteralPath $libraryRoot -Directory -Filter 'Qt-*' | Select-Object -First 1
+          if (-not $installedQt) { throw "Installed Qt prefix not found under $libraryRoot." }
+
+          Get-ChildItem -LiteralPath $libraryRoot -Directory -Filter 'qt_*' | ForEach-Object {
+            Get-ChildItem -LiteralPath $_.FullName -Force | Remove-Item -Recurse -Force
+          }
+
       - name: Save ThirdParty libraries
         if: steps.libs.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -75,7 +88,7 @@ jobs:
           path: |
             Libraries
             ThirdParty
-          key: ${{ steps.libs.outputs.cache-primary-key }}
+          key: win-libs-v2-${{ hashFiles('tdesktop/Telegram/build/prepare/prepare.py', 'tdesktop/Telegram/build/prepare/win.bat') }}
 
       # Plugin engine links against an embedded Python 3.11, expected at
       # Libraries/win64/python311 with include/, libs/python311.lib and embed/.
