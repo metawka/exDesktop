@@ -87,7 +87,7 @@ State &Instance() {
 	return result;
 }
 
-bool BypassFlag = false;
+std::atomic<bool> BypassFlag = false;
 std::atomic<int64> CurrentDialog = 0;
 
 class Gil final {
@@ -358,9 +358,9 @@ void SendFromPlugin(
 	if (replyTo > 0) {
 		message.action.replyTo.messageId = FullMsgId(peer->id, MsgId(replyTo));
 	}
+	const auto guard = gsl::finally([] { BypassFlag = false; });
 	BypassFlag = true;
 	session->api().sendMessage(std::move(message));
-	BypassFlag = false;
 }
 
 void ShowAlert(const QString &payload) {
@@ -419,6 +419,11 @@ void ShowAlert(const QString &payload) {
 		if (buttons.isEmpty()) {
 			box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 		}
+		box->boxClosing() | rpl::on_next([=] {
+			if (!*answered) {
+				answer(-2);
+			}
+		}) | rpl::lifetime(box->lifetime());
 	}));
 }
 
@@ -1314,6 +1319,9 @@ void notifyListChanged() {
 }
 
 int ExportAll(const QString &folder) {
+	if (folder.isEmpty() || !QDir(folder).exists()) {
+		return 0;
+	}
 	auto count = 0;
 	const auto source = QDir(DataPath() + u"plugins"_q);
 	for (const auto &info : source.entryInfoList(

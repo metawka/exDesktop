@@ -198,7 +198,9 @@ std::optional<QString> InlineMathValue(const QString &text) {
 	if (!value || !std::isfinite(*value)) {
 		return std::nullopt;
 	}
-	const auto rounded = std::round(*value * 1e9) / 1e9;
+	const auto rounded = (std::abs(*value) < 1e9)
+		? (std::round(*value * 1e9) / 1e9)
+		: *value;
 	return QString::number(rounded, 'g', 15);
 }
 
