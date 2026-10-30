@@ -1987,7 +1987,7 @@ void EmojiListWidget::fillRecent() {
 
 	for (const auto &key : FavoriteEmojiList()) {
 		const auto id = FavoriteEmojiFromKey(key);
-		if (!id || !std::get_if<EmojiPtr>(&id->data)) {
+		if (!id) {
 			continue;
 		}
 		const auto document = std::get_if<RecentEmojiDocument>(&id->data);
@@ -2182,6 +2182,10 @@ void EmojiListWidget::fillRecentMenu(
 				} else {
 					list.removeAll(key);
 					list.push_back(key);
+					constexpr auto kMaxFavorites = 64;
+					while (list.size() > kMaxFavorites) {
+						list.pop_front();
+					}
 				}
 				Extera::Config::Instance().setString(
 					u"favorite_emoji"_q,

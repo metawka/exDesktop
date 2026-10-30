@@ -432,7 +432,7 @@ void ShowExceptionsBox(
 				list.removeAll(value);
 				SaveExceptionList(key, list);
 				changed();
-				box->closeBox();
+				delete button;
 			});
 		}
 		box->addButton(tr::lng_close(), [=] { box->closeBox(); });
