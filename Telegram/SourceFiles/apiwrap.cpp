@@ -4773,10 +4773,14 @@ void ApiWrap::sendMessage(
 		if (hook.strategy == Extera::Plugins::SendStrategy::Cancel) {
 			return;
 		} else if (hook.strategy == Extera::Plugins::SendStrategy::Modify) {
-			message.textWithTags = TextWithTags{
-				hook.text,
-				TextUtilities::ConvertEntitiesToTextTags(hook.entities),
-			};
+if (hook.text == message.textWithTags.text && hook.entities.empty()) {
+				// preserve tags
+			} else {
+				message.textWithTags = TextWithTags{
+					hook.text,
+					TextUtilities::ConvertEntitiesToTextTags(hook.entities),
+				};
+			}
 			if (hook.quote
 				&& message.action.replyTo.messageId) {
 				const auto replied = message.action.history->owner().message(
@@ -4785,6 +4789,7 @@ void ApiWrap::sendMessage(
 					message.action.replyTo.quote = replied->originalText();
 				}
 			}
+		}
 		}
 	}
 	const auto history = message.action.history;
