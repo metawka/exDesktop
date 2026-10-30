@@ -2,6 +2,8 @@ name: PR checks
 
 on:
   pull_request:
+    paths-ignore:
+      - 'badges.json'
 
 jobs:
   changes:

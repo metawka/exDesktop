@@ -9,6 +9,7 @@ on:
       - 'changelog.txt'
       - 'LEGAL'
       - 'LICENSE'
+      - 'badges.json'
   pull_request:
     paths-ignore:
       - 'docs/**'
@@ -16,6 +17,7 @@ on:
       - 'changelog.txt'
       - 'LEGAL'
       - 'LICENSE'
+      - 'badges.json'
   release:
     types: [published]
   workflow_dispatch:
