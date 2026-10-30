@@ -69,8 +69,7 @@ constexpr auto kWaitForNormalizeTimeout = 8 * crl::time(1000);
 constexpr auto kMaxSessionsCount = 8;
 
 [[nodiscard]] bool UploadBoost() {
-	static const auto result = Extera::Bool(u"upload_boost"_q);
-	return result;
+	return Extera::Bool(u"upload_boost"_q);
 }
 
 [[nodiscard]] int MaxUploadPerSession() {
