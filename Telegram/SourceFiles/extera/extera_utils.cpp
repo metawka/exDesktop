@@ -55,6 +55,45 @@ QString FilterZalgo(QString text) {
 	return text;
 }
 
+void FilterZalgo(TextWithEntities &textWithEntities) {
+	if (!HasZalgo(textWithEntities.text)) {
+		return;
+	}
+	if (textWithEntities.entities.empty()) {
+		textWithEntities.text = FilterZalgo(std::move(textWithEntities.text));
+		return;
+	}
+	const auto &pattern = ZalgoPattern();
+	auto match = pattern.match(textWithEntities.text);
+	while (match.hasMatch()) {
+		const auto start = match.capturedStart();
+		const auto len = match.capturedLength();
+		textWithEntities.text.remove(start, len);
+		for (auto &entity : textWithEntities.entities) {
+			if (entity.offset() >= start + len) {
+				entity = EntityInText(
+					entity.type(),
+					entity.offset() - len,
+					entity.length(),
+					entity.data());
+			} else if (entity.offset() >= start) {
+				entity = EntityInText(
+					entity.type(),
+					start,
+					std::max(0, entity.length() - (start + len - entity.offset())),
+					entity.data());
+			} else if (entity.offset() + entity.length() > start) {
+				entity = EntityInText(
+					entity.type(),
+					entity.offset(),
+					std::max(0, entity.length() - len),
+					entity.data());
+			}
+		}
+		match = pattern.match(textWithEntities.text, start);
+	}
+}
+
 class MathParser final {
 public:
 	explicit MathParser(const QString &text) : _text(text) {
@@ -198,7 +237,9 @@ std::optional<QString> InlineMathValue(const QString &text) {
 	if (!value || !std::isfinite(*value)) {
 		return std::nullopt;
 	}
-	const auto rounded = std::round(*value * 1e9) / 1e9;
+	const auto rounded = (std::abs(*value) < 1e9)
+		? (std::round(*value * 1e9) / 1e9)
+		: *value;
 	return QString::number(rounded, 'g', 15);
 }
 

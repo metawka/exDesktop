@@ -59,7 +59,7 @@ def send_message(params: Any, text: Optional[str] = None,
 
 def send_text(peer_id: int, text: str, parse_mode: Optional[str] = None,
               replyToMsg: Any = None, **kwargs):
-    _compat.send(peer_id, text, parse_mode, _reply_id(replyToMsg))
+    _compat.send(peer_id, text, parse_mode, _reply_id(replyToMsg), entities=kwargs.get("entities"))
 
 
 def send_photo(peer_id, path, caption=None, **kwargs):
@@ -146,7 +146,10 @@ def get_messages_storage():
 
 
 def get_current_dialog_id() -> int:
-    return int(_extera.current_peer())
+    try:
+        return int(_extera.current_peer() or 0)
+    except Exception:
+        return 0
 
 
 class NotificationCenterDelegate:

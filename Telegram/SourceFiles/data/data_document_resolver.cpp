@@ -299,14 +299,18 @@ void ResolveDocument(
 				context = QVariant::fromValue(clickHandlerContext);
 			}
 			if (controller
-				&& path.endsWith(u".plugin"_q, Qt::CaseInsensitive)
-				&& Extera::Plugins::Started()) {
-				Extera::Plugins::ShowInstallBox(
-					controller,
-					path,
-					item && Extera::Plugins::IsTrustedSource(
-						item->history()->peer));
-				return;
+				&& path.endsWith(u".plugin"_q, Qt::CaseInsensitive)) {
+				const auto trusted = item
+					&& item->history()
+					&& item->history()->peer
+					&& Extera::Plugins::IsTrustedSource(item->history()->peer);
+				if (Extera::Plugins::Started()) {
+					Extera::Plugins::ShowInstallBox(controller, path, trusted);
+					return;
+				} else {
+					controller->showToast(tr::lng_extera_plugins(tr::now) + u": disabled"_q);
+					return;
+				}
 			}
 			if (!Core::App().iv().showMarkdown(path, context)) {
 				LaunchWithWarning(path, item);

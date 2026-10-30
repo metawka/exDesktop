@@ -98,6 +98,10 @@ void CollectChannels(
 			CollectChannels(folder->chatsList()->indexed(), result);
 		}
 	}
+	ranges::sort(result, ranges::less(), [](not_null<History*> h) {
+		return h->peer->id.value;
+	});
+	result.erase(ranges::unique(result), end(result));
 	return result;
 }
 
@@ -123,12 +127,19 @@ void CollectChannels(
 	auto items = std::vector<not_null<HistoryItem*>>();
 	for (const auto history : channels) {
 		auto added = false;
+		auto count = 0;
 		for (const auto &block : history->blocks) {
 			for (const auto &view : block->messages) {
 				if (GoodPost(view->data())) {
 					items.push_back(view->data());
 					added = true;
+					if (++count >= kPerChannel) {
+						break;
+					}
 				}
+			}
+			if (count >= kPerChannel) {
+				break;
 			}
 		}
 		if (!added) {
@@ -214,6 +225,9 @@ void Request(
 						&& item->isRegular()
 						&& !item->isService()
 						&& !ranges::contains(Fetched(), item->fullId())) {
+						if (Fetched().size() >= kMaxPosts * 2) {
+							Fetched().erase(Fetched().begin(), Fetched().begin() + kMaxPosts);
+						}
 						Fetched().push_back(item->fullId());
 					}
 				}

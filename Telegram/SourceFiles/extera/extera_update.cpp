@@ -90,7 +90,7 @@ void RunInstaller(const QString &path) {
 
 void Download(bool install) {
 	auto &state = Instance();
-	if (!Installed() || state.assetUrl.isEmpty()) {
+	if (!Installed() || state.assetUrl.isEmpty() || state.assetName.isEmpty()) {
 		return;
 	}
 	state.installAfterDownload = state.installAfterDownload || install;
@@ -119,6 +119,10 @@ void Download(bool install) {
 		if (reply->error() != QNetworkReply::NoError) {
 			return;
 		}
+		const auto bytes = reply->readAll();
+		if (bytes.size() < 1024) {
+			return;
+		}
 		const auto folder = QDir::tempPath() + u"/exDesktop/update"_q;
 		QDir().mkpath(folder);
 		const auto path = folder + '/' + state.assetName;
@@ -126,7 +130,7 @@ void Download(bool install) {
 		if (!file.open(QIODevice::WriteOnly)) {
 			return;
 		}
-		file.write(reply->readAll());
+		file.write(bytes);
 		file.close();
 		state.downloaded = path;
 		if (state.installAfterDownload) {

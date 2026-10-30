@@ -42,6 +42,7 @@ public:
 	explicit Transcoder(const QString &path);
 
 	[[nodiscard]] bool valid() const;
+	~Transcoder();
 	[[nodiscard]] QImage firstFrame();
 	[[nodiscard]] Result run(QRectF crop);
 
@@ -84,6 +85,13 @@ private:
 	bool _finished = false;
 
 };
+
+Transcoder::~Transcoder() {
+	if (_fifo) {
+		av_audio_fifo_free(_fifo);
+		_fifo = nullptr;
+	}
+}
 
 Transcoder::Transcoder(const QString &path) {
 	_input.file.setFileName(path);
@@ -326,6 +334,9 @@ void Transcoder::writeVideo(not_null<AVFrame*> frame, QRectF crop) {
 		int(crop.y() * image.height()),
 		int(side),
 		int(side)).intersected(image.rect());
+	if (rect.isEmpty()) {
+		return;
+	}
 	const auto square = image.copy(rect).scaled(
 		kSide,
 		kSide,

@@ -81,7 +81,7 @@ QByteArray &ETag() {
 [[nodiscard]] base::flat_set<uint64> ReadIds(const QJsonValue &value) {
 	auto result = base::flat_set<uint64>();
 	for (const auto &id : value.toArray()) {
-		result.emplace(uint64(id.toDouble()));
+		result.emplace(ReadId(id));
 	}
 	return result;
 }
@@ -89,7 +89,7 @@ QByteArray &ETag() {
 [[nodiscard]] uint64 ReadId(const QJsonValue &value) {
 	return value.isString()
 		? value.toString().toULongLong()
-		: uint64(value.toDouble());
+		: uint64(value.toInteger());
 }
 
 bool Apply(const QByteArray &bytes) {
@@ -166,7 +166,9 @@ void RefreshOwn(QNetworkAccessManager *manager) {
 		}
 		const auto bytes = reply->readAll();
 		if (ApplyOwn(bytes)) {
-			auto file = QFile(OwnCachePath());
+			const auto path = OwnCachePath();
+			QDir().mkpath(QFileInfo(path).absolutePath());
+			auto file = QFile(path);
 			if (file.open(QIODevice::WriteOnly)) {
 				file.write(bytes);
 			}

@@ -403,7 +403,12 @@ void FiltersMenu::refresh() {
 		}
 		const auto nextIsLocked = (now.size() >= premiumFrom);
 		if (nextIsLocked && (currentFilter == filter.id())) {
-			_session->setActiveChatsFilter(FilterId(0));
+			const auto fallback = (now.empty() || Extera::Bool(u"hide_all_chats"_q))
+				? FilterId()
+				: FilterId(0);
+			if (fallback != currentFilter) {
+				_session->setActiveChatsFilter(fallback);
+			}
 		}
 		auto button = prepareButton(
 			_list,

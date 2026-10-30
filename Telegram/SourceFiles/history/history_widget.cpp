@@ -10532,7 +10532,8 @@ void HistoryWidget::replyToMessage(
 	if (Extera::Bool(u"quote_reply"_q) && fields.quote.empty()) {
 		const auto text = item->originalText();
 		if (!text.empty()) {
-			fields.quote = Ui::Text::Mid(text, 0, kExdQuoteMax);
+			const auto max = session().appConfig().quoteLengthMax();
+			fields.quote = Ui::Text::Mid(text, 0, max ? max : kExdQuoteMax);
 			fields.quoteOffset = 0;
 		}
 	}

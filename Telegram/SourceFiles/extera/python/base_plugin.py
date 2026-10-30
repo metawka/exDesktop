@@ -159,6 +159,3 @@ class BasePlugin:
 
     def unhook_method(self, unhook: Any):
         pass
-
-    def log(self, message: Any):
-        _host.log(f"[{self.id}] {message}")

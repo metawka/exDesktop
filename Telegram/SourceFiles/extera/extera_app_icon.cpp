@@ -93,26 +93,29 @@ void SetShortcutIcon(const QString &link, const QString &icon) {
 	if (!QFile::exists(link)) {
 		return;
 	}
+	const auto hr = CoInitialize(nullptr);
 	auto shellLink = (IShellLinkW*)nullptr;
-	if (FAILED(CoCreateInstance(
+	if (SUCCEEDED(CoCreateInstance(
 			CLSID_ShellLink,
 			nullptr,
 			CLSCTX_INPROC_SERVER,
 			IID_PPV_ARGS(&shellLink)))) {
-		return;
-	}
-	auto file = (IPersistFile*)nullptr;
-	if (SUCCEEDED(shellLink->QueryInterface(IID_PPV_ARGS(&file)))) {
-		const auto path = QDir::toNativeSeparators(link).toStdWString();
-		if (SUCCEEDED(file->Load(path.c_str(), STGM_READWRITE))) {
-			const auto location = QDir::toNativeSeparators(icon)
-				.toStdWString();
-			shellLink->SetIconLocation(location.c_str(), 0);
-			file->Save(path.c_str(), TRUE);
+		auto file = (IPersistFile*)nullptr;
+		if (SUCCEEDED(shellLink->QueryInterface(IID_PPV_ARGS(&file)))) {
+			const auto path = QDir::toNativeSeparators(link).toStdWString();
+			if (SUCCEEDED(file->Load(path.c_str(), STGM_READWRITE))) {
+				const auto location = QDir::toNativeSeparators(icon)
+					.toStdWString();
+				shellLink->SetIconLocation(location.c_str(), 0);
+				file->Save(nullptr, TRUE);
+			}
+			file->Release();
 		}
-		file->Release();
+		shellLink->Release();
 	}
-	shellLink->Release();
+	if (SUCCEEDED(hr)) {
+		CoUninitialize();
+	}
 }
 #endif
 

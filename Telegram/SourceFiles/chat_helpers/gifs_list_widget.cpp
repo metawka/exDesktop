@@ -907,6 +907,9 @@ void GifsListWidget::searchForGifs(const QString &query) {
 			if (const auto user = peer ? peer->asUser() : nullptr) {
 				_searchBot = user;
 			}
+			_searchBotRequestId = 0;
+		}).fail([=] {
+			_searchBotRequestId = 0;
 		}).send();
 	}
 }

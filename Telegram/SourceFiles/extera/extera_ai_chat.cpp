@@ -83,7 +83,10 @@ void Request(
 	}
 	auto contents = QJsonArray();
 	const auto limit = HistoryLimit();
-	const auto skip = std::max(int(chat.history.size()) - limit, 0);
+	auto skip = std::max(int(chat.history.size()) - limit, 0);
+	while (skip < int(chat.history.size()) && !chat.history[skip].user) {
+		++skip;
+	}
 	auto index = 0;
 	for (const auto &message : chat.history) {
 		if (index++ < skip) {
@@ -134,6 +137,12 @@ void Request(
 				const auto line = buffer->left(end).trimmed();
 				buffer->remove(0, end + 1);
 				if (!line.startsWith("data:")) {
+					const auto obj = QJsonDocument::fromJson(line).object();
+					const auto msg = obj.value(u"error"_q).toObject()
+						.value(u"message"_q).toString();
+					if (!msg.isEmpty()) {
+						*error = msg;
+					}
 					continue;
 				}
 				const auto object = QJsonDocument::fromJson(
@@ -328,7 +337,9 @@ void ShowAiChat(not_null<Window::SessionController*> controller) {
 				if (ok) {
 					Chat().history.push_back({ .text = answer });
 				} else {
-					Chat().history.pop_back();
+					if (!Chat().history.empty()) {
+						Chat().history.pop_back();
+					}
 					controller->showToast(answer);
 				}
 				if (weak) {

@@ -122,6 +122,8 @@ jobs:
           rm -rf "$APP/Contents/Resources/python311/lib/python3.11/test" \
             "$APP/Contents/Resources/python311/lib/python3.11/site-packages"
           find "$APP/Contents/Resources/python311" -name "__pycache__" -type d -prune -exec rm -rf {} +
+          mkdir -p "$APP/Contents/MacOS/python/extera"
+          cp -r "$GITHUB_WORKSPACE/tdesktop/Telegram/SourceFiles/extera/python/." "$APP/Contents/MacOS/python/extera/"
           rm -rf exDesktop.app
           mv "$APP" exDesktop.app
           codesign --force --deep --sign - exDesktop.app

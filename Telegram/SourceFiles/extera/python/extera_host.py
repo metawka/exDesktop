@@ -78,8 +78,11 @@ def _load_settings(plugin_id):
 def _save_settings(plugin_id):
     try:
         os.makedirs(SETTINGS_DIR, exist_ok=True)
-        with open(_settings_path(plugin_id), "w", encoding="utf-8") as f:
+        target = _settings_path(plugin_id)
+        temp_target = target + ".tmp"
+        with open(temp_target, "w", encoding="utf-8") as f:
             json.dump(_settings_cache.get(plugin_id, {}), f, ensure_ascii=False)
+        os.replace(temp_target, target)
     except Exception as e:
         log(f"settings save failed for {plugin_id}: {e}")
 
@@ -147,6 +150,11 @@ def _clear_plugin(plugin_id):
     _request_hooks.pop(plugin_id, None)
     for item_id in [k for k, v in _menu_items.items() if v[0] == plugin_id]:
         del _menu_items[item_id]
+    try:
+        from ui import settings
+        settings.unregister_items(plugin_id)
+    except Exception:
+        pass
 
 
 # Loading
