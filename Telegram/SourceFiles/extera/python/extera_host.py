@@ -152,6 +152,11 @@ def _clear_plugin(plugin_id):
         for delegate in [d for d in bucket
                          if getattr(d, "_extera_plugin_id", None) == plugin_id]:
             bucket.remove(delegate)
+    try:
+        from ui import settings
+        settings.unregister_items(plugin_id)
+    except Exception:
+        pass
 
 
 # Loading

@@ -183,8 +183,11 @@ def dispatch(builder_id, which):
         listener = builder._items_listener
     else:
         listener = builder._buttons.get(which, ("", None))[1]
-    if listener is not None:
-        from android_utils import safe_call
-        safe_call(listener, builder, which)
-    if which < 0:
+    try:
+        if listener is not None:
+            from android_utils import safe_call
+            safe_call(listener, builder, which)
+    finally:
+        if which < 0:
+            _builders.pop(builder_id, None)
         _builders.pop(builder_id, None)

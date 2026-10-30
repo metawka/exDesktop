@@ -379,6 +379,7 @@ class BasePlugin:
 
     def on_app_event(self, event_type: str):
         pass
+<<<<<<< HEAD
 
     def create_settings(self) -> Optional[list]:
         return None
@@ -573,3 +574,5 @@ class BasePlugin:
                 getattr(module, cleanup)(self._extera_plugin_id)
             except Exception:
                 pass
+=======
+>>>>>>> 45ac16f (fix(plugins-py): fix ArrayList semantics, markdown link offsets, and settings leak on unload)
