@@ -65,6 +65,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace SendMenu {
 namespace {
 
+constexpr auto kExdScheduleMax = TimeId(365 * 24 * 60 * 60 - 5 * 60);
+
 constexpr auto kToggleDuration = crl::time(400);
 
 class Delegate final : public HistoryView::DefaultElementDelegate {
@@ -757,6 +759,14 @@ FillMenuResult FillSendMenu(
 				: tr::lng_schedule_message(tr::now)),
 			[=] { action({ .type = ActionType::Schedule }, details); },
 			&icons.menuSchedule);
+		if (type != Type::Reminder) {
+			menu->addAction(
+				tr::lng_exd_schedule_max(tr::now),
+				[=] { action({ Api::SendOptions{
+					.scheduled = base::unixtime::now() + kExdScheduleMax,
+				} }, details); },
+				&icons.menuSchedule);
+		}
 	}
 	if (sending && type == Type::ScheduledToUser) {
 		menu->addAction(

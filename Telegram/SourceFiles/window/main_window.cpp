@@ -144,18 +144,6 @@ const char kOptionDisableTouchbar[] = "touchbar-disabled";
 
 const QImage &Logo() {
 	static const auto result = [] {
-		const auto name = Extera::String(u"app_icon"_q);
-		if (!name.isEmpty()) {
-			const auto image = QImage(
-				u":/gui/art/extera_icons/"_q + name + u".png"_q);
-			if (!image.isNull()) {
-				return image.scaled(
-					256,
-					256,
-					Qt::IgnoreAspectRatio,
-					Qt::SmoothTransformation);
-			}
-		}
 		return QImage(u":/gui/art/logo_256.png"_q);
 	}();
 	return result;

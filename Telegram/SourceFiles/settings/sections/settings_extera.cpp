@@ -448,7 +448,8 @@ void PaintAvatarPreview(QPainter &p, QRect frame, int corners) {
 
 [[nodiscard]] int StickerPreviewHeight() {
 	return HistoryView::Sticker::Size().height()
-		+ 2 * st::exteraPreviewSkip;
+		+ st::exteraPreviewBubble
+		+ 3 * st::exteraPreviewSkip;
 }
 
 void PaintStickerPreview(QPainter &p, QRect frame, int value) {
@@ -469,68 +470,6 @@ void PaintStickerPreview(QPainter &p, QRect frame, int value) {
 			side,
 			side),
 		image);
-}
-
-struct AppIconInfo {
-	QString id;
-	QString title;
-	QString author;
-};
-
-[[nodiscard]] const std::vector<AppIconInfo> &AppIcons() {
-	static const auto result = std::vector<AppIconInfo>{
-		{ QString(), QString(), u"exDesktop"_q },
-		{ u"orbit"_q, u"Orbit"_q, u"exteraGram"_q },
-		{ u"editor"_q, u"Editor"_q, u"exteraGram"_q },
-		{ u"mole"_q, u"Mole"_q, u"whatwherewhywhen"_q },
-		{ u"echpochmak"_q, u"Echpochmak"_q, u"whatwherewhywhen"_q },
-		{ u"avatar"_q, u"Avatar"_q, u"cIick_cIack"_q },
-		{ u"candy"_q, u"Candy"_q, u"impulz3"_q },
-		{ u"guitar"_q, u"Guitar"_q, u"nekto_nkt"_q },
-		{ u"sus"_q, u"Impostor"_q, u"MilesBlooper"_q },
-		{ u"frog"_q, u"Frog"_q, u"cIick_cIack"_q },
-		{ u"hamster"_q, u"Hamster"_q, u"whatwherewhywhen"_q },
-		{ u"sponge"_q, u"Sponge"_q, u"nneeuurr"_q },
-		{ u"invincible"_q, u"Invincible"_q, u"exteraGram"_q },
-		{ u"flappy"_q, u"Flappy"_q, u"nneeuurr"_q },
-		{ u"nyan_cat"_q, u"Nyan Cat"_q, u"n1ksly"_q },
-		{ u"ice_age"_q, u"Ice Age"_q, u"exteraGram"_q },
-		{ u"fish"_q, u"Fish"_q, u"whatwherewhywhen"_q },
-		{ u"psychosis"_q, u"Psychosis"_q, u"cIick_cIack"_q },
-		{ u"xp"_q, u"XP"_q, u"weizoqq"_q },
-		{ u"nasa"_q, u"NASA"_q, u"cIick_cIack"_q },
-		{ u"cyberpunk"_q, u"Cyberpunk"_q, u"exteraGram"_q },
-		{ u"space"_q, u"Space"_q, u"exteraGram"_q },
-		{ u"jellyfish"_q, u"Jellyfish"_q, u"whatwherewhywhen"_q },
-		{ u"human"_q, u"Human"_q, u"cIick_cIack"_q },
-		{ u"sunset"_q, u"Sunset"_q, u"exteraGram"_q },
-		{ u"amethyst"_q, u"Amethyst"_q, u"exteraGram"_q },
-		{ u"aurora"_q, u"Aurora"_q, u"exteraGram"_q },
-		{ u"osu"_q, u"osu!"_q, u"ataeshi"_q },
-		{ u"google"_q, u"Google"_q, u"exteraGram"_q },
-		{ u"google26"_q, u"Google '26"_q, u"Slucket"_q },
-		{ u"winter"_q, u"Winter"_q, u"exteraGram"_q },
-		{ u"beta"_q, u"Beta"_q, u"exteraGram"_q },
-		{ u"round"_q, u"Round"_q, u"exteraGram"_q },
-	};
-	return result;
-}
-
-[[nodiscard]] QImage AppIconImage(const QString &id) {
-	return QImage(id.isEmpty()
-		? u":/gui/art/logo_256.png"_q
-		: (u":/gui/art/extera_icons/"_q + id + u".png"_q));
-}
-
-void PaintAppIcon(QPainter &p, const QImage &image, QRect rect) {
-	auto hq = PainterHighQualityEnabler(p);
-	auto path = QPainterPath();
-	const auto radius = rect.width() * 0.26;
-	path.addRoundedRect(rect, radius, radius);
-	p.save();
-	p.setClipPath(path);
-	p.drawImage(rect, image);
-	p.restore();
 }
 
 void ShowQuickActionsBox(not_null<Window::SessionController*> controller) {
@@ -623,155 +562,6 @@ void ShowQuickActionsBox(not_null<Window::SessionController*> controller) {
 				tr::lng_extera_quick_actions_about(),
 				st::boxDividerLabel),
 			st::exteraQuickAboutPadding);
-	}));
-}
-
-void ShowAppIconBox(not_null<Window::SessionController*> controller) {
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
-		box->setStyle(st::exteraInstallBox);
-		box->setWidth(st::exteraAppIconBoxWidth);
-		box->setNoContentMargin(true);
-		box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); });
-		const auto &icons = AppIcons();
-		const auto images = std::make_shared<std::vector<QImage>>();
-		for (const auto &icon : icons) {
-			images->push_back(AppIconImage(icon.id));
-		}
-		const auto current = [&] {
-			const auto id = Extera::String(u"app_icon"_q);
-			for (auto i = 0; i != int(icons.size()); ++i) {
-				if (icons[i].id == id) {
-					return i;
-				}
-			}
-			return 0;
-		}();
-		const auto selected = box->lifetime().make_state<
-			rpl::variable<int>>(current);
-		const auto title = [=](int index) {
-			const auto &icon = AppIcons()[index];
-			return icon.title.isEmpty()
-				? tr::lng_extera_app_icon_default(tr::now)
-				: icon.title;
-		};
-
-		const auto preview = box->addRow(
-			object_ptr<Ui::RpWidget>(box),
-			st::exteraAppIconPreviewPadding);
-		preview->resize(
-			preview->width(),
-			st::exteraAppIconPreview);
-		preview->paintRequest() | rpl::on_next([=] {
-			auto p = QPainter(preview);
-			const auto size = st::exteraAppIconPreview;
-			PaintAppIcon(
-				p,
-				(*images)[selected->current()],
-				QRect((preview->width() - size) / 2, 0, size, size));
-		}, preview->lifetime());
-		box->addRow(
-			object_ptr<Ui::FlatLabel>(
-				box,
-				selected->value() | rpl::map(title),
-				st::exteraInstallName),
-			st::exteraInstallNamePadding,
-			style::al_top);
-		const auto author = box->addRow(
-			object_ptr<Ui::FlatLabel>(box, st::exteraAppIconAuthor),
-			st::exteraInstallVersionPadding,
-			style::al_top);
-		selected->value() | rpl::on_next([=](int index) {
-			const auto name = AppIcons()[index].author;
-			author->setMarkedText(
-				tr::link(u"@"_q + name, u"https://t.me/"_q + name));
-			preview->update();
-		}, author->lifetime());
-
-		const auto columns = 4;
-		const auto cell = st::exteraAppIconCellWidth;
-		const auto cellHeight = st::exteraAppIconCellHeight;
-		const auto rows = (int(icons.size()) + columns - 1) / columns;
-		const auto grid = box->addRow(
-			object_ptr<Ui::FixedHeightWidget>(box, rows * cellHeight),
-			st::exteraAppIconGridPadding);
-		const auto layout = [=] {
-			const auto skip = (grid->width() - columns * cell) / 2;
-			return skip;
-		};
-		grid->paintRequest() | rpl::on_next([=] {
-			auto p = QPainter(grid);
-			auto hq = PainterHighQualityEnabler(p);
-			const auto skip = layout();
-			const auto size = st::exteraAppIconSize;
-			for (auto i = 0; i != int(images->size()); ++i) {
-				const auto x = skip + (i % columns) * cell;
-				const auto y = (i / columns) * cellHeight;
-				const auto rect = QRect(x + (cell - size) / 2, y, size, size);
-				PaintAppIcon(p, (*images)[i], rect);
-				if (i == selected->current()) {
-					p.setBrush(Qt::NoBrush);
-					p.setPen(QPen(st::windowActiveTextFg, st::lineWidth * 2));
-					p.drawEllipse(rect.marginsAdded({ 4, 4, 4, 4 }));
-				}
-				p.setPen(st::windowFg);
-				p.setFont(st::exteraAppIconCaptionFont);
-				const auto caption = st::exteraAppIconCaptionFont->elided(
-					title(i),
-					cell - 4);
-				p.drawText(
-					QRect(x, y + size + st::exteraAppIconCaptionSkip, cell, st::exteraAppIconCaptionFont->height),
-					Qt::AlignHCenter | Qt::AlignTop,
-					caption);
-			}
-		}, grid->lifetime());
-		grid->setCursor(style::cur_pointer);
-		grid->events(
-		) | rpl::filter([](not_null<QEvent*> e) {
-			return e->type() == QEvent::MouseButtonRelease;
-		}) | rpl::on_next([=](not_null<QEvent*> e) {
-			const auto point = static_cast<QMouseEvent*>(e.get())->pos();
-			const auto column = (point.x() - layout()) / cell;
-			const auto row = point.y() / cellHeight;
-			const auto index = row * columns + column;
-			if (column < 0
-				|| column >= columns
-				|| index < 0
-				|| index >= int(images->size())) {
-				return;
-			}
-			*selected = index;
-			grid->update();
-		}, grid->lifetime());
-
-		const auto button = box->addRow(
-			object_ptr<Ui::RoundButton>(
-				box,
-				selected->value() | rpl::map([=](int index) {
-					return (index == current)
-						? tr::lng_extera_app_icon_keep(tr::now)
-						: tr::lng_extera_app_icon_apply(tr::now);
-				}),
-				st::exteraInstallButton),
-			st::exteraInstallCancelMargin);
-		button->setFullRadius(true);
-		button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
-		box->widthValue() | rpl::on_next([=](int width) {
-			const auto margin = st::exteraInstallCancelMargin;
-			button->setFullWidth(width - margin.left() - margin.right());
-		}, button->lifetime());
-		button->setClickedCallback([=] {
-			const auto index = selected->current();
-			box->closeBox();
-			if (index == current) {
-				return;
-			}
-			Config().setString(u"app_icon"_q, AppIcons()[index].id);
-			controller->show(Ui::MakeConfirmBox({
-				.text = tr::lng_extera_restart_required(),
-				.confirmed = [] { Core::Restart(); },
-				.confirmText = tr::lng_extera_restart(),
-			}));
-		});
 	}));
 }
 
@@ -1160,15 +950,6 @@ void BuildAppearance(SectionBuilder &builder) {
 			tr::lng_extera_hide_all_chats());
 	});
 
-	builder.addSkip();
-	builder.card([&] {
-		builder.addButton({
-			.id = u"extera/app_icon"_q,
-			.title = tr::lng_extera_app_icon(),
-			.icon = { &st::exteraIconAppearance },
-			.onClick = [=] { ShowAppIconBox(controller); },
-		});
-	});
 	builder.addDivider();
 
 	builder.addSkip();
@@ -1339,6 +1120,28 @@ void BuildChats(SectionBuilder &builder) {
 			builder,
 			u"comma_after_mention"_q,
 			tr::lng_extera_comma_mention());
+		AddToggle(
+			builder,
+			u"quote_reply"_q,
+			tr::lng_exd_quote_reply(),
+			{ u"quote"_q, u"reply"_q },
+			tr::lng_exd_quote_reply_about(),
+			true);
+		AddToggle(
+			builder,
+			u"hide_copy_toast"_q,
+			tr::lng_exd_hide_copy_toast());
+		AddToggle(
+			builder,
+			u"chars_counter"_q,
+			tr::lng_exd_chars_counter());
+		AddToggle(
+			builder,
+			u"name_accent"_q,
+			tr::lng_exd_name_accent(),
+			{ u"color"_q, u"name"_q },
+			tr::lng_exd_name_accent_about(),
+			true);
 		AddToggle(
 			builder,
 			u"inline_math"_q,
@@ -1565,6 +1368,28 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 			builder,
 			u"plugins_safe_mode"_q,
 			tr::lng_extera_plugins_safe());
+		AddToggle(
+			builder,
+			u"plugins_no_auto_safe"_q,
+			tr::lng_exd_no_auto_safe());
+		builder.addButton({
+			.id = u"extera/plugins_export"_q,
+			.title = tr::lng_exd_plugins_export(),
+			.st = &st::settingsButtonNoIcon,
+			.onClick = [=] {
+				FileDialog::GetFolder(
+					Core::App().getFileDialogParent(),
+					tr::lng_exd_plugins_export(tr::now),
+					QString(),
+					[=](QString &&folder) {
+						const auto count = Extera::Plugins::ExportAll(folder);
+						controller->showToast(tr::lng_exd_plugins_exported(
+							tr::now,
+							lt_count,
+							count));
+					});
+			},
+		});
 	});
 	AddAbout(builder, tr::lng_extera_plugins_safe_about());
 
@@ -1749,26 +1574,6 @@ void BuildOther(SectionBuilder &builder) {
 	const auto controller = builder.controller();
 
 	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_extera_port());
-	builder.card([&] {
-		AddLink(
-			builder,
-			u"port_developer"_q,
-			tr::lng_extera_port_developer(),
-			u"@metawka"_q,
-			u"https://t.me/metawka"_q,
-			{ &st::exteraIconDeveloper });
-		AddLink(
-			builder,
-			u"port_channel"_q,
-			tr::lng_extera_port_channel(),
-			u"@exDesktop"_q,
-			u"https://t.me/exDesktop"_q,
-			{ &st::exteraIconChannel });
-	});
-	builder.addDivider();
-
-	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_updates());
 	builder.card([&] {
 		builder.addButton({
@@ -1925,8 +1730,15 @@ void BuildMain(SectionBuilder &builder) {
 	builder.addDivider();
 
 	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_extera_links());
+	builder.addSubsectionTitle(tr::lng_extera_port());
 	builder.card([&] {
+		AddLink(
+			builder,
+			u"developer"_q,
+			tr::lng_extera_port_developer(),
+			u"@metawka"_q,
+			u"https://t.me/metawka"_q,
+			{ &st::exteraIconDeveloper });
 		AddLink(
 			builder,
 			u"channel"_q,
@@ -1938,16 +1750,9 @@ void BuildMain(SectionBuilder &builder) {
 			builder,
 			u"forum"_q,
 			tr::lng_extera_forum(),
-			u"@exteraForum"_q,
-			u"https://t.me/exteraForum"_q,
+			u"@exDesktopChat"_q,
+			u"https://t.me/exDesktopChat"_q,
 			{ &st::exteraIconForum });
-		AddLink(
-			builder,
-			u"crowdin"_q,
-			tr::lng_extera_crowdin(),
-			u"Crowdin"_q,
-			u"https://crowdin.com/project/exteralocales"_q,
-			{ &st::exteraIconTranslate });
 		AddLink(
 			builder,
 			u"website"_q,

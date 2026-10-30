@@ -2180,8 +2180,8 @@ void Application::RegisterUrlScheme() {
 		.arguments = arguments,
 		.protocol = u"tg"_q,
 		.protocolName = u"Telegram Link"_q,
-		.shortAppName = u"tdesktop"_q,
-		.longAppName = QCoreApplication::applicationName(),
+		.shortAppName = u"exdesktop"_q,
+		.longAppName = u"exDesktop"_q,
 		.displayAppName = AppName.utf16(),
 		.displayAppDescription = AppName.utf16(),
 	});
@@ -2191,8 +2191,8 @@ void Application::RegisterUrlScheme() {
 		.arguments = arguments,
 		.protocol = u"tonsite"_q,
 		.protocolName = u"TonSite Link"_q,
-		.shortAppName = u"tdesktop"_q,
-		.longAppName = QCoreApplication::applicationName(),
+		.shortAppName = u"exdesktop"_q,
+		.longAppName = u"exDesktop"_q,
 		.displayAppName = AppName.utf16(),
 		.displayAppDescription = AppName.utf16(),
 	});
@@ -2202,8 +2202,8 @@ void Application::RegisterUrlScheme() {
 		.arguments = arguments,
 		.protocol = u"ton"_q,
 		.protocolName = u"Ton Link"_q,
-		.shortAppName = u"tdesktop"_q,
-		.longAppName = QCoreApplication::applicationName(),
+		.shortAppName = u"exdesktop"_q,
+		.longAppName = u"exDesktop"_q,
 		.displayAppName = AppName.utf16(),
 		.displayAppDescription = AppName.utf16(),
 	});

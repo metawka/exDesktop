@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/chat/chat_style.h"
+#include "extera/extera_config.h"
 
 #include "ui/chat/chat_theme.h"
 #include "ui/chat/chat_theme_readability.h"
@@ -1509,6 +1510,9 @@ QColor FromNameFg(
 		bool selected,
 		uint8 colorIndex,
 		const std::shared_ptr<Ui::ColorCollectible> &colorCollectible) {
+	if (Extera::Bool(u"name_accent"_q)) {
+		return st->windowActiveTextFg()->c;
+	}
 	return !colorCollectible
 		? st->coloredValues(selected, colorIndex).name
 		: st->collectibleNameColor(colorCollectible, selected);

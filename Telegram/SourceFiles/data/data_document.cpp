@@ -1909,7 +1909,14 @@ bool DocumentData::isAudioFile() const {
 		return false;
 	}
 	const auto left = _mimeString.mid(prefix.size());
-	const auto types = { u"x-wav"_q, u"wav"_q, u"mp4"_q };
+	const auto types = {
+		u"x-wav"_q,
+		u"wav"_q,
+		u"mp4"_q,
+		u"x-m4a"_q,
+		u"m4a"_q,
+		u"aac"_q,
+	};
 	return ranges::contains(types, left);
 }
 

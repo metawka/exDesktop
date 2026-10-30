@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_copy_selection.h"
+#include "extera/extera_config.h"
 
 #include "base/qt_signal_producer.h"
 #include "base/weak_ptr.h"
@@ -341,7 +342,9 @@ void CopySelection(CopySelectionArgs &&args) {
 			text,
 			std::move(args.blocks),
 			args.session);
-		Ui::ShowTextCopiedToast(args.show);
+		if (!Extera::Bool(u"hide_copy_toast"_q)) {
+			Ui::ShowTextCopiedToast(args.show);
+		}
 		return;
 	}
 	PendingCopy() = nullptr;

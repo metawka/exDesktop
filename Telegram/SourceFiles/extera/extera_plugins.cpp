@@ -582,7 +582,8 @@ void Start() {
 	}
 	QDir().mkpath(DataPath() + u"plugins"_q);
 	if (QFile::exists(StartMarkerPath())
-		&& !Extera::Bool(u"plugins_safe_mode"_q)) {
+		&& !Extera::Bool(u"plugins_safe_mode"_q)
+		&& !Extera::Bool(u"plugins_no_auto_safe"_q)) {
 		Extera::Config::Instance().setBool(u"plugins_safe_mode"_q, true);
 		Extera::Config::Instance().saveNow();
 		ShowAutoSafeModeBox();
@@ -738,6 +739,21 @@ void notifyListChanged() {
 	crl::on_main([] {
 		Instance().listChanges.fire({});
 	});
+}
+
+int ExportAll(const QString &folder) {
+	auto count = 0;
+	const auto source = QDir(DataPath() + u"plugins"_q);
+	for (const auto &info : source.entryInfoList(
+			{ u"*.plugin"_q, u"*.py"_q },
+			QDir::Files)) {
+		const auto target = QDir(folder).filePath(info.fileName());
+		QFile::remove(target);
+		if (QFile::copy(info.absoluteFilePath(), target)) {
+			++count;
+		}
+	}
+	return count;
 }
 
 } // namespace Extera::Plugins

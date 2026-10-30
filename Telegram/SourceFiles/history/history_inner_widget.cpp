@@ -2773,6 +2773,8 @@ void HistoryInner::mouseDoubleClickEvent(QMouseEvent *e) {
 			case 2:
 				if (item->allowsEdit(base::unixtime::now())) {
 					_widget->editMessage(item, TextSelection());
+				} else {
+					toggleFavoriteReaction(view);
 				}
 				break;
 			case 3: copyContextText(item->fullId()); break;

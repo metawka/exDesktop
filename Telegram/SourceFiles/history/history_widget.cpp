@@ -227,6 +227,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
+constexpr auto kExdQuoteMax = 1024;
+
 constexpr auto kMessagesPerPageFirst = 30;
 constexpr auto kMessagesPerPage = 50;
 constexpr auto kPreloadHeightsCount = 3; // when 3 screens to scroll left make a preload request
@@ -10351,23 +10353,28 @@ void HistoryWidget::checkCharsCount() {
 }
 
 void HistoryWidget::checkCharsLimitation() {
-	if (!_history || !_editMsgId) {
+	const auto counter = Extera::Bool(u"chars_counter"_q);
+	if (!_history || (!_editMsgId && !counter)) {
 		_charsLimitation = nullptr;
 		return;
 	}
-	const auto item = session().data().message(_history->peer, _editMsgId);
-	if (!item) {
+	const auto item = _editMsgId
+		? session().data().message(_history->peer, _editMsgId)
+		: nullptr;
+	if (_editMsgId && !item) {
 		_charsLimitation = nullptr;
 		return;
 	}
-	const auto hasMediaWithCaption = item->media()
+	const auto hasMediaWithCaption = item
+		&& item->media()
 		&& item->media()->allowsEditCaption();
 	const auto limits = Data::PremiumLimits(&session());
 	const auto maxTextSize = hasMediaWithCaption
 		? limits.captionLengthCurrent()
 		: limits.messageLengthCurrent();
-	const auto remove = _fieldCharsCountManager.count() - maxTextSize;
-	if (remove > 0) {
+	const auto count = _fieldCharsCountManager.count();
+	const auto remove = count - maxTextSize;
+	if (remove > 0 || (counter && count > 0)) {
 		if (!_charsLimitation) {
 			_charsLimitation = base::make_unique_q<CharactersLimitLabel>(
 				this,
@@ -10375,7 +10382,7 @@ void HistoryWidget::checkCharsLimitation() {
 				style::al_bottom);
 			_charsLimitation->show();
 		}
-		_charsLimitation->setLeft(remove);
+		_charsLimitation->setLeft((remove > 0) ? remove : -count);
 	} else {
 		_charsLimitation = nullptr;
 	}
@@ -10427,6 +10434,13 @@ void HistoryWidget::replyToMessage(
 		return;
 	}
 	fields.messageId = item->fullId();
+	if (Extera::Bool(u"quote_reply"_q) && fields.quote.empty()) {
+		const auto text = item->originalText();
+		if (!text.empty()) {
+			fields.quote = Ui::Text::Mid(text, 0, kExdQuoteMax);
+			fields.quoteOffset = 0;
+		}
+	}
 	_processingReplyTo = fields;
 	_processingReplyItem = item;
 	processReply();

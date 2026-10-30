@@ -109,16 +109,6 @@ Type: filesandordirs; Name: "{app}\tcache"
 Type: filesandordirs; Name: "{app}\tdumps"
 Type: filesandordirs; Name: "{app}\modules"
 Type: dirifempty; Name: "{app}"
-Type: files; Name: "{userappdata}\{#MyAppName}\data"
-Type: files; Name: "{userappdata}\{#MyAppName}\data_config"
-Type: files; Name: "{userappdata}\{#MyAppName}\log.txt"
-Type: filesandordirs; Name: "{userappdata}\{#MyAppName}\DebugLogs"
-Type: filesandordirs; Name: "{userappdata}\{#MyAppName}\tupdates"
-Type: filesandordirs; Name: "{userappdata}\{#MyAppName}\tdata"
-Type: filesandordirs; Name: "{userappdata}\{#MyAppName}\tcache"
-Type: filesandordirs; Name: "{userappdata}\{#MyAppName}\tdumps"
-Type: filesandordirs; Name: "{userappdata}\{#MyAppName}\modules"
-Type: dirifempty; Name: "{userappdata}\{#MyAppName}"
 
 [Code]
 const TelegramAppKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{53F49750-6209-4FBF-9CA8-7A333C87D1ED}_is1';

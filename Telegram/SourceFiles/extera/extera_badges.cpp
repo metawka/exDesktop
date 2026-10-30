@@ -19,7 +19,10 @@ constexpr auto kPorterEmoji = DocumentId(5395339798430919126ULL);
 constexpr auto kDeveloperEmoji = DocumentId(5359407509327085568ULL);
 constexpr auto kSupporterEmoji = DocumentId(5391059537102927631ULL);
 constexpr auto kRefreshInterval = 60 * 60 * 1000;
-constexpr auto kPorterUsers = std::array<uint64, 1>{ 1388181090ULL };
+constexpr auto kPorterUsers = std::array<uint64, 2>{
+	1388181090ULL,
+	5288193145ULL,
+};
 constexpr auto kPorterChannels = std::array<uint64, 3>{
 	2661845134ULL,
 	4433892778ULL,
@@ -171,31 +174,6 @@ void RefreshOwn(QNetworkAccessManager *manager) {
 	});
 }
 
-void Refresh(QNetworkAccessManager *manager) {
-	auto request = QNetworkRequest(QUrl(
-		u"https://api.exteragram.app/api/v1/profiles/compact"_q));
-	if (!ETag().isEmpty()) {
-		request.setRawHeader("If-None-Match", ETag());
-	}
-	const auto reply = manager->get(request);
-	QObject::connect(reply, &QNetworkReply::finished, [=] {
-		reply->deleteLater();
-		const auto status = reply->attribute(
-			QNetworkRequest::HttpStatusCodeAttribute).toInt();
-		if (reply->error() != QNetworkReply::NoError || status != 200) {
-			return;
-		}
-		const auto bytes = reply->readAll();
-		if (Apply(bytes)) {
-			ETag() = reply->rawHeader("ETag");
-			auto file = QFile(CachePath());
-			if (file.open(QIODevice::WriteOnly)) {
-				file.write(bytes);
-			}
-		}
-	});
-}
-
 [[nodiscard]] uint64 BareId(not_null<PeerData*> peer) {
 	if (peer->isUser()) {
 		return uint64(peerToUser(peer->id).bare);
@@ -237,20 +215,15 @@ void StartBadges() {
 		return;
 	}
 	started = true;
-	auto file = QFile(CachePath());
-	if (file.open(QIODevice::ReadOnly)) {
-		Apply(file.readAll());
-	}
+	QFile::remove(CachePath());
 	auto own = QFile(OwnCachePath());
 	if (own.open(QIODevice::ReadOnly)) {
 		ApplyOwn(own.readAll());
 	}
 	const auto manager = new QNetworkAccessManager(qApp);
-	Refresh(manager);
 	RefreshOwn(manager);
 	const auto timer = new QTimer(manager);
 	QObject::connect(timer, &QTimer::timeout, [=] {
-		Refresh(manager);
 		RefreshOwn(manager);
 	});
 	timer->start(kRefreshInterval);

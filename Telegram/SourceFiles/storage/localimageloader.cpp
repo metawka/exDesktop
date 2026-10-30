@@ -587,6 +587,8 @@ bool FileLoadTask::CheckForSong(
 	static const auto mimes = {
 		u"audio/mp3"_q,
 		u"audio/m4a"_q,
+		u"audio/x-m4a"_q,
+		u"audio/mp4"_q,
 		u"audio/aac"_q,
 		u"audio/ogg"_q,
 		u"audio/flac"_q,

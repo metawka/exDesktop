@@ -26,6 +26,7 @@ struct MenuItem {
 
 void Start();
 void Shutdown();
+int ExportAll(const QString &folder);
 
 [[nodiscard]] bool Available();
 [[nodiscard]] bool Started();

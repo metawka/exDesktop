@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/sticker_set_box.h"
+#include <QtGui/QClipboard>
+#include <QtGui/QGuiApplication>
 
 #include "api/api_common.h"
 #include "api/api_stickers_creator.h"
@@ -1771,6 +1773,12 @@ void StickerSetBox::Inner::contextMenuEvent(QContextMenuEvent *e) {
 				TextUtilities::SetClipboardText(text);
 			}, &st::menuIconCopy);
 		}
+		const auto emojiId = QString::number(chosenDocument->id);
+		const auto show = _show;
+		_menu->addAction(tr::lng_exd_copy_emoji_id(tr::now), [=] {
+			QGuiApplication::clipboard()->setText(emojiId);
+			show->showToast(tr::lng_exd_emoji_id_copied(tr::now));
+		}, &st::menuIconCopy);
 		if (!amSetCreator()) {
 			Api::AddAddToEmojiSetAction(
 				Ui::Menu::CreateAddActionCallback(_menu.get()),
