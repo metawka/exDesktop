@@ -1334,7 +1334,8 @@ int PeerData::nameVersion() const {
 
 const QString &PeerData::name() const {
 	if (isSelf() && Extera::Streamer::HideName()) {
-		static const auto streamer = Extera::Streamer::Name();
+		static thread_local QString streamer;
+		streamer = Extera::Streamer::Name();
 		return streamer;
 	} else if (const auto to = migrateTo()) {
 		return to->name();

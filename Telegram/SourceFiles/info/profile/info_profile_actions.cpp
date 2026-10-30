@@ -249,6 +249,9 @@ base::options::toggle ShowChannelJoinedBelowAbout({
 	if (!dc) {
 		dc = PeerDcId(peer);
 	}
+	if (!dc && peer->isSelf()) {
+		dc = peer->session().mainDcId();
+	}
 	if (dc < 1) {
 		return u"ID"_q;
 	}
