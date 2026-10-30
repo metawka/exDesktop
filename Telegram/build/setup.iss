@@ -1,4 +1,4 @@
-#define MyAppShortName "exDesktop"
+﻿#define MyAppShortName "exDesktop"
 #define MyAppName "exDesktop"
 #define MyAppPublisher "exDesktop"
 #define MyAppURL "https://exteradesktop.xyz"
@@ -121,6 +121,53 @@ Type: filesandordirs; Name: "{userappdata}\{#MyAppName}\modules"
 Type: dirifempty; Name: "{userappdata}\{#MyAppName}"
 
 [Code]
+const TelegramAppKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{53F49750-6209-4FBF-9CA8-7A333C87D1ED}_is1';
+
+function SamePath(A, B: String): Boolean;
+begin
+  Result := (A <> '') and (B <> '') and (CompareText(RemoveBackslash(A), RemoveBackslash(B)) = 0);
+end;
+
+function TelegramLocation(Root: Integer): String;
+begin
+  Result := '';
+  if not RegQueryStringValue(Root, TelegramAppKey, 'InstallLocation', Result) then
+    Result := '';
+end;
+
+function IsTelegramDir(Dir: String): Boolean;
+begin
+  Result := SamePath(Dir, TelegramLocation(HKEY_CURRENT_USER))
+    or SamePath(Dir, TelegramLocation(HKEY_LOCAL_MACHINE))
+    or SamePath(Dir, ExpandConstant('{userappdata}\Telegram Desktop'))
+    or (CompareText(ExtractFileName(RemoveBackslash(Dir)), 'Telegram Desktop') = 0);
+end;
+
+function TelegramDirMessage(): String;
+begin
+  if ActiveLanguage = 'ru' then
+    Result := 'В этой папке установлен Telegram Desktop. Выберите другую папку для {#MyAppName}.'
+  else
+    Result := 'Telegram Desktop is installed in this folder. Choose another folder for {#MyAppName}.';
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (CurPageID = wpSelectDir) and IsTelegramDir(WizardDirValue) then
+  begin
+    MsgBox(TelegramDirMessage, mbError, MB_OK);
+    Result := False;
+  end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if IsTelegramDir(ExpandConstant('{app}')) then
+    Result := TelegramDirMessage;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var ResultCode: Integer;
 begin
