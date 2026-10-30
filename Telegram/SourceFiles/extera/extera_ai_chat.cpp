@@ -83,7 +83,10 @@ void Request(
 	}
 	auto contents = QJsonArray();
 	const auto limit = HistoryLimit();
-	const auto skip = std::max(int(chat.history.size()) - limit, 0);
+	auto skip = std::max(int(chat.history.size()) - limit, 0);
+	while (skip < int(chat.history.size()) && !chat.history[skip].user) {
+		++skip;
+	}
 	auto index = 0;
 	for (const auto &message : chat.history) {
 		if (index++ < skip) {
