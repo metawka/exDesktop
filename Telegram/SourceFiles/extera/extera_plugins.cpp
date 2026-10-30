@@ -82,7 +82,15 @@ private:
 #ifdef Q_OS_WIN
 	return cExeDir() + u"python/"_q;
 #elif defined(Q_OS_MAC)
-	return cExeDir() + u"python/"_q;
+	const auto inMacOS = cExeDir() + u"python/"_q;
+	if (QFile::exists(inMacOS + u"extera/extera_host.py"_q) || QFile::exists(inMacOS + u"extera_host.py"_q)) {
+		return inMacOS;
+	}
+	const auto inResources = cExeDir() + u"../Resources/python/"_q;
+	if (QFile::exists(inResources + u"extera/extera_host.py"_q) || QFile::exists(inResources + u"extera_host.py"_q)) {
+		return inResources;
+	}
+	return inMacOS;
 #else
 	// Linux / generic Unix: check local candidates where extera_host.py might reside
 	const auto localToExe = cExeDir() + u"python/"_q;
