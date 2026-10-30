@@ -132,6 +132,18 @@ jobs:
       # -vcvars_ver=14.44 is what docs/building-win.md pins for Windows 7
       # support. If a runner's VS install doesn't ship that exact toolset
       # this will fail and needs adjusting to whatever is actually there.
+      - name: Set build number from tag
+        if: github.event_name == 'release'
+        shell: pwsh
+        run: |
+          $parts = $env:GITHUB_REF_NAME.TrimStart('v').Split('.')
+          $build = if ($parts.Count -ge 4) { [int]$parts[3] } else { 0 }
+          $file = 'tdesktop/Telegram/SourceFiles/extera/extera_update.cpp'
+          $text = Get-Content -LiteralPath $file -Raw
+          $text = $text -replace 'constexpr auto kExteraBuild = \d+;', "constexpr auto kExteraBuild = $build;"
+          Set-Content -LiteralPath $file -Value $text -NoNewline
+          Select-String -LiteralPath $file -Pattern 'kExteraBuild ='
+
       - name: Configure and build
         shell: cmd
         env:

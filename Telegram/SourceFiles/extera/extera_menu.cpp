@@ -3,6 +3,7 @@
 #include "api/api_common.h"
 #include "apiwrap.h"
 #include "base/unixtime.h"
+#include "base/event_filter.h"
 #include "data/data_chat_participant_status.h"
 #include "data/data_document.h"
 #include "data/data_media_types.h"
@@ -148,7 +149,11 @@ struct QuickEntry {
 		{ u"delete"_q, { tr::lng_context_delete_msg }, &st::menuIconDelete },
 		{
 			u"copy"_q,
-			{ tr::lng_context_copy_text, tr::lng_context_copy_selected },
+			{
+				tr::lng_context_copy_text,
+				tr::lng_context_copy_selected,
+				tr::lng_context_copy_image,
+			},
 			&st::menuIconCopy,
 		},
 		{ u"edit"_q, { tr::lng_context_edit_msg }, &st::menuIconEdit },
@@ -184,14 +189,18 @@ public:
 
 protected:
 	int contentHeight() const override;
+	void paintEvent(QPaintEvent *e) override;
 
 private:
 	void layout();
+	void updateHovered();
+	[[nodiscard]] int dividerHeight() const;
 
 	const not_null<QAction*> _dummyAction;
 	const style::Menu &_st;
 	const Fn<void()> _hide;
 	std::vector<not_null<Ui::AbstractButton*>> _buttons;
+	int _hovered = -1;
 
 };
 
@@ -207,6 +216,34 @@ QuickRow::QuickRow(
 	widthValue() | rpl::on_next([=] {
 		layout();
 	}, lifetime());
+	base::install_event_filter(this, qApp, [=](not_null<QEvent*> e) {
+		const auto type = e->type();
+		if (type == QEvent::MouseMove
+			|| type == QEvent::Leave
+			|| type == QEvent::Enter) {
+			updateHovered();
+		}
+		return base::EventFilterResult::Continue;
+	});
+}
+
+void QuickRow::updateHovered() {
+	const auto local = mapFromGlobal(QCursor::pos());
+	auto hovered = -1;
+	if (isVisible() && rect().contains(local)) {
+		for (auto i = 0; i != int(_buttons.size()); ++i) {
+			if (_buttons[i]->geometry().contains(local)) {
+				hovered = i;
+				break;
+			}
+		}
+	}
+	if (_hovered != hovered) {
+		_hovered = hovered;
+		for (const auto button : _buttons) {
+			button->update();
+		}
+	}
 }
 
 void QuickRow::addButton(
@@ -215,11 +252,12 @@ void QuickRow::addButton(
 		const QString &label) {
 	action->setParent(this);
 	const auto button = Ui::CreateChild<Ui::AbstractButton>(this);
+	const auto index = int(_buttons.size());
 	button->setAccessibleName(label);
 	button->setPointerCursor(true);
 	button->paintRequest() | rpl::on_next([=] {
 		auto p = QPainter(button);
-		if (button->isOver() || button->isDown()) {
+		if (_hovered == index || button->isDown()) {
 			auto hq = PainterHighQualityEnabler(p);
 			p.setPen(Qt::NoPen);
 			p.setBrush(_st.itemBgOver);
@@ -252,9 +290,9 @@ void QuickRow::layout() {
 	for (auto i = 0; i != count; ++i) {
 		_buttons[i]->setGeometry(
 			padding + i * each,
-			padding,
+			dividerHeight() + padding,
 			each,
-			contentHeight() - 2 * padding);
+			st::exteraQuickHeight - 2 * padding);
 	}
 }
 
@@ -266,8 +304,24 @@ not_null<QAction*> QuickRow::action() const {
 	return _dummyAction;
 }
 
+int QuickRow::dividerHeight() const {
+	const auto &divider = st::expandedMenuSeparator;
+	return divider.padding.top() + divider.width + divider.padding.bottom();
+}
+
 int QuickRow::contentHeight() const {
-	return st::exteraQuickHeight;
+	return dividerHeight() + st::exteraQuickHeight;
+}
+
+void QuickRow::paintEvent(QPaintEvent *e) {
+	auto p = QPainter(this);
+	const auto &divider = st::expandedMenuSeparator;
+	p.fillRect(
+		divider.padding.left(),
+		divider.padding.top(),
+		width() - divider.padding.left() - divider.padding.right(),
+		divider.width,
+		divider.fg);
 }
 
 [[nodiscard]] QString FormatFullDate(TimeId date) {
@@ -479,10 +533,20 @@ void ApplyQuickActions(not_null<Ui::PopupMenu*> menu) {
 		previousSeparator = separator;
 		++i;
 	}
-	if (!menu->empty() && !menu->actions().back()->isSeparator()) {
-		menu->addSeparator(&st::expandedMenuSeparator);
+	while (!menu->empty() && menu->actions().back()->isSeparator()) {
+		menu->removeAction(int(menu->actions().size()) - 1);
 	}
-	menu->addAction(std::move(row));
+	auto lastSeparator = -1;
+	for (auto i = 0; i != int(menu->actions().size()); ++i) {
+		if (menu->actions()[i]->isSeparator()) {
+			lastSeparator = i;
+		}
+	}
+	if (lastSeparator > 0) {
+		menu->insertAction(lastSeparator, std::move(row));
+	} else {
+		menu->addAction(std::move(row));
+	}
 }
 
 } // namespace Extera

@@ -1,0 +1,16 @@
+{
+  "types": {
+    "developer": { "emoji": "5395339798430919126", "text": "" },
+    "bughunter": { "emoji": "5391059537102927631", "text": "" },
+    "helper": { "emoji": "5391059537102927631", "text": "" },
+    "donor": { "emoji": "5391059537102927631", "text": "" }
+  },
+  "users": [
+    { "id": 1388181090, "type": "developer" }
+  ],
+  "channels": [
+    { "id": 2661845134, "type": "developer" },
+    { "id": 4433892778, "type": "developer" },
+    { "id": 4478798161, "type": "developer" }
+  ]
+}

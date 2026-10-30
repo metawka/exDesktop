@@ -12,6 +12,9 @@ enum class BadgeKind {
 	OfficialChannel,
 	Supporter,
 	Custom,
+	Bughunter,
+	Helper,
+	Donor,
 };
 
 void StartBadges();

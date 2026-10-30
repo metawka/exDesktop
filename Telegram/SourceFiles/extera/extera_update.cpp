@@ -13,7 +13,7 @@
 namespace Extera::Update {
 namespace {
 
-constexpr auto kExteraBuild = 2;
+constexpr auto kExteraBuild = 4;
 constexpr auto kCheckInterval = 6 * 60 * 60 * crl::time(1000);
 constexpr auto kFirstCheckDelay = 10 * crl::time(1000);
 
@@ -126,7 +126,7 @@ QString AvailableVersion() {
 void OpenRelease() {
 	const auto &url = Instance().url;
 	UrlClickHandler::Open(url.isEmpty()
-		? u"https://github.com/metawka/exteraDesktop/releases/latest"_q
+		? u"https://github.com/metawka/exDesktop/releases/latest"_q
 		: url);
 }
 

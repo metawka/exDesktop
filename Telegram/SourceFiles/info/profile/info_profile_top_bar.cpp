@@ -528,7 +528,15 @@ TopBar::TopBar(
 			using Kind = Extera::BadgeKind;
 			const auto custom = Extera::BadgeCustomText(peer);
 			const auto name = peer->name();
-			switch (Extera::BadgeKindFor(peer)) {
+			const auto kind = Extera::BadgeKindFor(peer);
+			if (!custom.isEmpty()
+				&& kind != Kind::Developer
+				&& kind != Kind::OfficialChannel
+				&& kind != Kind::Supporter) {
+				controller->showToast(custom);
+				return;
+			}
+			switch (kind) {
 			case Kind::Porter:
 				controller->showToast(tr::lng_extera_badge_developer(
 					tr::now, lt_name, name));
@@ -550,9 +558,20 @@ TopBar::TopBar(
 					tr::now, lt_name, name));
 				break;
 			case Kind::Custom:
-				controller->showToast(custom.isEmpty()
-					? tr::lng_extera_badge_supporter(tr::now, lt_name, name)
-					: custom);
+				controller->showToast(
+					tr::lng_extera_badge_supporter(tr::now, lt_name, name));
+				break;
+			case Kind::Bughunter:
+				controller->showToast(tr::lng_exd_badge_bughunter(
+					tr::now, lt_name, name));
+				break;
+			case Kind::Helper:
+				controller->showToast(tr::lng_exd_badge_helper(
+					tr::now, lt_name, name));
+				break;
+			case Kind::Donor:
+				controller->showToast(tr::lng_exd_badge_donor(
+					tr::now, lt_name, name));
 				break;
 			case Kind::None:
 				break;

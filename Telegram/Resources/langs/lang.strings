@@ -9336,7 +9336,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_extera_website" = "Website";
 "lng_extera_crowdin" = "Translate";
 "lng_extera_badge_developer" = "{name} is the developer of exDesktop.";
-"lng_extera_badge_resource" = "{name} is an official resource of the original mobile client.";
+"lng_extera_badge_resource" = "{name} is an official exDesktop resource.";
 "lng_extera_port" = "exDesktop";
 "lng_extera_port_developer" = "Port Developer";
 "lng_extera_translate_messages" = "Translate Messages";
@@ -9475,6 +9475,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_extera_ai_send" = "Send";
 "lng_extera_ai_clear" = "Clear";
 "lng_extera_feed" = "Channel Feed";
+"lng_exd_badge_bughunter" = "{name} is an exDesktop bug hunter.";
+"lng_exd_badge_helper" = "{name} helps the exDesktop project.";
+"lng_exd_badge_donor" = "{name} supports exDesktop financially.";
 "lng_extera_quick_actions" = "Quick Actions Bar";
 "lng_extera_quick_actions_about_toggle" = "Icons at the bottom of the message menu replace the selected items.";
 "lng_extera_quick_actions_buttons" = "Quick Actions Buttons";
