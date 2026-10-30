@@ -101,14 +101,7 @@ class ArrayList(list):
     def clear(self):
         super().clear()
 
-    def __eq__(self, other):
-        return isinstance(other, Stub)
-
-    def __hash__(self):
-        return hash(self._name)
-
-    def __mro_entries__(self, bases):
-        return (object,)
+    __hash__ = None
 
 
 # Shims
@@ -428,7 +421,16 @@ def parse_markdown(text):
         if not match:
             break
         start = _utf16_len(text[:match.start()])
-        entities.append(["url", start, _utf16_len(match.group(1)), match.group(2)])
+        full_len = _utf16_len(match.group(0))
+        inner_len = _utf16_len(match.group(1))
+        shift = full_len - inner_len
+        prefix_len = 1
+        for entity in entities:
+            if entity[1] >= start + full_len:
+                entity[1] -= shift
+            elif entity[1] >= start + prefix_len:
+                entity[1] -= prefix_len
+        entities.append(["url", start, inner_len, match.group(2)])
         text = text[:match.start()] + match.group(1) + text[match.end():]
     return text, entities
 

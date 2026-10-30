@@ -91,9 +91,11 @@ def dispatch(builder_id, which):
         listener = builder._items_listener
     else:
         listener = builder._buttons.get(which, ("", None))[1]
-    if listener is not None:
-        try:
-            listener(builder, which)
-        except TypeError:
-            listener()
-    _builders.pop(builder_id, None)
+    try:
+        if listener is not None:
+            try:
+                listener(builder, which)
+            except TypeError:
+                listener()
+    finally:
+        _builders.pop(builder_id, None)

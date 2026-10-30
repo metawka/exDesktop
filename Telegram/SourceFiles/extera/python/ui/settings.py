@@ -106,6 +106,10 @@ def register_items(plugin_id, items):
     _registered[plugin_id] = list(items)
 
 
+def unregister_items(plugin_id):
+    _registered.pop(plugin_id, None)
+
+
 def find_item(plugin_id, index):
     items = _registered.get(plugin_id, [])
     if 0 <= index < len(items):
