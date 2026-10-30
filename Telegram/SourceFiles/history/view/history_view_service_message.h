@@ -11,6 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 class HistoryItem;
 
+#include "ui/effects/round_checkbox.h"
+
 namespace Ui {
 class ChatStyle;
 struct CornersPixmaps;
@@ -65,9 +67,15 @@ public:
 
 private:
 	[[nodiscard]] QRect countGeometry() const;
+	void paintSelection(
+		Painter &p,
+		const PaintContext &context,
+		QRect g) const;
 
 	QSize performCountOptimalSize() override;
 	QSize performCountCurrentSize(int newWidth) override;
+
+	mutable std::unique_ptr<Ui::RoundCheckbox> _selectionCheckbox;
 
 };
 

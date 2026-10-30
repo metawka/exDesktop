@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_widget.h"
+#include "ui/wrap/fade_wrap.h"
 
 #include "extera/extera_utils.h"
 
@@ -2288,8 +2289,54 @@ bool HistoryWidget::suppressSendAction() const {
 			_field->getLastText()));
 }
 
+void HistoryWidget::updateExdMathGhost() {
+	const auto value = Extera::InlineMathValue(_field->getLastText());
+	if (!value) {
+		if (_exdMathGhost) {
+			_exdMathGhost->hide(anim::type::normal);
+		}
+		return;
+	}
+	if (!_exdMathGhost) {
+		_exdMathGhost = base::make_unique_q<Ui::FadeWrap<Ui::RpWidget>>(
+			_field.data(),
+			object_ptr<Ui::RpWidget>(_field.data()));
+		_exdMathGhost->setAttribute(Qt::WA_TransparentForMouseEvents);
+		_exdMathGhost->hide(anim::type::instant);
+		const auto inner = _exdMathGhost->entity();
+		inner->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(inner);
+			const auto font = _field->rawTextEdit()->font();
+			const auto metrics = QFontMetrics(font);
+			p.setFont(font);
+			p.setPen(st::windowSubTextFg);
+			const auto text = inner->property("exd_text").toString();
+			const auto baseline = (inner->height() - metrics.height()) / 2
+				+ metrics.ascent();
+			p.drawText(0, baseline, text);
+		}, inner->lifetime());
+	}
+	const auto inner = _exdMathGhost->entity();
+	inner->setProperty("exd_text", *value);
+	const auto edit = _field->rawTextEdit();
+	const auto metrics = QFontMetrics(edit->font());
+	const auto cursor = edit->cursorRect();
+	const auto point = edit->viewport()->mapTo(
+		_field.data(),
+		cursor.topRight());
+	inner->resize(
+		metrics.horizontalAdvance(*value) + style::ConvertScale(2),
+		cursor.height());
+	_exdMathGhost->resize(inner->size());
+	_exdMathGhost->move(point.x() + style::ConvertScale(2), point.y());
+	inner->update();
+	_exdMathGhost->raise();
+	_exdMathGhost->show(anim::type::normal);
+}
+
 void HistoryWidget::fieldChanged() {
 	const auto original = _field->getLastText();
+	updateExdMathGhost();
 	if (const auto math = Extera::InlineMathResult(original)) {
 		const auto result = *math;
 		InvokeQueued(_field, [=] {
@@ -5844,7 +5891,16 @@ void HistoryWidget::sendVoice(const VoiceToSend &data) {
 void HistoryWidget::send(Api::SendOptions options) {
 	if (!_history) {
 		return;
-	} else if (_editMsgId) {
+	}
+	if (const auto value = Extera::InlineMathValue(_field->getLastText())) {
+		auto cursor = _field->textCursor();
+		cursor.movePosition(QTextCursor::End);
+		cursor.insertText(*value);
+		if (_exdMathGhost) {
+			_exdMathGhost->hide(anim::type::instant);
+		}
+	}
+	if (_editMsgId) {
 		saveEditMessage({});
 		return;
 	} else if (const auto page = shownRichMessage()) {

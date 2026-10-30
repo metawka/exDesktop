@@ -6,6 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "chat_helpers/field_autocomplete.h"
+#include "history/history.h"
+#include "history/history_item.h"
+#include "history/view/history_view_element.h"
 
 #include "extera/extera_config.h"
 
@@ -639,6 +642,81 @@ void FieldAutocomplete::updateFiltered(bool resetScroll) {
 						const auto user = owner->userLoaded(userId);
 						if (!user
 							|| skipUser(user)
+							|| markMentionCandidateIfExists(user)) {
+							continue;
+						}
+						pushMentionRow(user, Source::MentionCandidate);
+					}
+				}
+				if (const auto history = owner->historyLoaded(_channel)) {
+					auto authors = base::flat_set<not_null<UserData*>>();
+					for (const auto &block : history->blocks) {
+						for (const auto &view : block->messages) {
+							const auto from = view->data()->from();
+							if (const auto user = from->asUser()) {
+								if (!user->isSelf()) {
+									authors.emplace(user);
+								}
+							}
+						}
+					}
+					for (const auto &user : authors) {
+						if (skipUser(user)
+							|| markMentionCandidateIfExists(user)) {
+							continue;
+						}
+						pushMentionRow(user, Source::MentionCandidate);
+					}
+				}
+				if (!_filter.isEmpty()) {
+					if (_exdSearchQuery != _filter) {
+						_exdSearchQuery = _filter;
+						_exdSearchUsers.clear();
+						const auto session = &_channel->session();
+						if (_exdSearchRequestId) {
+							session->api().request(
+								_exdSearchRequestId).cancel();
+						}
+						const auto query = _filter;
+						_exdSearchRequestId = session->api().request(
+							MTPcontacts_Search(
+								MTP_flags(0),
+								MTP_string(query),
+								MTP_int(50))
+						).done(crl::guard(this, [=](
+								const MTPcontacts_Found &result) {
+							_exdSearchRequestId = 0;
+							if (_exdSearchQuery != query) {
+								return;
+							}
+							const auto &data = result.data();
+							session->data().processUsers(data.vusers());
+							session->data().processChats(data.vchats());
+							auto users = std::vector<not_null<UserData*>>();
+							const auto feed = [&](
+									const MTPVector<MTPPeer> &list) {
+								for (const auto &peer : list.v) {
+									const auto id = peerFromMTP(peer);
+									if (!peerIsUser(id)) {
+										continue;
+									}
+									const auto user = session->data().userLoaded(
+										peerToUser(id));
+									if (user) {
+										users.push_back(user);
+									}
+								}
+							};
+							feed(data.vmy_results());
+							feed(data.vresults());
+							_exdSearchUsers = std::move(users);
+							updateFiltered();
+						})).fail(crl::guard(this, [=](const MTP::Error &) {
+							_exdSearchRequestId = 0;
+						})).send();
+					}
+					for (const auto &user : _exdSearchUsers) {
+						if (skipUser(user)
 							|| markMentionCandidateIfExists(user)) {
 							continue;
 						}

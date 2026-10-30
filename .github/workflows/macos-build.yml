@@ -5,6 +5,9 @@ on:
     types: [published]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-14
@@ -27,6 +30,11 @@ jobs:
       - name: Install build dependencies
         run: brew install automake libtool cmake wget pkg-config gnu-tar ninja nasm meson
 
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Restore ThirdParty libraries
         id: libs
         uses: actions/cache/restore@v4
@@ -40,7 +48,6 @@ jobs:
 
       - name: Build ThirdParty libraries
         env:
-          # fetch_archive.py queries the GitHub API, unauthenticated it hits the rate limit.
           GH_TOKEN: ${{ github.token }}
         run: ./tdesktop/Telegram/build/prepare/mac.sh silent
 
@@ -59,23 +66,21 @@ jobs:
           key: mac-arm64
           max-size: 2G
 
-      # Xcode generator builds the app far too slowly on the runner (6 h
-      # timeout was hit), Ninja + ccache keeps it within limits.
       - name: Configure
         working-directory: tdesktop/Telegram
         env:
           API_ID: ${{ secrets.TDESKTOP_API_ID }}
           API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
         run: |
-          if [ -n "$API_ID" ]; then
-            creds=(-D TDESKTOP_API_ID="$API_ID" -D TDESKTOP_API_HASH="$API_HASH")
-          elif [ "$GITHUB_EVENT_NAME" = release ]; then
-            echo "TDESKTOP_API_ID secret is not set"; exit 1
-          else
-            echo "No API secrets, using TEST ONLY credentials"
-            creds=(-D TDESKTOP_API_TEST=ON)
+          if [ -z "$API_ID" ] || [ -z "$API_HASH" ]; then
+            echo "TDESKTOP_API_ID or TDESKTOP_API_HASH secret is not set"
+            exit 1
           fi
-          ./configure.sh "${creds[@]}" \
+          ./configure.sh \
+            -D TDESKTOP_API_ID="$API_ID" \
+            -D TDESKTOP_API_HASH="$API_HASH" \
+            -D Python3_ROOT_DIR="$pythonLocation" \
+            -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON \
             -G "Ninja Multi-Config" \
             -D CMAKE_OSX_ARCHITECTURES=arm64 \
             -D CMAKE_C_COMPILER_LAUNCHER=ccache \
@@ -85,10 +90,6 @@ jobs:
             -D CMAKE_CXX_FLAGS="-Xclang -fno-pch-timestamp" \
             -D CMAKE_OBJCXX_FLAGS="-Xclang -fno-pch-timestamp"
 
-      # Most sources use the precompiled header, which ccache refuses to cache
-      # unless the PCH has no timestamp and these sloppiness bits are set.
-      # Three jobs, not ninja's default five: the 3-core/7 GB runner swaps and
-      # single files took 10-20 min.
       - name: Build
         working-directory: tdesktop/out
         env:
@@ -98,23 +99,44 @@ jobs:
       - name: Package
         working-directory: tdesktop/out/Release
         run: |
-          # No Developer ID yet: sign ad-hoc so the bundle is at least
-          # consistently signed. Without it Gatekeeper reports a downloaded
-          # arm64 app as "damaged" instead of from an unidentified developer.
-          codesign --force --deep --sign - Telegram.app
-          codesign --verify --deep --strict Telegram.app
-          ditto -c -k --sequesterRsrc --keepParent Telegram.app \
-            "$GITHUB_WORKSPACE/exteraDesktop-macos-arm64.zip"
+          VERSION=$(sed -n 's/.*AppVersionStr = "\([^"]*\)".*/\1/p' "$GITHUB_WORKSPACE/tdesktop/Telegram/SourceFiles/core/version.h")
+          if [ "$GITHUB_EVENT_NAME" = "release" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          APP=Telegram.app
+          BIN="$APP/Contents/MacOS/Telegram"
+          mkdir -p "$APP/Contents/Frameworks" "$APP/Contents/Resources/python311/lib"
+          LINKED=$(otool -L "$BIN" | awk '/libpython3\.11/ {print $1}' | head -1)
+          if [ -z "$LINKED" ]; then
+            echo "libpython3.11 is not linked"
+            exit 1
+          fi
+          cp -L "$pythonLocation/lib/libpython3.11.dylib" "$APP/Contents/Frameworks/"
+          chmod u+w "$APP/Contents/Frameworks/libpython3.11.dylib"
+          install_name_tool -id @executable_path/../Frameworks/libpython3.11.dylib \
+            "$APP/Contents/Frameworks/libpython3.11.dylib"
+          install_name_tool -change "$LINKED" @executable_path/../Frameworks/libpython3.11.dylib "$BIN"
+          cp -R "$pythonLocation/lib/python3.11" "$APP/Contents/Resources/python311/lib/python3.11"
+          rm -rf "$APP/Contents/Resources/python311/lib/python3.11/test" \
+            "$APP/Contents/Resources/python311/lib/python3.11/site-packages"
+          find "$APP/Contents/Resources/python311" -name "__pycache__" -type d -prune -exec rm -rf {} +
+          rm -rf exDesktop.app
+          mv "$APP" exDesktop.app
+          codesign --force --deep --sign - exDesktop.app
+          codesign --verify --deep --strict exDesktop.app
+          ditto -c -k --sequesterRsrc --keepParent exDesktop.app \
+            "$GITHUB_WORKSPACE/exDesktop-macos-arm64.$VERSION.zip"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: exteraDesktop-macos-arm64
-          path: exteraDesktop-macos-arm64.zip
+          name: exDesktop-macos-arm64
+          path: exDesktop-macos-arm64.*.zip
+          retention-days: 7
 
       - name: Attach to release
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" "exteraDesktop-macos-arm64.zip"
+        run: gh release upload "$GITHUB_REF_NAME" "exDesktop-macos-arm64.$VERSION.zip" --clobber

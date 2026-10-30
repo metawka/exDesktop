@@ -488,6 +488,21 @@ PyObject *InitNativeModule() {
 			return false;
 		}
 	}
+#else
+	for (const auto &candidate : {
+			cExeDir() + u"../Resources/python311"_q,
+			cExeDir() + u"python311"_q }) {
+		if (QDir(candidate).exists(u"lib"_q)) {
+			const auto home = QDir(candidate).absolutePath().toStdWString();
+			if (!finish(PyConfig_SetString(
+					&config,
+					&config.home,
+					home.c_str()))) {
+				return false;
+			}
+			break;
+		}
+	}
 #endif
 	config.write_bytecode = 0;
 	config.install_signal_handlers = 0;

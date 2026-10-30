@@ -340,6 +340,15 @@ MainMenu::MainMenu(
 	[=] { return controller->isGifPausedAtLeastFor(GifPauseReason::Layer); },
 	kPlayStatusLimit,
 	Info::Profile::BadgeType::Premium))
+, _exdBadge(std::make_unique<Info::Profile::Badge>(
+	this,
+	st::settingsInfoPeerBadge,
+	&controller->session(),
+	Info::Profile::VerifiedContentForPeer(controller->session().user()),
+	nullptr,
+	[=] { return controller->isGifPausedAtLeastFor(GifPauseReason::Layer); },
+	kPlayStatusLimit,
+	Info::Profile::BadgeType::Premium))
 , _scroll(this, st::defaultSolidScroll)
 , _inner(_scroll->setOwnedWidget(
 	object_ptr<Ui::VerticalLayout>(_scroll.data())))
@@ -428,7 +437,9 @@ MainMenu::MainMenu(
 
 	rpl::combine(
 		_toggleAccounts->rightSkipValue(),
-		rpl::single(rpl::empty) | rpl::then(_badge->updated())
+		rpl::single(rpl::empty) | rpl::then(rpl::merge(
+			_badge->updated(),
+			_exdBadge->updated()))
 	) | rpl::on_next([=] {
 		moveBadge();
 	}, lifetime());
@@ -485,19 +496,34 @@ MainMenu::MainMenu(
 MainMenu::~MainMenu() = default;
 
 void MainMenu::moveBadge() {
-	if (!_badge->widget()) {
+	const auto badgeWidth = _badge->widget()
+		? _badge->widget()->width()
+		: 0;
+	const auto exdWidth = _exdBadge->widget()
+		? (_exdBadge->widget()->width() + style::ConvertScale(4))
+		: 0;
+	if (!badgeWidth && !exdWidth) {
 		return;
 	}
 	const auto available = width()
 		- st::mainMenuCoverNameLeft
 		- _toggleAccounts->rightSkip()
-		- _badge->widget()->width();
+		- badgeWidth
+		- exdWidth;
 	const auto left = st::mainMenuCoverNameLeft
 		+ std::min(_name.maxWidth() + st::semiboldFont->spacew, available);
-	_badge->move(
-		left,
-		st::mainMenuCoverNameTop,
-		st::mainMenuCoverNameTop + st::semiboldFont->height);
+	if (_badge->widget()) {
+		_badge->move(
+			left,
+			st::mainMenuCoverNameTop,
+			st::mainMenuCoverNameTop + st::semiboldFont->height);
+	}
+	if (_exdBadge->widget()) {
+		_exdBadge->move(
+			left + badgeWidth + (badgeWidth ? style::ConvertScale(4) : 0),
+			st::mainMenuCoverNameTop,
+			st::mainMenuCoverNameTop + st::semiboldFont->height);
+	}
 }
 
 void MainMenu::setupArchive() {
@@ -1023,6 +1049,9 @@ void MainMenu::drawName(Painter &p) {
 		(widthText
 			- (_badge->widget()
 				? (st::semiboldFont->spacew + _badge->widget()->width())
+				: 0)
+			- (_exdBadge->widget()
+				? (style::ConvertScale(4) + _exdBadge->widget()->width())
 				: 0)),
 		width());
 }

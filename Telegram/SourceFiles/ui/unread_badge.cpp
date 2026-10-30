@@ -248,8 +248,9 @@ int PeerBadge::drawGetWidth(Painter &p, Descriptor &&descriptor) {
 	}
 	auto copy = descriptor;
 	const auto result = drawGetWidthInner(p, std::move(descriptor));
-	copy.nameWidth += result;
-	return result + drawEmojiStatus(
+	const auto gap = result ? style::ConvertScale(4) : 0;
+	copy.nameWidth += result + gap;
+	return result + gap + drawEmojiStatus(
 		p,
 		copy,
 		_exteraStatus,

@@ -311,6 +311,12 @@ void TranslateTracker::requestSome() {
 	requests.reserve(_requested.size());
 	auto ids = std::vector<FullMsgId>();
 	ids.reserve(_requested.size());
+	struct ButtonTarget {
+		FullMsgId id;
+		int row = 0;
+		int column = 0;
+	};
+	auto buttonTargets = std::vector<ButtonTarget>();
 	for (const auto &id : _requested) {
 		if (const auto item = owner->message(id)) {
 			requests.push_back(Ui::PrepareTranslateProviderRequest(
@@ -321,6 +327,34 @@ void TranslateTracker::requestSome() {
 			ids.push_back(id);
 		}
 	}
+	const auto messagesCount = int(ids.size());
+	for (const auto &id : ids) {
+		const auto item = owner->message(id);
+		const auto markup = item
+			? item->Get<HistoryMessageReplyMarkup>()
+			: nullptr;
+		if (!markup) {
+			continue;
+		}
+		const auto &rows = markup->data.rows;
+		for (auto r = 0; r != int(rows.size()); ++r) {
+			for (auto c = 0; c != int(rows[r].size()); ++c) {
+				const auto &text = rows[r][c].text;
+				if (text.trimmed().isEmpty()) {
+					continue;
+				}
+				requests.push_back(Ui::PrepareTranslateProviderRequest(
+					_provider.get(),
+					session->data().peer(id.peer),
+					MsgId(),
+					TextWithEntities{ text }));
+				buttonTargets.push_back({ id, r, c });
+			}
+		}
+	}
+	const auto buttonResults = std::make_shared<base::flat_map<
+		FullMsgId,
+		base::flat_map<std::pair<int, int>, QString>>>();
 	_requested = std::move(ids);
 	if (_requested.empty()) {
 		requestSome();
@@ -333,6 +367,17 @@ void TranslateTracker::requestSome() {
 		to,
 		[=](int index, Ui::TranslateProviderResult result) {
 			if (!_requestInProcess || (_requestToken != requestToken)) {
+				return;
+			}
+			if (index >= messagesCount
+				&& index - messagesCount < int(buttonTargets.size())) {
+				const auto &target = buttonTargets[index - messagesCount];
+				if (result.text && !result.text->text.isEmpty()) {
+					(*buttonResults)[target.id][{
+						target.row,
+						target.column,
+					}] = result.text->text;
+				}
 				return;
 			}
 			if (index < 0 || index >= _requested.size()) {
@@ -348,6 +393,11 @@ void TranslateTracker::requestSome() {
 		[=] {
 			if (!_requestInProcess || (_requestToken != requestToken)) {
 				return;
+			}
+			for (auto &[id, buttons] : *buttonResults) {
+				if (const auto item = owner->message(id)) {
+					item->translationButtonsDone(to, std::move(buttons));
+				}
 			}
 			_requestInProcess = false;
 			_requested.clear();

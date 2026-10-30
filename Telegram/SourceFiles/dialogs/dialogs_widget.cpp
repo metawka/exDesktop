@@ -670,7 +670,7 @@ Widget::Widget(
 				true);
 			_updateTelegram->show();
 			_updateTelegram->setClickedCallback([] {
-				Extera::Update::OpenRelease();
+				Extera::Update::Install();
 			});
 			if (_connecting) {
 				_connecting->raise();

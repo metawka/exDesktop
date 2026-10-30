@@ -5350,7 +5350,8 @@ MessageIdsList HistoryInner::getSelectedItems() const {
 		_selected.begin(),
 		_selected.end()
 	) | views::filter([](const auto &item) {
-		return !item->isService() && item->isRegular();
+		return item->isRegular()
+			&& (!item->isService() || Extera::Bool(u"select_service"_q));
 	}) | views::transform([](const auto &item) {
 		return item->fullId();
 	}) | to_vector;

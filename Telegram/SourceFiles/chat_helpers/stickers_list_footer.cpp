@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "chat_helpers/stickers_list_footer.h"
+#include "styles/style_menu_icons.h"
+#include "apiwrap.h"
 
 #include "chat_helpers/emoji_keywords.h"
 #include "chat_helpers/stickers_emoji_pack.h"
@@ -94,6 +96,12 @@ uint64 RecentEmojiSectionSetId() {
 
 uint64 AllEmojiSectionSetId() {
 	return kEmojiSectionSetIdBase;
+}
+
+uint64 ExdFavoritesSetId() {
+	return kEmojiSectionSetIdBase
+		+ static_cast<uint64>(EmojiSection::Symbols)
+		+ 3;
 }
 
 uint64 SearchEmojiSectionSetId() {
@@ -840,6 +848,101 @@ rpl::producer<> StickersListFooter::openSettingsRequests() const {
 	return _openSettingsRequests.events();
 }
 
+bool StickersListFooter::canReorder(int index) const {
+	if (index < 0 || index >= int(_icons.size())) {
+		return false;
+	}
+	const auto &icon = _icons[index];
+	using Flag = Data::StickersSetFlag;
+	return icon.set
+		&& !icon.megagroup
+		&& (icon.set->flags & Flag::Installed)
+		&& !(icon.set->flags & Flag::Archived)
+		&& (icon.set->type() != Data::StickersType::Masks);
+}
+
+void StickersListFooter::startReorder() {
+	if (_reorderPressed < 0
+		|| !canReorder(_reorderPressed)
+		|| _iconState.dragging
+		|| _subiconState.dragging) {
+		return;
+	}
+	_reordering = true;
+	_reorderIndex = _reorderPressed;
+	update();
+}
+
+void StickersListFooter::updateReorder() {
+	auto p = mapFromGlobal(_iconsMousePos);
+	auto x = p.x();
+	if (rtl()) {
+		x = width() - x;
+	}
+	auto target = -1;
+	enumerateIcons([&](const IconInfo &info) {
+		if (x >= info.adjustedLeft && x < info.adjustedLeft + info.width) {
+			target = info.index;
+			return false;
+		}
+		return true;
+	});
+	if (target < 0 || target == _reorderIndex || !canReorder(target)) {
+		return;
+	}
+	auto moved = std::move(_icons[_reorderIndex]);
+	_icons.erase(begin(_icons) + _reorderIndex);
+	_icons.insert(begin(_icons) + target, std::move(moved));
+	_reorderIndex = target;
+	_selected = IconId{ .index = target };
+	update();
+}
+
+void StickersListFooter::finishReorder() {
+	_reordering = false;
+	_reorderIndex = -1;
+	auto emoji = Data::StickersSetsOrder();
+	auto stickers = Data::StickersSetsOrder();
+	for (auto i = 0; i != int(_icons.size()); ++i) {
+		if (!canReorder(i)) {
+			continue;
+		}
+		const auto &icon = _icons[i];
+		if (icon.set->type() == Data::StickersType::Emoji) {
+			emoji.push_back(icon.setId);
+		} else {
+			stickers.push_back(icon.setId);
+		}
+	}
+	const auto apply = [&](
+			const Data::StickersSetsOrder &moved,
+			Data::StickersType type) {
+		if (moved.size() < 2) {
+			return;
+		}
+		const auto &stickersData = _session->data().stickers();
+		const auto &full = (type == Data::StickersType::Emoji)
+			? stickersData.emojiSetsOrder()
+			: stickersData.setsOrder();
+		auto result = Data::StickersSetsOrder();
+		result.reserve(full.size());
+		auto next = 0;
+		for (const auto id : full) {
+			if (ranges::contains(moved, id)) {
+				result.push_back(moved[next++]);
+			} else {
+				result.push_back(id);
+			}
+		}
+		if (result != full) {
+			_session->api().saveStickerSets(result, {}, type);
+		}
+	};
+	apply(emoji, Data::StickersType::Emoji);
+	apply(stickers, Data::StickersType::Stickers);
+	update();
+}
+
 void StickersListFooter::mousePressEvent(QMouseEvent *e) {
 	if (e->button() != Qt::LeftButton) {
 		return;
@@ -850,6 +953,12 @@ void StickersListFooter::mousePressEvent(QMouseEvent *e) {
 	if (_selected == SpecialOver::Settings) {
 		_openSettingsRequests.fire({});
 	} else {
+		_reorderPressed = -1;
+		if (const auto icon = std::get_if<IconId>(&_selected)) {
+			_reorderPressed = icon->index;
+			_reorderTimer.setCallback([=] { startReorder(); });
+			_reorderTimer.callOnce(crl::time(450));
+		}
 		_pressed = _selected;
 		_iconsMouseDown = _iconsMousePos;
 		const auto iconX = int(base::SafeRound(_iconState.x.current()));
@@ -861,6 +970,15 @@ void StickersListFooter::mousePressEvent(QMouseEvent *e) {
 
 void StickersListFooter::mouseMoveEvent(QMouseEvent *e) {
 	_iconsMousePos = e ? e->globalPos() : QCursor::pos();
+	if (_reordering) {
+		updateReorder();
+		return;
+	}
+	if (_reorderTimer.isActive()
+		&& (_iconsMousePos - _iconsMouseDown).manhattanLength()
+			>= QApplication::startDragDistance()) {
+		_reorderTimer.cancel();
+	}
 	updateSelected();
 
 	if (!_iconState.dragging
@@ -901,6 +1019,12 @@ void StickersListFooter::mouseReleaseEvent(QMouseEvent *e) {
 	const auto wasDown = std::exchange(_pressed, SpecialOver::None);
 
 	_iconsMousePos = e ? e->globalPos() : QCursor::pos();
+	_reorderTimer.cancel();
+	_reorderPressed = -1;
+	if (_reordering) {
+		finishReorder();
+		return;
+	}
 	if (finishDragging()) {
 		return;
 	}
@@ -1289,6 +1413,13 @@ void StickersListFooter::paintSetIcon(
 		crl::time now,
 		bool paused) const {
 	const auto &icon = _icons[info.index];
+	if (icon.setId == ExdFavoritesSetId()) {
+		st::menuIconFave.paintInCenter(
+			p,
+			QRect(info.adjustedLeft, _iconsTop, _singleWidth, st().footer),
+			st::windowSubTextFg->c);
+		return;
+	}
 	const auto expandingShift = context.expanding
 		? QPoint(
 			0,

@@ -547,6 +547,8 @@ private:
 
 	mutable Ui::Text::String _fromName;
 	mutable std::unique_ptr<FromNameStatus> _fromNameStatus;
+	mutable std::unique_ptr<FromNameStatus> _exdBadgeStatus;
+	mutable DocumentId _exdBadgeId = 0;
 	mutable std::unique_ptr<Ui::RoundCheckbox> _selectionRoundCheckbox;
 	mutable uint32 _fromNameVersion : 16 = 0;
 	uint32 _nonTextMaxWidth : 16 = 0;

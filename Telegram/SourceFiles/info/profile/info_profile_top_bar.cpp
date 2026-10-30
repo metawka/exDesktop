@@ -2051,6 +2051,9 @@ void TopBar::updateTitlePosition(float64 progressCurrent) {
 	if (verifiedWidget || badgeWidget) {
 		badgesWidth += st::infoVerifiedCheckPosition.x();
 	}
+	if (verifiedWidget && badgeWidget) {
+		badgesWidth += style::ConvertScale(4);
+	}
 	const auto titleWidth = width()
 		- interpolatedPadding
 		- reservedRight
@@ -2103,8 +2106,11 @@ void TopBar::updateTitlePosition(float64 progressCurrent) {
 		_badge->move(badgeLeft, badgeTop, badgeBottom);
 	}
 	if (_verified) {
+		const auto gap = (badgeWidget && badgeWidget->width())
+			? style::ConvertScale(4)
+			: 0;
 		_verified->move(
-			badgeLeft + (badgeWidget ? badgeWidget->width() : 0),
+			badgeLeft + (badgeWidget ? badgeWidget->width() : 0) + gap,
 			badgeTop,
 			badgeBottom);
 	}

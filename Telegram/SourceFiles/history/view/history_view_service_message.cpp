@@ -6,6 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_service_message.h"
+#include "ui/effects/round_checkbox.h"
+#include "ui/painter.h"
+#include "styles/style_chat.h"
 
 #include "history/view/media/history_view_media.h"
 #include "history/view/reactions/history_view_reactions.h"
@@ -609,6 +612,57 @@ int Service::marginBottom() const {
 	return result;
 }
 
+void Service::paintSelection(
+		Painter &p,
+		const PaintContext &context,
+		QRect g) const {
+	if (context.skipSelectionCheck || !data()->canBeSelected()) {
+		_selectionCheckbox = nullptr;
+		return;
+	}
+	const auto mode = delegate()->elementInSelectionMode(this);
+	if (!mode.progress) {
+		_selectionCheckbox = nullptr;
+		return;
+	}
+	const auto selected = context.selected();
+	if (selected) {
+		p.fillRect(
+			0,
+			g.y() - st::msgServiceMargin.top(),
+			width(),
+			g.height()
+				+ st::msgServiceMargin.top()
+				+ st::msgServiceMargin.bottom(),
+			context.st->msgSelectOverlay());
+	}
+	if (selected && !_selectionCheckbox) {
+		_selectionCheckbox = std::make_unique<Ui::RoundCheckbox>(
+			st::msgSelectionCheck,
+			[this] { repaint(); });
+	}
+	if (_selectionCheckbox) {
+		_selectionCheckbox->setChecked(selected, anim::type::normal);
+	}
+	const auto &st = st::msgSelectionCheck;
+	const auto o = ScopedPainterOpacity(p, mode.progress);
+	const auto pos = QPoint(
+		width()
+			- st::msgPadding.right() / 2
+			- st.size
+			- st::historyScroll.deltax,
+		g.y() + (g.height() - st.size) / 2);
+	{
+		p.setPen(QPen(st.border, st.width));
+		p.setBrush(context.st->msgServiceBg());
+		auto hq = PainterHighQualityEnabler(p);
+		p.drawEllipse(QRect(pos, QSize(st.size, st.size)));
+	}
+	if (_selectionCheckbox) {
+		_selectionCheckbox->paint(p, pos.x(), pos.y(), width());
+	}
+}
+
 void Service::draw(Painter &p, const PaintContext &context) const {
 	auto g = countGeometry();
 	if (g.width() < 1) {
@@ -646,6 +700,7 @@ void Service::draw(Painter &p, const PaintContext &context) const {
 	}
 
 	paintHighlight(p, context, g.height());
+	paintSelection(p, context, g);
 
 	const auto gestureShift = context.gestureHorizontal.visualTranslationFor(
 		data()->id.bare);

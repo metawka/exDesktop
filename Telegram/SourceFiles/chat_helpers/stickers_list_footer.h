@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/timer.h"
+
 #include "chat_helpers/compose/compose_features.h"
 #include "chat_helpers/tabbed_selector.h"
 #include "media/clip/media_clip_reader.h"
@@ -54,6 +56,7 @@ enum class ValidateIconAnimations {
 [[nodiscard]] uint64 EmojiSectionSetId(Ui::Emoji::Section section);
 [[nodiscard]] uint64 RecentEmojiSectionSetId();
 [[nodiscard]] uint64 AllEmojiSectionSetId();
+[[nodiscard]] uint64 ExdFavoritesSetId();
 [[nodiscard]] uint64 SearchEmojiSectionSetId();
 [[nodiscard]] std::optional<Ui::Emoji::Section> SetIdEmojiSection(uint64 id);
 
@@ -320,6 +323,16 @@ private:
 
 	rpl::event_stream<> _openSettingsRequests;
 	rpl::event_stream<uint64> _setChosen;
+
+	[[nodiscard]] bool canReorder(int index) const;
+	void startReorder();
+	void updateReorder();
+	void finishReorder();
+
+	base::Timer _reorderTimer;
+	int _reorderIndex = -1;
+	int _reorderPressed = -1;
+	bool _reordering = false;
 
 };
 

@@ -549,7 +549,6 @@ void Application::run() {
 	_savedWindows->startRestore();
 
 	Extera::StartBadges();
-	Extera::StartWelcome();
 	Extera::Plugins::Start();
 	Extera::Update::Start();
 	Extera::Streamer::Start();

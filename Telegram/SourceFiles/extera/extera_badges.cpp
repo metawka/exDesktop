@@ -312,4 +312,9 @@ QString BadgeCustomText(not_null<PeerData*> peer) {
 	return text.replace(u"**"_q, QString());
 }
 
+DocumentId BadgeTypeEmoji(const QString &type) {
+	const auto i = Own().typeEmoji.find(type);
+	return (i != end(Own().typeEmoji)) ? i->second : DocumentId();
+}
+
 } // namespace Extera

@@ -1931,6 +1931,8 @@ PRIVATE
     extera/extera_navigation.h
     extera/extera_streamer.cpp
     extera/extera_update.cpp
+    extera/extera_cross_send.cpp
+    extera/extera_cross_send.h
     extera/extera_update.h
     extera/extera_streamer.h
     extera/extera_feed.h

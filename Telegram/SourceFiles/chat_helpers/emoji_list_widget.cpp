@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "chat_helpers/emoji_list_widget.h"
+#include "data/stickers/data_stickers_set.h"
+#include "extera/extera_config.h"
 
 #include "window/window_media_preview.h"
 #include "api/api_peer_photo.h"
@@ -1931,6 +1933,51 @@ void EmojiListWidget::ensureLoaded(int section) {
 	}
 }
 
+namespace {
+
+[[nodiscard]] QStringList FavoriteEmojiList() {
+	return Extera::String(u"favorite_emoji"_q).split(
+		',',
+		Qt::SkipEmptyParts);
+}
+
+[[nodiscard]] QString FavoriteEmojiKey(const RecentEmojiId &id) {
+	if (const auto emoji = std::get_if<EmojiPtr>(&id.data)) {
+		return *emoji
+			? (u"e"_q + QString::number((*emoji)->index()))
+			: QString();
+	} else if (const auto document = std::get_if<RecentEmojiDocument>(
+			&id.data)) {
+		return u"c"_q
+			+ QString::number(document->id)
+			+ (document->test ? u"t"_q : QString());
+	}
+	return QString();
+}
+
+[[nodiscard]] std::optional<RecentEmojiId> FavoriteEmojiFromKey(
+		const QString &key) {
+	if (key.startsWith('e')) {
+		if (const auto emoji = Ui::Emoji::FromUrl(
+				u"emoji://e."_q + key.mid(1))) {
+			return RecentEmojiId{ emoji };
+		}
+	} else if (key.startsWith('c')) {
+		const auto test = key.endsWith('t');
+		const auto id = (test ? key.mid(1, key.size() - 2) : key.mid(1))
+			.toULongLong();
+		if (id) {
+			return RecentEmojiId{ RecentEmojiDocument{
+				.id = DocumentId(id),
+				.test = test,
+			} };
+		}
+	}
+	return std::nullopt;
+}
+
+} // namespace
+
 void EmojiListWidget::fillRecent() {
 	if (_mode != Mode::Full) {
 		return;
@@ -1938,12 +1985,35 @@ void EmojiListWidget::fillRecent() {
 	_recent.clear();
 	_recentCustomIds.clear();
 
+	for (const auto &key : FavoriteEmojiList()) {
+		const auto id = FavoriteEmojiFromKey(key);
+		if (!id || !std::get_if<EmojiPtr>(&id->data)) {
+			continue;
+		}
+		const auto document = std::get_if<RecentEmojiDocument>(&id->data);
+		if (document
+			&& ((document->test != session().isTestMode())
+				|| _onlyUnicodeEmoji)) {
+			continue;
+		}
+		_recent.push_back({
+			.custom = resolveCustomRecent(*id),
+			.id = *id,
+		});
+		if (document) {
+			_recentCustomIds.emplace(document->id);
+		}
+	}
+	const auto favorites = int(_recent.size());
+
 	const auto &list = Core::App().settings().recentEmoji();
 	_recent.reserve(std::min(int(list.size()), Core::kRecentEmojiLimit) + 1);
 	const auto test = session().isTestMode();
 	for (const auto &one : list) {
 		const auto document = std::get_if<RecentEmojiDocument>(&one.id.data);
 		if (document && ((document->test != test) || _onlyUnicodeEmoji)) {
+			continue;
+		} else if (ranges::contains(_recent, one.id, &RecentOne::id)) {
 			continue;
 		}
 		_recent.push_back({
@@ -1953,7 +2023,7 @@ void EmojiListWidget::fillRecent() {
 		if (document) {
 			_recentCustomIds.emplace(document->id);
 		}
-		if (_recent.size() >= Core::kRecentEmojiLimit) {
+		if (_recent.size() >= Core::kRecentEmojiLimit + favorites) {
 			break;
 		}
 	}
@@ -2085,6 +2155,37 @@ void EmojiListWidget::fillRecentMenu(
 			const auto text = emoji->text();
 			TextUtilities::SetClipboardText({ text, { text } });
 		}, &st().icons.menuEmojiCopy);
+	}
+	if (emoji || document) {
+		auto favoriteId = RecentEmojiId{ emoji };
+		if (document) {
+			favoriteId.data = RecentEmojiDocument{
+				.id = document->id,
+				.test = document->session().isTestMode(),
+			};
+		}
+		const auto key = FavoriteEmojiKey(favoriteId);
+		const auto favorite = FavoriteEmojiList().contains(key);
+		if (!key.isEmpty()) {
+			addAction(favorite
+				? tr::lng_exd_emoji_unfavorite(tr::now)
+				: tr::lng_exd_emoji_favorite(tr::now), crl::guard(this, [=] {
+				auto list = FavoriteEmojiList();
+				if (favorite) {
+					list.removeAll(key);
+				} else {
+					list.removeAll(key);
+					list.push_back(key);
+				}
+				Extera::Config::Instance().setString(
+					u"favorite_emoji"_q,
+					list.join(','));
+				refreshRecent();
+				refreshCustom();
+			}), favorite
+				? &st::menuIconUnfave
+				: &st::menuIconFave);
+		}
 	}
 	if (!recent) {
 		return;
@@ -3671,6 +3772,51 @@ void EmojiListWidget::refreshCustom() {
 			.premiumRequired = premium && premiumMayBeBought,
 		});
 	};
+	if (_mode == Mode::Full && !onlyUnicodeEmoji) {
+		auto favorites = std::vector<CustomOne>();
+		for (const auto &key : FavoriteEmojiList()) {
+			const auto parsed = FavoriteEmojiFromKey(key);
+			const auto data = parsed
+				? std::get_if<RecentEmojiDocument>(&parsed->data)
+				: nullptr;
+			if (!data || data->test != session->isTestMode()) {
+				continue;
+			}
+			const auto document = owner->document(data->id);
+			if (const auto sticker = document->sticker()) {
+				favorites.push_back({
+					.custom = resolveCustomEmoji(
+						EmojiStatusId{ document->id },
+						document,
+						ExdFavoritesSetId()),
+					.document = document,
+					.emoji = Ui::Emoji::Find(sticker->alt),
+				});
+			}
+		}
+		if (!favorites.empty()) {
+			if (!_exdFavoritesSet) {
+				_exdFavoritesSet = std::make_unique<Data::StickersSet>(
+					owner,
+					ExdFavoritesSetId(),
+					0,
+					0,
+					tr::lng_exd_emoji_favorites(tr::now),
+					QString(),
+					0,
+					Data::StickersSetFlags(),
+					0);
+			}
+			const auto thumbnail = favorites.front().document.get();
+			_custom.push_back({
+				.id = ExdFavoritesSetId(),
+				.set = _exdFavoritesSet.get(),
+				.thumbnailDocument = thumbnail,
+				.title = tr::lng_exd_emoji_favorites(tr::now),
+				.list = std::move(favorites),
+			});
+		}
+	}
 	refreshEmojiStatusCollectibles();
 	refreshMegagroupStickers(push, GroupStickersPlace::Visible);
 	for (const auto setId : owner->stickers().emojiSetsOrder()) {

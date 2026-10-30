@@ -170,11 +170,11 @@ private:
 
 };
 
-std::optional<QString> InlineMathResult(const QString &text) {
-	if (!Bool(u"inline_math"_q) || !text.endsWith(u"= "_q)) {
+std::optional<QString> InlineMathValue(const QString &text) {
+	if (!Bool(u"inline_math"_q) || !text.endsWith('=')) {
 		return std::nullopt;
 	}
-	const auto body = text.left(text.size() - 2);
+	const auto body = text.left(text.size() - 1);
 	auto start = body.size();
 	while (start > 0) {
 		const auto ch = body[start - 1];
@@ -199,8 +199,18 @@ std::optional<QString> InlineMathResult(const QString &text) {
 		return std::nullopt;
 	}
 	const auto rounded = std::round(*value * 1e9) / 1e9;
-	const auto formatted = QString::number(rounded, 'g', 15);
-	return text.left(text.size() - 1) + formatted + ' ';
+	return QString::number(rounded, 'g', 15);
+}
+
+std::optional<QString> InlineMathResult(const QString &text) {
+	if (!text.endsWith(u"= "_q)) {
+		return std::nullopt;
+	}
+	const auto withEquals = text.left(text.size() - 1);
+	if (const auto value = InlineMathValue(withEquals)) {
+		return withEquals + *value + ' ';
+	}
+	return std::nullopt;
 }
 
 } // namespace Extera

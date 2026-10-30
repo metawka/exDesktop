@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "chat_helpers/gifs_list_widget.h"
+#include "extera/extera_config.h"
 
 #include "api/api_toggling_media.h" // Api::ToggleSavedGif
 #include "base/const_string.h"
@@ -889,7 +890,10 @@ void GifsListWidget::searchForGifs(const QString &query) {
 	}
 
 	if (!_searchBot && !_searchBotRequestId) {
-		const auto username = session().serverConfig().gifSearchUsername;
+		const auto custom = Extera::String(u"gif_bot"_q).trimmed().remove('@');
+		const auto username = custom.isEmpty()
+			? session().serverConfig().gifSearchUsername
+			: custom;
 		_searchBotRequestId = _api.request(MTPcontacts_ResolveUsername(
 			MTP_flags(0),
 			MTP_string(username),

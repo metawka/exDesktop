@@ -1,240 +1,135 @@
 name: Linux build
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
-      - 'changelog.txt'
-      - 'LEGAL'
-      - 'LICENSE'
-      - 'badges.json'
-  pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
-      - 'changelog.txt'
-      - 'LEGAL'
-      - 'LICENSE'
-      - 'badges.json'
   release:
     types: [published]
   workflow_dispatch:
-    inputs:
-      config:
-        description: 'Build Configuration (Release or Debug)'
-        required: false
-        default: 'Release'
-        type: choice
-        options:
-          - Release
-          - Debug
 
 permissions:
   contents: write
 
-env:
-  CONFIG: ${{ inputs.config || 'Release' }}
-
 jobs:
-  test:
-    name: Test Plugin Engine
+  linux:
+    name: Rocky Linux 8
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang libpython3-dev
-
-      - name: Run extera_plugins Linux Native Engine Test
-        run: |
-          ./build_linux.sh test
-
-  build:
-    name: Build Linux x86_64
-    needs: test
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    # Arch has current Qt 6, ffmpeg and the rest packaged, so only the libraries
-    # tdesktop pins itself are built here, once, and cached like on Windows/macOS.
-    # The binary links the system libraries, so it targets current distros.
-    container: archlinux:base-devel
-    defaults:
-      run:
-        shell: bash
     env:
-      DEPS: /opt/deps
-      CCACHE_DIR: /root/.ccache
-      CCACHE_MAXSIZE: 2G
-    steps:
-      - name: Install system packages
-        run: |
-          pacman -Syu --noconfirm --needed \
-            git cmake ninja ccache python gperf nasm yasm rustup zip github-cli \
-            qt6-base qt6-svg qt6-imageformats qt6-wayland qt6-5compat \
-            kcoreaddons extra-cmake-modules glib2-devel glibmm-2.68 gobject-introspection \
-            wayland-protocols plasma-wayland-protocols libxkbcommon \
-            libxcomposite libxdamage libxrandr libxtst libxfixes libxrender xcb-util-keysyms \
-            ffmpeg openal openh264 libvpx dav1d libavif libheif opus rnnoise hunspell xxhash lz4 minizip vulkan-headers \
-            openssl zlib libjpeg-turbo pipewire libpulse alsa-lib \
-            boost range-v3 fmt protobuf abseil-cpp libdispatch jemalloc
+      IMAGE_TAG: exdesktop:centos_env
 
-      - name: Checkout
+    steps:
+      - name: Clone
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Restore dependencies
-        id: deps
-        uses: actions/cache/restore@v4
-        with:
-          path: /opt/deps
-          key: linux-deps-v1-ada3.2.9-td51743df-owt07fb35b-rust1.96.1
-
-      # Pinned to the same revisions as Telegram/build/docker/centos_env/Dockerfile.
-      - name: Build dependencies
-        if: steps.deps.outputs.cache-hit != 'true'
+      - name: Generate Dockerfile
         run: |
-          set -e
-          mkdir -p /tmp/deps && cd /tmp/deps
-          fetch() { # repo commit dir
-            git init -q "$3" && git -C "$3" remote add origin "https://github.com/$1.git"
-            git -C "$3" fetch -q --depth=1 origin "$2" && git -C "$3" reset -q --hard FETCH_HEAD
-          }
+          curl -sSL https://install.python-poetry.org | python3 -
+          cd Telegram/build/docker/centos_env
+          poetry install
+          DOCKERFILE=$(DEBUG= LTO= poetry run gen_dockerfile)
+          echo "$DOCKERFILE" > Dockerfile
+          rm -rf __pycache__
 
-          git clone -q -b v3.2.9 --depth=1 https://github.com/ada-url/ada.git
-          cmake -S ada -B ada/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
-            -DADA_TESTING=OFF -DADA_TOOLS=OFF -DADA_INCLUDE_URL_PATTERN=OFF
-          cmake --build ada/build && cmake --install ada/build
-
-          fetch tdlib/td 51743dfd01dff6179e2d8f7095729caa4e2222e9 td
-          cmake -S td -B td/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" -DTD_E2E_ONLY=ON
-          cmake --build td/build && cmake --install td/build
-
-          fetch desktop-app/tg_owt 07fb35bc33b3e79125a1beab7690e830f183f5d8 tg_owt
-          git -C tg_owt submodule update -q --init --recursive --depth=1
-          cmake -S tg_owt -B tg_owt/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
-            -DTG_OWT_DLOPEN_PIPEWIRE=ON
-          cmake --build tg_owt/build && cmake --install tg_owt/build
-
-          # One Rust archive for tlottie + wallet-engine, as prepare.py does.
-          rustup default 1.96.1
-          fetch desktop-app/patches a895fef40eaa7d66481cff542c623b039b7ce494 patches
-          fetch dkaraush/tlottie 92df98dc209bc39b1e567ec74a8c86a0af5239de tlottie
-          GIT_LFS_SKIP_SMUDGE=1 fetch i582/wallet-engine e59e0d89d7ee90c388bf36e3334c5b276f396697 wallet-engine
-          git -C wallet-engine apply ../patches/wallet-engine.patch
-          cargo new -q --lib --vcs none tdesktop_rust
-          cd tdesktop_rust
-          printf 'pub use ::tlottie;\npub use ::wallet_engine;\n' > src/lib.rs
-          cargo add -q --path ../tlottie --features c-api
-          cargo add -q --path ../wallet-engine
-          cargo rustc --lib --release --crate-type staticlib --crate-type cdylib \
-            --config "profile.release.opt-level=3" \
-            --config "profile.release.lto='thin'" \
-            --config "profile.release.codegen-units=1" \
-            --config "profile.release.panic='unwind'"
-          mkdir -p "$DEPS/lib" "$DEPS/include/tlottie" "$DEPS/include/wallet_engine"
-          objcopy --strip-debug target/release/libtdesktop_rust.a "$DEPS/lib/libtdesktop_rust.a"
-          cp ../tlottie/include/tlottie.h "$DEPS/include/tlottie/"
-          cargo run --manifest-path ../wallet-engine/bindgen/cpp/bindgen/Cargo.toml --locked -- \
-            --library --out-dir "$DEPS/include/wallet_engine" target/release/libtdesktop_rust.so
-
-      - name: Save dependencies
-        if: steps.deps.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
         with:
-          path: /opt/deps
-          key: ${{ steps.deps.outputs.cache-primary-key }}
+          tool-cache: true
 
-      - name: Restore ccache
-        uses: actions/cache/restore@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Libraries cache
+        uses: actions/cache@v4
         with:
-          path: /root/.ccache
-          key: linux-ccache-${{ github.run_id }}
-          restore-keys: |
-            linux-ccache-
+          path: ${{ runner.temp }}/.buildx-cache
+          key: ${{ runner.os }}-libs-${{ hashFiles('Telegram/build/docker/centos_env/**') }}
+          restore-keys: ${{ runner.os }}-libs-
 
-      - name: Configure
+      - name: Libraries
+        uses: docker/build-push-action@v6
+        with:
+          context: Telegram/build/docker/centos_env
+          load: true
+          tags: ${{ env.IMAGE_TAG }}
+          cache-from: type=local,src=${{ runner.temp }}/.buildx-cache
+          cache-to: type=local,dest=${{ runner.temp }}/.buildx-cache-new,mode=max
+
+      - name: Move cache
+        run: |
+          rm -rf ${{ runner.temp }}/.buildx-cache
+          mv ${{ runner.temp }}/.buildx-cache-new ${{ runner.temp }}/.buildx-cache
+
+      - name: Build
         env:
           API_ID: ${{ secrets.TDESKTOP_API_ID }}
           API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
         run: |
-          if [ -n "$API_ID" ]; then
-            creds=(-D TDESKTOP_API_ID="$API_ID" -D TDESKTOP_API_HASH="$API_HASH")
-          elif [ "$GITHUB_EVENT_NAME" = release ]; then
-            echo "TDESKTOP_API_ID secret is not set"; exit 1
-          else
-            echo "No API secrets, using TEST ONLY credentials"
-            creds=(-D TDESKTOP_API_TEST=ON)
-          fi
-          cmake -B out -G Ninja "${creds[@]}" \
-            -D CMAKE_BUILD_TYPE="$CONFIG" \
-            -D CMAKE_PREFIX_PATH="$DEPS" \
-            -D CMAKE_C_COMPILER_LAUNCHER=ccache \
-            -D CMAKE_CXX_COMPILER_LAUNCHER=ccache
-
-      - name: Build Telegram binary
-        run: cmake --build out --target Telegram
-
-      - name: Save ccache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: /root/.ccache
-          key: linux-ccache-${{ github.run_id }}
-
-      - name: Package Linux release
-        run: |
-          VERSION=$(grep -oP 'constexpr auto AppVersionStr = "\K[^"]+' Telegram/SourceFiles/core/version.h || echo "7.3.3.3")
-          echo "BUILD_VERSION=${VERSION}" >> "$GITHUB_ENV"
-
-          RELEASE_DIR="exDesktop-${VERSION}-linux-x64"
-          mkdir -p "${RELEASE_DIR}/python/extera"
-
-          # Find and copy output binary
-          if [ -f out/Release/root/Telegram ]; then
-            cp out/Release/root/Telegram "${RELEASE_DIR}/"
-          elif [ -f out/bin/Telegram ]; then
-            cp out/bin/Telegram "${RELEASE_DIR}/"
-          else
-            echo "Error: Telegram binary not found in out/Release/root/ or out/bin/" >&2
+          if [ -z "$API_ID" ] || [ -z "$API_HASH" ]; then
+            echo "TDESKTOP_API_ID or TDESKTOP_API_HASH secret is not set"
             exit 1
           fi
+          docker run --rm \
+            -u "$(id -u)" \
+            -v "$PWD:/usr/src/tdesktop" \
+            -e CONFIG=Release \
+            -e API_ID -e API_HASH \
+            "$IMAGE_TAG" \
+            bash -c '/usr/src/tdesktop/Telegram/build/docker/centos_env/build.sh \
+              -D CMAKE_CONFIGURATION_TYPES=Release \
+              -D TDESKTOP_API_ID="$API_ID" \
+              -D TDESKTOP_API_HASH="$API_HASH" \
+              -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON \
+              -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON'
+          test -f out/Release/Telegram
 
-          if [ -f out/Release/root/Updater ]; then
-            cp out/Release/root/Updater "${RELEASE_DIR}/"
+      - name: Package
+        run: |
+          VERSION=$(sed -n 's/.*AppVersionStr = "\([^"]*\)".*/\1/p' Telegram/SourceFiles/core/version.h)
+          if [ "$GITHUB_EVENT_NAME" = "release" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
           fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          docker run --rm \
+            -u "$(id -u)" \
+            -v "$PWD:/usr/src/tdesktop" \
+            -e VERSION="$VERSION" \
+            "$IMAGE_TAG" \
+            bash -euo pipefail -c '
+              cd /usr/src/tdesktop
+              PKG="pkg/exDesktop"
+              rm -rf pkg
+              mkdir -p "$PKG/lib" "$PKG/python" "$PKG/python311/lib"
+              cp out/Release/Telegram "$PKG/exDesktop-bin"
+              strip "$PKG/exDesktop-bin"
+              cp -L /usr/lib64/libpython3.11.so.1.0 "$PKG/lib/"
+              cp -r /usr/lib64/python3.11 "$PKG/python311/lib/python3.11"
+              rm -rf "$PKG/python311/lib/python3.11/test" \
+                "$PKG/python311/lib/python3.11/site-packages"
+              find "$PKG/python311" -name "__pycache__" -type d -prune -exec rm -rf {} +
+              mkdir -p "$PKG/python/extera"
+              cp -r Telegram/SourceFiles/extera/python/. "$PKG/python/extera/"
+              cat > "$PKG/exDesktop" <<SH
+          #!/bin/sh
+          DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+          export LD_LIBRARY_PATH="\$DIR/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+          export PYTHONHOME="\$DIR/python311"
+          exec "\$DIR/exDesktop-bin" "\$@"
+          SH
+              chmod +x "$PKG/exDesktop" "$PKG/exDesktop-bin"
+              tar -C pkg -czf "exDesktop-linux-x64.$VERSION.tar.gz" exDesktop
+            '
+          ls -la "exDesktop-linux-x64.$VERSION.tar.gz"
 
-          # Copy full python plugin runtime
-          cp -r Telegram/SourceFiles/extera/python/* "${RELEASE_DIR}/python/extera/"
-
-          chmod +x "${RELEASE_DIR}/Telegram"
-
-          # Create distributable tarball and zip
-          tar -cJf "exDesktop-linux-x64.${VERSION}.tar.xz" "${RELEASE_DIR}"
-          zip -r "exDesktop-linux-x64.${VERSION}.zip" "${RELEASE_DIR}"
-
-      - name: Upload build artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: exDesktop-linux-x64
-          path: |
-            exDesktop-linux-x64.*.tar.xz
-            exDesktop-linux-x64.*.zip
+          path: exDesktop-linux-x64.*.tar.gz
+          retention-days: 7
 
       - name: Attach to release
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          gh release upload "$RELEASE_TAG" "exDesktop-linux-x64.${BUILD_VERSION}.tar.xz" "exDesktop-linux-x64.${BUILD_VERSION}.zip" --clobber
+        run: gh release upload "$GITHUB_REF_NAME" "exDesktop-linux-x64.$VERSION.tar.gz" --clobber

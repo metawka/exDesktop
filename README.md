@@ -5,26 +5,33 @@
 ## exDesktop
 *[Licensed under the GNU General Public License v3.0](LICENSE)*
 
-An unofficial Windows & Linux client built from the official [Telegram Desktop](https://github.com/telegramdesktop/tdesktop) sources. It adds a customizable settings suite, channel feed, streamer tools and a Python plugin engine.
+An unofficial Windows & Linux client built from the official [Telegram Desktop](https://github.com/telegramdesktop/tdesktop) sources. It brings features from exteraGram and other community clients to the desktop: a customizable settings suite, channel feed, streamer tools and a Python plugin engine.
 
 [![Channel](https://img.shields.io/badge/Channel-Telegram-blue.svg)](https://t.me/exDesktop)
 [![Website](https://img.shields.io/badge/Website-exteradesktop.xyz-blue.svg)](https://exteradesktop.xyz)
 [![Developer](https://img.shields.io/badge/Developer-@metawka-blue.svg)](https://t.me/metawka)
 
-![exDesktop settings](docs/screenshots/main.png)
+| | |
+|:-:|:-:|
+| ![exDesktop](docs/screenshots/exdesktop.png) | ![Settings](docs/screenshots/settings.png) |
+| ![Appearance](docs/screenshots/appearance.png) | ![Chats](docs/screenshots/chats.png) |
+| ![Plugins](docs/screenshots/plugins.png) | |
 
 ## Features
 - Settings for General, Appearance, Chats, Navigation, Plugins and Other.
 - Native Linux support with full Wayland and X11 integration.
-- Material Design 3 controls, adjustable avatar corners and 33 application icons.
+- Features from exteraGram and other community clients, adapted for the desktop.
+- Material Design 3 controls and adjustable avatar corners.
 - Channel feed, wide posts, precise timestamps, edit marks and forward counts.
+- Quick actions bar, message details, reply with quote and scheduling for the maximum date.
+- Translation of bot buttons and translation that keeps formatting.
+- Favorite emoji, selection of service messages and inline math in the message field.
+- Sending messages from another account.
 - Streamer mode with per chat settings, exceptions and screen capture protection.
-- Update notifications when a new GitHub release is available.
+- Automatic updates from GitHub releases.
 - Python plugin engine with per plugin settings and automatic safe mode after crashes.
 - Gemini chat with your own API key.
 - User IDs, data center and estimated registration date in profiles.
-
-![Plugin manager](docs/screenshots/plugins.png)
 
 ## Downloads
 Get the installer, portable archive or Linux packages from the [releases page](https://github.com/metawka/exDesktop/releases). The client installs beside Telegram Desktop and keeps its data separate.

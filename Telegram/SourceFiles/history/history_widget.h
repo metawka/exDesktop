@@ -92,6 +92,9 @@ struct ChatPaintHighlight;
 class ChatStyle;
 template <typename Widget>
 class SlideWrap;
+template <typename Widget>
+class FadeWrap;
+class FlatLabel;
 } // namespace Ui
 
 namespace Ui::Emoji {
@@ -961,6 +964,8 @@ private:
 	std::shared_ptr<Ui::ChatStyle> _fieldChatStyle;
 	bool _cmdStartShown = false;
 	object_ptr<Ui::InputField> _field;
+	base::unique_qptr<Ui::FadeWrap<Ui::RpWidget>> _exdMathGhost;
+	void updateExdMathGhost();
 	std::unique_ptr<HistoryView::Controls::RichDraftPreview> _richDraftPreview;
 	base::unique_qptr<Ui::RpWidget> _fieldDisabled;
 	std::unique_ptr<Ui::RpWidget> _sendRestriction;

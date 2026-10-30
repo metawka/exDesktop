@@ -510,6 +510,9 @@ public:
 	[[nodiscard]] bool translationShowRequiresCheck(LanguageId to) const;
 	bool translationShowRequiresRequest(LanguageId to);
 	void translationDone(LanguageId to, TextWithEntities result);
+	void translationButtonsDone(
+		LanguageId to,
+		base::flat_map<std::pair<int, int>, QString> buttons);
 	void translationDone(
 		LanguageId to,
 		std::shared_ptr<const Iv::RichPage> result);

@@ -6,6 +6,13 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/settings_builder.h"
+#include "base/event_filter.h"
+#include "core/deep_links/deep_links_settings.h"
+#include "ui/widgets/popup_menu.h"
+#include "styles/style_menu_icons.h"
+#include "styles/style_widgets.h"
+#include <QtGui/QClipboard>
+#include <QtGui/QGuiApplication>
 
 #include "apiwrap.h"
 #include "lang/lang_keys.h"
@@ -200,6 +207,46 @@ Ui::VerticalLayout *SectionBuilder::scope(
 	return result;
 }
 
+namespace {
+
+void AddCopyLinkMenu(
+		not_null<Ui::RpWidget*> widget,
+		not_null<Window::SessionController*> controller,
+		const QString &id) {
+	const auto menu = widget->lifetime().make_state<
+		base::unique_qptr<Ui::PopupMenu>>();
+	base::install_event_filter(widget, [=](not_null<QEvent*> e) {
+		if (e->type() != QEvent::ContextMenu) {
+			return base::EventFilterResult::Continue;
+		}
+		auto link = QString();
+		const auto entries = SearchRegistry::Instance().collectAll(
+			&controller->session());
+		for (const auto &entry : entries) {
+			if (entry.id == id) {
+				link = !entry.deeplink.isEmpty()
+					? entry.deeplink
+					: Core::DeepLinks::SettingsDeepLink(entry.section, id);
+				break;
+			}
+		}
+		if (link.isEmpty()) {
+			return base::EventFilterResult::Continue;
+		}
+		*menu = base::make_unique_q<Ui::PopupMenu>(
+			widget,
+			st::popupMenuWithIcons);
+		(*menu)->addAction(tr::lng_context_copy_link(tr::now), [=] {
+			QGuiApplication::clipboard()->setText(link);
+			controller->showToast(tr::lng_exd_settings_link_copied(tr::now));
+		}, &st::menuIconLink);
+		(*menu)->popup(QCursor::pos());
+		return base::EventFilterResult::Cancel;
+	});
+}
+
+} // namespace
+
 Ui::RpWidget *SectionBuilder::add(
 		FnMut<WidgetToAdd(const WidgetContext &ctx)> widget,
 		FnMut<SearchEntry()> search) {
@@ -211,6 +258,9 @@ Ui::RpWidget *SectionBuilder::add(
 				wctx.container->add(std::move(w.widget), w.margin, w.align);
 
 				if (auto entry = search ? search() : SearchEntry()) {
+					if (!entry.id.isEmpty()) {
+						AddCopyLinkMenu(result, wctx.controller, entry.id);
+					}
 					if (wctx.highlights) {
 						wctx.highlights->push_back({
 							std::move(entry.id),

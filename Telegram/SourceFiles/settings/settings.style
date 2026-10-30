@@ -987,3 +987,38 @@ exteraQuickHeight: 48px;
 exteraQuickPadding: 4px;
 exteraQuickButtonWidth: 48px;
 exteraQuickAboutPadding: margins(22px, 8px, 22px, 8px);
+
+exteraBadgeLogoSize: 96px;
+exteraBadgeLogoPadding: margins(0px, 28px, 0px, 16px);
+exteraBadgeTitle: FlatLabel(defaultFlatLabel) {
+	style: TextStyle(defaultTextStyle) {
+		font: font(20px semibold);
+	}
+	align: align(top);
+}
+exteraBadgeTitlePadding: margins(24px, 0px, 24px, 8px);
+exteraBadgeText: FlatLabel(defaultFlatLabel) {
+	minWidth: 100px;
+	align: align(top);
+}
+exteraBadgeTextPadding: margins(24px, 0px, 24px, 18px);
+exteraBadgeStepPadding: margins(24px, 0px, 24px, 14px);
+exteraBadgeStepLabelPadding: margins(42px, 0px, 0px, 2px);
+exteraBadgeStepTitle: FlatLabel(defaultFlatLabel) {
+	style: semiboldTextStyle;
+}
+exteraBadgeStepText: FlatLabel(defaultFlatLabel) {
+	minWidth: 100px;
+	textFg: windowSubTextFg;
+}
+exteraBadgePreviewHeight: 56px;
+exteraBadgePreviewPadding: margins(24px, 8px, 24px, 16px);
+exteraBadgePreviewUserpic: 36px;
+exteraBadgePreviewSkip: 8px;
+exteraBadgePreviewName: FlatLabel(defaultFlatLabel) {
+	style: semiboldTextStyle;
+	textFg: windowActiveTextFg;
+}
+exteraBadgePreviewText: FlatLabel(defaultFlatLabel) {
+	minWidth: 100px;
+}

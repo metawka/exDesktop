@@ -9,6 +9,8 @@
 #include "boxes/translate_box.h"
 #include "boxes/download_path_box.h"
 #include "extera/extera_config.h"
+#include "extera/extera_badges.h"
+#include "data/data_user.h"
 #include "extera/extera_menu.h"
 #include "history/view/media/history_view_sticker.h"
 #include "extera/extera_navigation.h"
@@ -30,6 +32,13 @@
 #include "ui/boxes/confirm_box.h"
 #include "ui/boxes/single_choice_box.h"
 #include "ui/layers/generic_box.h"
+#include "core/ui_integration.h"
+#include "data/stickers/data_custom_emoji.h"
+#include "ui/userpic_view.h"
+#include "ui/painter.h"
+#include <QtGui/QClipboard>
+#include <QtGui/QGuiApplication>
+#include "ui/widgets/fields/input_field.h"
 #include "ui/wrap/vertical_layout_reorder.h"
 #include "ui/painter.h"
 #include "ui/widgets/buttons.h"
@@ -472,6 +481,169 @@ void PaintStickerPreview(QPainter &p, QRect frame, int value) {
 		image);
 }
 
+void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setWidth(st::boxWideWidth);
+		box->setNoContentMargin(true);
+		box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); });
+		const auto session = &controller->session();
+
+		const auto logoSize = st::exteraBadgeLogoSize;
+		const auto logo = box->addRow(
+			object_ptr<Ui::FixedHeightWidget>(box, logoSize),
+			st::exteraBadgeLogoPadding);
+		logo->paintRequest() | rpl::on_next([=] {
+			static const auto image = QImage(u":/gui/art/logo_256.png"_q);
+			auto p = QPainter(logo);
+			auto hq = PainterHighQualityEnabler(p);
+			p.drawImage(
+				QRect((logo->width() - logoSize) / 2, 0, logoSize, logoSize),
+				image);
+		}, logo->lifetime());
+
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_support_title(),
+				st::exteraBadgeTitle),
+			st::exteraBadgeTitlePadding,
+			style::al_top);
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_support_text(),
+				st::exteraBadgeText),
+			st::exteraBadgeTextPadding,
+			style::al_top);
+
+		const auto step = [&](
+				const style::icon *icon,
+				rpl::producer<QString> title,
+				rpl::producer<TextWithEntities> text) {
+			const auto row = box->addRow(
+				object_ptr<Ui::VerticalLayout>(box),
+				st::exteraBadgeStepPadding);
+			const auto titleLabel = row->add(
+				object_ptr<Ui::FlatLabel>(
+					row,
+					std::move(title),
+					st::exteraBadgeStepTitle),
+				st::exteraBadgeStepLabelPadding);
+			row->add(
+				object_ptr<Ui::FlatLabel>(
+					row,
+					std::move(text),
+					st::exteraBadgeStepText),
+				st::exteraBadgeStepLabelPadding);
+			const auto iconWidget = Ui::CreateChild<Ui::RpWidget>(row);
+			iconWidget->resize(icon->width(), icon->height());
+			iconWidget->paintRequest() | rpl::on_next([=] {
+				auto p = QPainter(iconWidget);
+				icon->paint(p, 0, 0, iconWidget->width(), st::windowFg->c);
+			}, iconWidget->lifetime());
+			titleLabel->topValue() | rpl::on_next([=](int top) {
+				iconWidget->moveToLeft(0, top);
+			}, iconWidget->lifetime());
+		};
+		step(
+			&st::menuIconEarn,
+			tr::lng_exd_support_step1_title(),
+			tr::lng_exd_support_step1_text(tr::rich));
+		step(
+			&st::menuIconPhoto,
+			tr::lng_exd_support_step2_title(),
+			tr::lng_exd_support_step2_text(tr::rich));
+		step(
+			&st::menuIconPremium,
+			tr::lng_exd_support_step3_title(),
+			tr::lng_exd_support_step3_text(tr::rich));
+
+		const auto preview = box->addRow(
+			object_ptr<Ui::FixedHeightWidget>(box, st::exteraBadgePreviewHeight),
+			st::exteraBadgePreviewPadding);
+		const auto user = session->user();
+		const auto view = preview->lifetime().make_state<
+			Ui::PeerUserpicView>();
+		const auto badgeId = Extera::BadgeTypeEmoji(u"donor"_q);
+		auto nameText = TextWithEntities{ user->name() };
+		if (badgeId) {
+			nameText.append(' ').append(Data::SingleCustomEmoji(badgeId));
+		}
+		const auto name = Ui::CreateChild<Ui::FlatLabel>(
+			preview,
+			st::exteraBadgePreviewName);
+		name->setMarkedText(nameText, Core::TextContext({
+			.session = session,
+			.repaint = [=] { name->update(); },
+		}));
+		const auto message = Ui::CreateChild<Ui::FlatLabel>(
+			preview,
+			tr::lng_exd_support_preview(),
+			st::exteraBadgePreviewText);
+		preview->widthValue() | rpl::on_next([=](int width) {
+			const auto left = st::exteraBadgePreviewUserpic
+				+ st::exteraBadgePreviewSkip * 3;
+			name->resizeToWidth(width - left - st::exteraBadgePreviewSkip);
+			message->resizeToWidth(width - left - st::exteraBadgePreviewSkip);
+			name->moveToLeft(left, st::exteraBadgePreviewSkip);
+			message->moveToLeft(
+				left,
+				st::exteraBadgePreviewSkip + name->height());
+		}, preview->lifetime());
+		preview->paintRequest() | rpl::on_next([=] {
+			auto p = Painter(preview);
+			auto hq = PainterHighQualityEnabler(p);
+			const auto size = st::exteraBadgePreviewUserpic;
+			const auto skip = st::exteraBadgePreviewSkip;
+			user->paintUserpic(
+				p,
+				*view,
+				skip,
+				(preview->height() - size) / 2,
+				size);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::msgInBg);
+			const auto left = size + skip * 2;
+			p.drawRoundedRect(
+				QRect(left, 0, preview->width() - left, preview->height()),
+				st::bubbleRadiusLarge,
+				st::bubbleRadiusLarge);
+		}, preview->lifetime());
+
+		box->addButton(tr::lng_exd_badge_contact(), [=] {
+			UrlClickHandler::Open(u"https://t.me/metawka"_q);
+			box->closeBox();
+		});
+	}));
+}
+
+void ShowGifBotBox(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(tr::lng_exd_gif_bot());
+		const auto field = box->addRow(object_ptr<Ui::InputField>(
+			box,
+			st::defaultInputField,
+			rpl::single(u"@gif"_q),
+			Extera::String(u"gif_bot"_q)));
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_gif_bot_about(),
+				st::boxDividerLabel),
+			st::exteraQuickAboutPadding);
+		const auto save = [=] {
+			Config().setString(
+				u"gif_bot"_q,
+				field->getLastText().trimmed().remove('@'));
+			box->closeBox();
+		};
+		field->submits() | rpl::on_next(save, field->lifetime());
+		box->setFocusCallback([=] { field->setFocusFast(); });
+		box->addButton(tr::lng_settings_save(), save);
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+	}));
+}
+
 void ShowQuickActionsBox(not_null<Window::SessionController*> controller) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		constexpr auto kLimit = 5;
@@ -597,7 +769,7 @@ void AddHeader(SectionBuilder &builder) {
 			raw->add(
 				object_ptr<Ui::FlatLabel>(
 					raw,
-					rpl::single(QString::fromLatin1(AppVersionStr)),
+					rpl::single(Extera::Update::VersionText()),
 					st::exteraHeaderVersion),
 				st::exteraHeaderVersionPadding,
 				style::al_top);
@@ -1049,6 +1221,21 @@ void BuildChats(SectionBuilder &builder) {
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_stickers());
 	builder.card([&] {
+		const auto gifController = builder.controller();
+		builder.addButton({
+			.id = u"extera/gif_bot"_q,
+			.title = tr::lng_exd_gif_bot(),
+			.st = &st::settingsButtonNoIcon,
+			.label = Config().stringChanges(
+				u"gif_bot"_q
+			) | rpl::map([](const QString &bot) {
+				return bot.trimmed().isEmpty()
+					? u"@gif"_q
+					: (u"@"_q + bot.trimmed());
+			}),
+			.onClick = [=] { ShowGifBotBox(gifController); },
+			.keywords = { u"gif"_q },
+		});
 		AddToggle(
 			builder,
 			u"unlimited_recent_stickers"_q,
@@ -1135,6 +1322,13 @@ void BuildChats(SectionBuilder &builder) {
 			builder,
 			u"chars_counter"_q,
 			tr::lng_exd_chars_counter());
+		AddToggle(
+			builder,
+			u"select_service"_q,
+			tr::lng_exd_select_service(),
+			{ u"select"_q, u"service"_q },
+			tr::lng_exd_select_service_about(),
+			true);
 		AddToggle(
 			builder,
 			u"name_accent"_q,
@@ -1574,6 +1768,52 @@ void BuildOther(SectionBuilder &builder) {
 	const auto controller = builder.controller();
 
 	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_badge_title());
+	builder.card([&] {
+		builder.addButton({
+			.id = u"extera/badge_buy"_q,
+			.title = tr::lng_exd_badge_get(),
+			.icon = { &st::menuIconPremium },
+			.onClick = [=] { ShowBadgeInfoBox(controller); },
+			.keywords = { u"badge"_q, u"verified"_q },
+		});
+	});
+	AddAbout(builder, tr::lng_exd_badge_about());
+
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_donate());
+	builder.card([&] {
+		const auto wallet = [&](
+				const QString &id,
+				rpl::producer<QString> title,
+				const QString &address) {
+			builder.addButton({
+				.id = u"extera/donate_"_q + id,
+				.title = std::move(title),
+				.icon = { &st::menuIconCopy },
+				.label = rpl::single(address.left(6)
+					+ QString::fromUtf8("\xE2\x80\xA6")
+					+ address.right(4)),
+				.onClick = [=] {
+					QGuiApplication::clipboard()->setText(address);
+					controller->showToast(
+						tr::lng_exd_donate_copied(tr::now));
+				},
+				.keywords = { u"donate"_q, u"crypto"_q },
+			});
+		};
+		wallet(
+			u"ton"_q,
+			tr::lng_exd_donate_ton(),
+			u"UQBBklguWPdtllk0jUozVZm6DLqbEzqsXUZ0lK6tiKGxAS0T"_q);
+		wallet(
+			u"usdt"_q,
+			tr::lng_exd_donate_usdt(),
+			u"TPbiCARyfZpUgFtQsuHsKVikphB6viD2jk"_q);
+	});
+	AddAbout(builder, tr::lng_exd_donate_about());
+
+	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_updates());
 	builder.card([&] {
 		builder.addButton({
@@ -1590,7 +1830,7 @@ void BuildOther(SectionBuilder &builder) {
 					}
 					switch (result) {
 					case Result::Available:
-						Extera::Update::OpenRelease();
+						Extera::Update::Install();
 						break;
 					case Result::Latest:
 						strong->showToast(
@@ -1605,6 +1845,15 @@ void BuildOther(SectionBuilder &builder) {
 			},
 			.keywords = { u"update"_q, u"version"_q },
 		});
+		AddChoice(
+			builder,
+			u"auto_update"_q,
+			tr::lng_exd_auto_update,
+			{
+				&tr::lng_exd_auto_update_install,
+				&tr::lng_exd_auto_update_download,
+				&tr::lng_exd_auto_update_off,
+			});
 	});
 	builder.addDivider();
 
@@ -1679,16 +1928,6 @@ void BuildMain(SectionBuilder &builder) {
 	const auto showOther = builder.showOther();
 
 	AddHeader(builder);
-	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_extera_unofficial_title());
-	builder.card([&] {
-		builder.add([=](const WidgetContext &ctx) {
-			auto info = object_ptr<Ui::VerticalLayout>(ctx.container);
-			Extera::FillUnofficialInfo(info.data());
-			return SectionBuilder::WidgetToAdd{ .widget = std::move(info) };
-		});
-	});
-	builder.addDivider();
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_categories());
 	builder.card([&] {

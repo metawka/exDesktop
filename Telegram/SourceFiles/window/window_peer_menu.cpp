@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_peer_menu.h"
+#include "extera/extera_cross_send.h"
 #include "extera/extera_streamer.h"
 #include "extera/extera_plugins_ui.h"
 
@@ -3783,6 +3784,15 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 
 			state->menu->addSeparator();
 		}
+		Extera::AddSendFromAccountActions(
+			state->menu.get(),
+			session,
+			msgIds,
+			crl::guard(parent, [=] {
+				if (const auto strong = weak.get()) {
+					strong->closeBox();
+				}
+			}));
 		state->menu->setForcedVerticalOrigin(
 			Ui::PopupMenu::VerticalOrigin::Bottom);
 		SendMenu::FillSendMenu(
@@ -3853,11 +3863,38 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 		}
 	}, comment->lifetime());
 
+	const auto addAccountsButton = [=] {
+		const auto box = state->box.get();
+		if (!box || !Extera::HasOtherAccounts(session)) {
+			return;
+		}
+		const auto top = box->addTopButton(st::boxTitleMenu);
+		const auto menu = top->lifetime().make_state<
+			base::unique_qptr<Ui::PopupMenu>>();
+		const auto weakBox = base::make_weak(box);
+		top->setClickedCallback([=] {
+			*menu = base::make_unique_q<Ui::PopupMenu>(
+				top,
+				st::popupMenuWithIcons);
+			Extera::AddSendFromAccountActions(
+				menu->get(),
+				session,
+				msgIds,
+				[=] {
+					if (const auto strong = weakBox.get()) {
+						strong->closeBox();
+					}
+				});
+			(*menu)->popup(QCursor::pos());
+		});
+	};
+	addAccountsButton();
+
 	state->controller->selectionChanges(
 	) | rpl::on_next([=] {
 		const auto shown = state->controller->hasSelected();
 
-		state->box->clearButtons();
+		state->box->clearBottomButtons();
 		state->refreshStarsToSend();
 		if (shown) {
 			const auto send = state->box->addButton(

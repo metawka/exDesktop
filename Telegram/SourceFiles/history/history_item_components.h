@@ -448,6 +448,7 @@ struct HistoryMessageTranslation
 : RuntimeComponent<HistoryMessageTranslation, HistoryItem> {
 	TextWithEntities text;
 	std::shared_ptr<const Iv::RichPage> richPage;
+	base::flat_map<std::pair<int, int>, QString> buttons;
 	LanguageId to;
 	bool requested = false;
 	bool failed = false;

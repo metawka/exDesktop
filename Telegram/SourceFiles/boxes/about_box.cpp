@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/about_box.h"
+#include "extera/extera_update.h"
 
 #include "base/platform/base_platform_info.h"
 #include "core/application.h"
@@ -153,7 +154,7 @@ QString telegramFaqLink() {
 namespace {
 
 [[nodiscard]] QString CurrentVersionText(bool withCommit) {
-	auto result = QString::fromLatin1(AppVersionStr);
+	auto result = Extera::Update::VersionText();
 	if (Core::BuildIsCanary) {
 		result += Core::CanaryVersionSuffix();
 	} else if (cAlphaVersion()) {

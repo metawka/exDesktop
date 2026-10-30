@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_item.h"
+#include "extera/extera_config.h"
 #include "extera/extera_emoji.h"
 #include "extera/extera_utils.h"
 
@@ -3531,8 +3532,12 @@ bool HistoryItem::canDeleteForEveryone(TimeId now) const {
 }
 
 bool HistoryItem::canBeSelected() const {
+	if (isService()) {
+		return Extera::Bool(u"select_service"_q)
+			&& isRegular()
+			&& canDelete();
+	}
 	return (isRegular() || isEphemeral())
-		&& !isService()
 		&& !IsAnchoredEphemeral(this);
 }
 
@@ -3690,6 +3695,11 @@ void HistoryItem::translationToggle(
 		bool used) {
 	if (translation->used != used && !translation->text.empty()) {
 		translation->used = used;
+		if (!translation->buttons.empty()) {
+			if (const auto markup = Get<HistoryMessageReplyMarkup>()) {
+				markup->inlineKeyboard = nullptr;
+			}
+		}
 		_history->owner().requestItemTextRefresh(this);
 		_history->owner().updateDependentMessages(this);
 	}
@@ -3697,6 +3707,29 @@ void HistoryItem::translationToggle(
 
 void HistoryItem::translationDone(LanguageId to, TextWithEntities result) {
 	translationDone(to, std::move(result), nullptr);
+}
+
+void HistoryItem::translationButtonsDone(
+		LanguageId to,
+		base::flat_map<std::pair<int, int>, QString> buttons) {
+	if (buttons.empty()) {
+		return;
+	}
+	auto translation = Get<HistoryMessageTranslation>();
+	if (!translation) {
+		AddComponents(HistoryMessageTranslation::Bit());
+		translation = Get<HistoryMessageTranslation>();
+		translation->to = to;
+	} else if (translation->to != to) {
+		return;
+	}
+	translation->buttons = std::move(buttons);
+	if (translation->used) {
+		if (const auto markup = Get<HistoryMessageReplyMarkup>()) {
+			markup->inlineKeyboard = nullptr;
+		}
+		_history->owner().requestItemResize(this);
+	}
 }
 
 void HistoryItem::translationDone(

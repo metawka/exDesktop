@@ -25,6 +25,7 @@
 #include "styles/style_settings.h"
 
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QFileDialog>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -60,10 +61,19 @@ protected:
 
 void ApplyCapture(QWidget *widget) {
 #ifdef Q_OS_WIN
-	if (!widget || !widget->isWindow() || !widget->internalWinId()) {
+	if (!widget
+		|| !widget->isWindow()
+		|| !widget->internalWinId()
+		|| widget->testAttribute(Qt::WA_DontShowOnScreen)
+		|| qobject_cast<QFileDialog*>(widget)) {
 		return;
 	}
 	const auto mode = CaptureMode();
+	const auto applied = widget->property("exd_capture").toInt();
+	if (mode == applied) {
+		return;
+	}
+	widget->setProperty("exd_capture", mode);
 	const auto affinity = (mode == 1)
 		? DWORD(0x00000001)
 		: (mode == 2)

@@ -25,6 +25,7 @@
 #include "history/history.h"
 #include "history/history_item.h"
 #include "history/history_item_components.h"
+#include "history/view/controls/history_view_draft_options.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "ui/boxes/confirm_box.h"
@@ -423,6 +424,13 @@ void AddMessageMenuActions(
 					Api::SendAction(item->history()));
 			}
 		}, &st::menuIconRestore);
+	}
+	if (item->history()->peer->isForum() && item->allowsForward()) {
+		menu->addAction(tr::lng_exd_reply_in_topic(tr::now), [=] {
+			HistoryView::Controls::ShowReplyToChatBox(
+				controller->uiShow(),
+				FullReplyTo{ .messageId = itemId });
+		}, &st::menuIconReply);
 	}
 	Plugins::AddMessageMenuItems(menu, item);
 	if (Bool(u"menu_details"_q)) {

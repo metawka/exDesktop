@@ -897,11 +897,22 @@ ReplyKeyboard::ReplyKeyboard(
 					+ Ui::kCreditsCurrency
 					+ "\\b");
 				const auto type = row[j].type;
+				const auto translated = [&]() -> const QString& {
+					const auto translation
+						= _item->Get<HistoryMessageTranslation>();
+					if (translation && translation->used) {
+						const auto k = translation->buttons.find({ i, j });
+						if (k != end(translation->buttons)) {
+							return k->second;
+						}
+					}
+					return row[j].text;
+				}();
 				const auto text = (type == Type::Buy)
-					? base::duplicate(row[j].text).replace(
+					? base::duplicate(translated).replace(
 						RegExp,
 						QChar(0x2B50))
-					: row[j].text;
+					: translated;
 				const auto withEmoji = [&](const style::IconEmoji &icon) {
 					return Ui::Text::IconEmoji(&icon).append(text);
 				};

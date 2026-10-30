@@ -183,6 +183,9 @@ private:
 	uint64 _stickersSeed = 0;
 	Type _type = Type::Mentions;
 	QString _filter;
+	QString _exdSearchQuery;
+	std::vector<not_null<UserData*>> _exdSearchUsers;
+	mtpRequestId _exdSearchRequestId = 0;
 	QRect _boundings;
 	bool _addInlineBots = false;
 

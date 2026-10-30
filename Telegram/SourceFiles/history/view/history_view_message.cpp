@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_message.h"
+#include "extera/extera_badges.h"
 
 #include "extera/extera_config.h"
 
@@ -2532,16 +2533,54 @@ void Message::paintFromName(
 	const auto statusWidth = _fromNameStatus
 		? st::dialogsPremiumIcon.icon.width()
 		: 0;
+	const auto exdGap = style::ConvertScale(4);
+	const auto exdWidth = _exdBadgeStatus
+		? (st::dialogsPremiumIcon.icon.width() + exdGap)
+		: 0;
 	const auto via = item->Get<HistoryMessageVia>();
 	const auto viaShown = via && !displayForwardedFrom() && via->width;
 	const auto viaSkipWidth = viaShown
 		? (via->width + st::msgServiceFont->spacew)
 		: 0;
 	const auto nameAvailableWidth = std::max(
-		((statusWidth && availableWidth > statusWidth)
-			? (availableWidth - statusWidth)
+		(((statusWidth + exdWidth)
+				&& availableWidth > (statusWidth + exdWidth))
+			? (availableWidth - statusWidth - exdWidth)
 			: availableWidth) - viaSkipWidth,
 		0);
+	if (exdWidth && availableWidth > (statusWidth + exdWidth)) {
+		const auto x = availableLeft
+			+ std::min(nameAvailableWidth, nameText->maxWidth())
+			+ statusWidth
+			+ (statusWidth ? exdGap : 0);
+		const auto y = trect.top();
+		const auto id = from ? Extera::BadgeEmoji(from) : DocumentId();
+		if (_exdBadgeId != id || !_exdBadgeStatus->custom) {
+			const auto that = const_cast<Message*>(this);
+			_exdBadgeStatus->custom = id
+				? MakeWrappedEmoji<Ui::Text::LimitedLoopsEmoji>(
+					history()->owner().customEmojiManager().create(
+						Data::SerializeCustomEmojiId(id),
+						[=] { that->customEmojiRepaint(); }),
+					kPlayStatusLimit)
+				: nullptr;
+			if (id) {
+				history()->owner().registerHeavyViewPart(that);
+			}
+			_exdBadgeId = id;
+		}
+		if (_exdBadgeStatus->custom) {
+			clearCustomEmojiRepaint();
+			_exdBadgeStatus->custom->paint(p, {
+				.textColor = nameFg,
+				.now = context.now,
+				.position = QPoint(
+					x - 2 * _exdBadgeStatus->skip,
+					y + _exdBadgeStatus->skip),
+				.paused = context.paused || On(PowerSaving::kEmojiStatus),
+			});
+		}
+	}
 	if (statusWidth && availableWidth > statusWidth) {
 		const auto x = availableLeft
 			+ std::min(nameAvailableWidth, nameText->maxWidth());
@@ -3823,6 +3862,7 @@ void Message::createTopicButtonRipple() {
 bool Message::hasHeavyPart() const {
 	return _comments
 		|| (_fromNameStatus && _fromNameStatus->custom)
+		|| (_exdBadgeStatus && _exdBadgeStatus->custom)
 		|| Element::hasHeavyPart();
 }
 
@@ -3832,6 +3872,10 @@ void Message::unloadHeavyPart() {
 	if (_fromNameStatus) {
 		_fromNameStatus->custom = nullptr;
 		_fromNameStatus->id = EmojiStatusId();
+	}
+	if (_exdBadgeStatus) {
+		_exdBadgeStatus->custom = nullptr;
+		_exdBadgeId = 0;
 	}
 	if (const auto summaryHeader = Get<SummaryHeader>()) {
 		summaryHeader->unloadHeavyPart();
@@ -5522,6 +5566,17 @@ void Message::validateFromNameText(PeerData *from) const {
 			st::msgNameStyle,
 			from->name(),
 			Ui::NameTextOptions());
+	}
+	if (Extera::BadgeEmoji(from)) {
+		if (!_exdBadgeStatus) {
+			_exdBadgeStatus = std::make_unique<FromNameStatus>();
+			const auto size = st::emojiSize;
+			const auto emoji = Ui::Text::AdjustCustomEmojiSize(size);
+			_exdBadgeStatus->skip = (size - emoji) / 2;
+		}
+	} else if (_exdBadgeStatus) {
+		_exdBadgeStatus = nullptr;
+		_exdBadgeId = 0;
 	}
 	if (from->isPremium()
 		|| (from->isChannel()

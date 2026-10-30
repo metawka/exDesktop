@@ -508,6 +508,7 @@ private:
 	std::unique_ptr<Ui::TabbedSearch> _search;
 	MTP::Sender _api;
 	const int _staticCount = 0;
+	std::unique_ptr<Data::StickersSet> _exdFavoritesSet;
 	StickersListFooter *_footer = nullptr;
 	std::unique_ptr<GradientPremiumStar> _premiumIcon;
 	std::unique_ptr<LocalStickersManager> _localSetsManager;

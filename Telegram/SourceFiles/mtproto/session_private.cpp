@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "base/options.h"
 #include "mtproto/session_private.h"
+#include "extera/extera_update.h"
 
 #include "core/version.h"
 #include "mtproto/details/mtproto_bound_key_creator.h"
@@ -88,7 +89,7 @@ using namespace details;
 #else
 	const auto arch = ' ' + QSysInfo::buildCpuArchitecture();
 #endif
-	return QString::fromLatin1(AppVersionStr) + arch + ([] {
+	return Extera::Update::VersionText() + arch + ([] {
 #if defined OS_MAC_STORE
 		return u" Mac App Store"_q;
 #elif defined OS_WIN_STORE // OS_MAC_STORE
