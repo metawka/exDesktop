@@ -153,10 +153,12 @@ void ApplyMenuLayout(
 	auto position = first;
 	for (const auto &id : Order()) {
 		if (id == kDivider) {
-			menu->insert(
-				position++,
-				MakeDivider(menu),
-				{ 0, st::mainMenuSkip, 0, st::mainMenuSkip });
+			if (position <= menu->count()) {
+				menu->insert(
+					position++,
+					MakeDivider(menu),
+					{ 0, st::mainMenuSkip, 0, st::mainMenuSkip });
+			}
 			continue;
 		}
 		const auto i = tagged.find(id);
@@ -164,7 +166,7 @@ void ApplyMenuLayout(
 			continue;
 		}
 		const auto index = indexOf(i->second);
-		if (index >= 0) {
+		if (index >= 0 && position < menu->count()) {
 			menu->reorderRows(index, position++);
 		}
 		tagged.erase(i);

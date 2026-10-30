@@ -236,7 +236,9 @@ void SendFromAccount(
 		Proceed(state, to);
 		return;
 	}
-	from->downloaderTaskFinished(
+	rpl::merge(
+		from->downloaderTaskFinished(),
+		from->data().viewRepaint()
 	) | rpl::on_next([=] {
 		if (CheckReady(state)) {
 			crl::on_main([=] {
