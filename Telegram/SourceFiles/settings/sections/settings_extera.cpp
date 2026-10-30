@@ -2219,6 +2219,16 @@ struct SearchMatch {
 			from = index + 1;
 		}
 	}
+	ranges::sort(result.entities, ranges::less(), &EntityInText::offset);
+	auto cleaned = std::vector<EntityInText>();
+	auto lastEnd = 0;
+	for (const auto &entity : result.entities) {
+		if (entity.offset() >= lastEnd && entity.length() > 0) {
+			cleaned.push_back(entity);
+			lastEnd = entity.offset() + entity.length();
+		}
+	}
+	result.entities = std::move(cleaned);
 	return result;
 }
 
