@@ -42,8 +42,9 @@ static PyObject *NativeCopy(PyObject *self, PyObject *args) {
 static PyObject *NativeSendMessage(PyObject *self, PyObject *args) {
     long long peerId = 0;
     const char *text = nullptr;
+    const char *entities = nullptr;
     long long replyTo = 0;
-    if (PyArg_ParseTuple(args, "Lsp", &peerId, &text, &replyTo)) {
+    if (PyArg_ParseTuple(args, "LssL", &peerId, &text, &entities, &replyTo)) {
         std::cout << "[NativeSendMessage] peer: " << peerId << ", text: " << text << std::endl;
     }
     Py_RETURN_NONE;

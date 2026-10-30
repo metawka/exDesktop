@@ -298,7 +298,12 @@ void ShowPluginCode(
 		controller->showToast(tr::lng_extera_plugins_bad_file(tr::now));
 		return;
 	}
-	const auto code = QString::fromUtf8(file.readAll());
+	constexpr auto kMaxCodeSize = 512 * 1024;
+	const auto bytes = file.read(kMaxCodeSize);
+	auto code = QString::fromUtf8(bytes);
+	if (!file.atEnd()) {
+		code += u"\n\n# ... [truncated]"_q;
+	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(rpl::single(name));
 		box->setWidth(st::exteraPluginCodeWidth);

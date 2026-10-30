@@ -2601,7 +2601,7 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 					return;
 				}
 				const auto confirmed = std::make_shared<bool>(false);
-				controller->show(Ui::MakeConfirmBox({
+				const auto box = controller->show(Ui::MakeConfirmBox({
 					.text = tr::lng_extera_plugins_unknown_warning(
 						tr::now,
 						tr::rich),
@@ -2618,6 +2618,12 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 					.confirmStyle = &st::attentionBoxButton,
 					.title = tr::lng_extera_plugins_unknown(),
 				}));
+				const auto weakUnknown = Ui::MakeWeak(unknown.get());
+				box->boxClosing() | rpl::on_next([=] {
+					if (!*confirmed && weakUnknown) {
+						unknownStates->fire(false);
+					}
+				}) | rpl::lifetime(box->lifetime());
 			}, unknown->lifetime());
 		}
 		AddToggle(
