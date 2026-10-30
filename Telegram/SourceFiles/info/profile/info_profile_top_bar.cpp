@@ -526,12 +526,21 @@ TopBar::TopBar(
 		});
 	}
 	if (_verified) {
-		_verified->setPremiumClickCallback([controller, peer = _peer] {
+		const auto weak = base::make_weak(controller);
+		_verified->setPremiumClickCallback([weak, peer = _peer] {
+			const auto controller = weak.get();
+			if (!controller) {
+				return;
+			}
 			using Kind = Extera::BadgeKind;
 			const auto custom = Extera::BadgeCustomText(peer);
 			const auto name = peer->name();
 			const auto kind = Extera::BadgeKindFor(peer);
-			const auto exdToast = [=](const QString &text) {
+			const auto exdToast = [weak, kind, name](const QString &text) {
+				const auto controller = weak.get();
+				if (!controller) {
+					return;
+				}
 				const auto supporter = (kind == Kind::Donor)
 					|| (kind == Kind::Supporter)
 					|| (kind == Kind::Custom);
@@ -543,8 +552,10 @@ TopBar::TopBar(
 					Ui::Text::Link(invite, u"tg://donate"_q));
 				controller->showToast({
 					.text = std::move(full),
-					.filter = [=](const ClickHandlerPtr &, Qt::MouseButton) {
-						::Settings::ShowExteraSupportBox(controller);
+					.filter = [weak](const ClickHandlerPtr &, Qt::MouseButton) {
+						if (const auto strong = weak.get()) {
+							::Settings::ShowExteraSupportBox(strong);
+						}
 						return false;
 					},
 					.duration = crl::time(4000),

@@ -750,6 +750,7 @@ rpl::producer<bool> CanViewParticipantsValue(
 			megagroup,
 			UpdateFlag::Rights),
 		megagroup->flagsValue(),
+		Extera::Config::Instance().boolChanges(u"full_members"_q),
 		[=] {
 			return megagroup->canViewMembers()
 				|| Extera::Bool(u"full_members"_q);

@@ -495,7 +495,7 @@ QString OnlineText(Data::LastseenStatus status, TimeId now) {
 	const auto till = status.onlineTill();
 	Assert(till > 0);
 	const auto minutes = (now - till) / 60;
-	if (!minutes) {
+	if (now <= till || !minutes) {
 		return tr::lng_status_lastseen_now(tr::now);
 	} else if (minutes < 60) {
 		return tr::lng_status_lastseen_minutes(tr::now, lt_count, minutes);
