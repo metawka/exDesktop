@@ -46,6 +46,7 @@ void ConvertPremiumEmojiForSending(
 			const auto sticker = document->sticker();
 			if (sticker
 				&& sticker->set.id
+				&& channel->mgInfo
 				&& channel->mgInfo->emojiSet.id == sticker->set.id) {
 				continue;
 			}

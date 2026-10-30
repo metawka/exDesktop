@@ -81,7 +81,7 @@ QByteArray &ETag() {
 [[nodiscard]] base::flat_set<uint64> ReadIds(const QJsonValue &value) {
 	auto result = base::flat_set<uint64>();
 	for (const auto &id : value.toArray()) {
-		result.emplace(uint64(id.toDouble()));
+		result.emplace(ReadId(id));
 	}
 	return result;
 }

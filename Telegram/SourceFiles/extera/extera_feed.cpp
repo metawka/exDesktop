@@ -214,6 +214,9 @@ void Request(
 						&& item->isRegular()
 						&& !item->isService()
 						&& !ranges::contains(Fetched(), item->fullId())) {
+						if (Fetched().size() >= kMaxPosts * 2) {
+							Fetched().erase(Fetched().begin(), Fetched().begin() + kMaxPosts);
+						}
 						Fetched().push_back(item->fullId());
 					}
 				}
