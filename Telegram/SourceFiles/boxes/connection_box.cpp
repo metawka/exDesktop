@@ -1192,6 +1192,11 @@ void ProxiesBox::setupContent() {
 		) | rpl::on_next([](bool checked) {
 			Extera::WsProxy::SetEnabled(checked);
 		}, wsProxy->lifetime());
+		Extera::Config::Instance().boolChanges(
+			u"ws_proxy"_q
+		) | rpl::on_next([=](bool enabled) {
+			wsProxy->setChecked(enabled);
+		}, wsProxy->lifetime());
 	}
 	_tryIPv6 = inner->add(
 		object_ptr<Ui::Checkbox>(

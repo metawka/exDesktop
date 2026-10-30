@@ -1920,9 +1920,11 @@ bool ParticipantsBoxController::exdAppendAuthors() {
 	if (const auto history = channel->owner().historyLoaded(channel)) {
 		for (const auto &block : history->blocks) {
 			for (const auto &view : block->messages) {
-				if (const auto user = view->data()->from()->asUser()) {
-					if (appendRow(user)) {
-						added = true;
+				if (const auto from = view->data()->from()) {
+					if (const auto user = from->asUser()) {
+						if (appendRow(user)) {
+							added = true;
+						}
 					}
 				}
 			}
