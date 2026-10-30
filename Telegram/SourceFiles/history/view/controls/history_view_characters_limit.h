@@ -21,8 +21,12 @@ public:
 
 	void setLeft(int value);
 
+protected:
+	void paintEvent(QPaintEvent *e) override;
+
 private:
 	int _lastValue = 0;
+	bool _pill = false;
 	not_null<Ui::RpWidget*> _widgetToAlign;
 	Fn<void(int, const QRect &)> _position;
 

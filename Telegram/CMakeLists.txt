@@ -1920,6 +1920,12 @@ PRIVATE
     settings/cloud_password/settings_cloud_password_validate_icon.h
     settings/sections/settings_active_sessions.cpp
     settings/sections/settings_active_sessions.h
+    extera/extera_app_icon.cpp
+    extera/extera_app_icon.h
+    extera/extera_round_video.cpp
+    extera/extera_round_video.h
+    extera/extera_ws_proxy.cpp
+    extera/extera_ws_proxy.h
     extera/extera_badges.cpp
     extera/extera_badges.h
     extera/extera_ai_chat.cpp

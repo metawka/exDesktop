@@ -7,6 +7,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/send_files_box.h"
 
+#include "extera/extera_round_video.h"
+#include "api/api_common.h"
+#include "data/data_session.h"
+#include "history/history.h"
+
 #include "extera/extera_config.h"
 
 #include "lang/lang_keys.h"
@@ -1468,7 +1473,18 @@ QImage SendFilesBox::preparePriceTagBg(QSize size) const {
 
 void SendFilesBox::addMenuButton() {
 	const auto details = _sendMenuDetails();
-	if (!hasSendMenu(details) && !canArchiveAll() && !hasArchives()) {
+	const auto roundPath = [=] {
+		if (_list.files.size() != 1
+			|| _list.files.front().type != Ui::PreparedFile::Type::Video
+			|| !_show->resolveWindow()) {
+			return QString();
+		}
+		return _list.files.front().path;
+	};
+	if (!hasSendMenu(details)
+		&& !canArchiveAll()
+		&& !hasArchives()
+		&& roundPath().isEmpty()) {
 		return;
 	}
 
@@ -1478,6 +1494,20 @@ void SendFilesBox::addMenuButton() {
 		_menu = base::make_unique_q<Ui::PopupMenu>(top, tabbed.menu);
 		_menu->setForcedOrigin(Ui::PanelAnimation::Origin::TopRight);
 		const auto position = QCursor::pos();
+		if (const auto path = roundPath(); !path.isEmpty()) {
+			_menu->addAction(tr::lng_exd_round_video_send(tr::now), [=] {
+				const auto window = _show->resolveWindow();
+				if (!window) {
+					return;
+				}
+				auto action = Api::SendAction(
+					_toPeer->owner().history(_toPeer));
+				action.replyTo = _replyTo;
+				crl::on_main(window, [=] {
+					Extera::RoundVideo::ShowForPath(window, path, action);
+				});
+			}, &st::menuIconVideoChat);
+		}
 		if (canArchiveAll()) {
 			_menu->addAction(
 				tr::lng_folder_archive_pack(tr::now),

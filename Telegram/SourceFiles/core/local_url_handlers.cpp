@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/local_url_handlers.h"
+
+#include "settings/sections/settings_extera.h"
 #include "extera/extera_ai_chat.h"
 #include "extera/extera_welcome.h"
 #include "extera/extera_feed.h"
@@ -1895,6 +1897,17 @@ bool ShowExteraAiChat(
 	return true;
 }
 
+bool ShowExteraSupport(
+		Window::SessionController *controller,
+		const Match &match,
+		const QVariant &context) {
+	if (!controller) {
+		return false;
+	}
+	::Settings::ShowExteraSupportBox(controller);
+	return true;
+}
+
 bool OpenChatById(
 		Window::SessionController *controller,
 		const Match &match,
@@ -1953,6 +1966,10 @@ const std::vector<LocalUrlHandler> &LocalUrlHandlers() {
 		{
 			u"^welcome/?(\\?.*)?$"_q,
 			ShowExteraWelcome
+		},
+		{
+			u"^(donate|support)/?(\\?.*)?$"_q,
+			ShowExteraSupport
 		},
 		{
 			u"^chat/?\\?id=(-?[0-9]+)(&|$)"_q,

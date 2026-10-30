@@ -641,9 +641,12 @@ Message::Message(
 }
 
 Message::~Message() {
-	if (_comments || (_fromNameStatus && _fromNameStatus->custom)) {
+	if (_comments
+		|| (_fromNameStatus && _fromNameStatus->custom)
+		|| (_exdBadgeStatus && _exdBadgeStatus->custom)) {
 		_comments = nullptr;
 		_fromNameStatus = nullptr;
+		_exdBadgeStatus = nullptr;
 		checkHeavyPart();
 	}
 }
@@ -2549,10 +2552,7 @@ void Message::paintFromName(
 			: availableWidth) - viaSkipWidth,
 		0);
 	if (exdWidth && availableWidth > (statusWidth + exdWidth)) {
-		const auto x = availableLeft
-			+ std::min(nameAvailableWidth, nameText->maxWidth())
-			+ statusWidth
-			+ (statusWidth ? exdGap : 0);
+		const auto x = availableLeft;
 		const auto y = trect.top();
 		const auto id = from ? Extera::BadgeEmoji(from) : DocumentId();
 		if (_exdBadgeId != id || !_exdBadgeStatus->custom) {
@@ -2580,6 +2580,8 @@ void Message::paintFromName(
 				.paused = context.paused || On(PowerSaving::kEmojiStatus),
 			});
 		}
+		availableLeft += exdWidth;
+		availableWidth -= exdWidth;
 	}
 	if (statusWidth && availableWidth > statusWidth) {
 		const auto x = availableLeft
@@ -4292,6 +4294,13 @@ bool Message::getStateFromName(
 		const auto statusWidth = (from && _fromNameStatus)
 			? st::dialogsPremiumIcon.icon.width()
 			: 0;
+		const auto exdWidth = _exdBadgeStatus
+			? (st::dialogsPremiumIcon.icon.width() + style::ConvertScale(4))
+			: 0;
+		if (exdWidth && availableWidth > (statusWidth + exdWidth)) {
+			availableLeft += exdWidth;
+			availableWidth -= exdWidth;
+		}
 		const auto via = item->Get<HistoryMessageVia>();
 		const auto viaShown = via && !displayForwardedFrom() && via->width;
 		const auto viaSkipWidth = viaShown
@@ -5575,8 +5584,12 @@ void Message::validateFromNameText(PeerData *from) const {
 			_exdBadgeStatus->skip = (size - emoji) / 2;
 		}
 	} else if (_exdBadgeStatus) {
+		const auto heavy = (_exdBadgeStatus->custom != nullptr);
 		_exdBadgeStatus = nullptr;
 		_exdBadgeId = 0;
+		if (heavy) {
+			const_cast<Message*>(this)->checkHeavyPart();
+		}
 	}
 	if (from->isPremium()
 		|| (from->isChannel()

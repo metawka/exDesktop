@@ -76,15 +76,26 @@ Name: "ru";      MessagesFile: "compiler:Languages\Russian.isl"
 Name: "fr";      MessagesFile: "compiler:Languages\French.isl"
 Name: "ua";      MessagesFile: "compiler:Languages\Ukrainian.isl"
 
+[CustomMessages]
+TgWsProxy=tg-ws-proxy (connection via WebSocket)
+Components=Components:
+ru.TgWsProxy=tg-ws-proxy (подключение через WebSocket)
+ru.Components=Компоненты:
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "tgws"; Description: "{cm:TgWsProxy}"; GroupDescription: "{cm:Components}"
+
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\python\tgws"; Tasks: not tgws
 
 [Files]
 Source: "{#ReleasePath}\Telegram.exe"; DestDir: "{app}"; Flags: ignoreversion
 #if FileExists(ReleasePath + "\\Updater.exe")
 Source: "{#ReleasePath}\Updater.exe"; DestDir: "{app}"; Flags: ignoreversion
 #endif
-Source: "{#ReleasePath}\python\*"; DestDir: "{app}\python"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#ReleasePath}\python\*"; DestDir: "{app}\python"; Excludes: "tgws"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#ReleasePath}\python\tgws\*"; DestDir: "{app}\python\tgws"; Tasks: tgws; Flags: recursesubdirs createallsubdirs ignoreversion
 #if MyBuildTarget != "winarm"
 Source: "{#ReleasePath}\{#ModulesFolder}\d3d\d3dcompiler_47.dll"; DestDir: "{app}\{#ModulesFolder}\d3d"; Flags: ignoreversion
 #endif

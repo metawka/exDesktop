@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/connection_box.h"
 
+#include "extera/extera_ws_proxy.h"
+
 #include "base/call_delayed.h"
 #include "base/qt/qt_key_modifiers.h"
 #include "base/qthelp_regex.h"
@@ -1179,6 +1181,18 @@ void ProxiesBox::setupTopButton() {
 void ProxiesBox::setupContent() {
 	const auto inner = setInnerWidget(object_ptr<Ui::VerticalLayout>(this));
 
+	if (Extera::WsProxy::Available()) {
+		const auto wsProxy = inner->add(
+			object_ptr<Ui::Checkbox>(
+				inner,
+				tr::lng_exd_ws_proxy(tr::now),
+				Extera::WsProxy::Enabled()),
+			st::proxyTryIPv6Padding);
+		wsProxy->checkedChanges(
+		) | rpl::on_next([](bool checked) {
+			Extera::WsProxy::SetEnabled(checked);
+		}, wsProxy->lifetime());
+	}
 	_tryIPv6 = inner->add(
 		object_ptr<Ui::Checkbox>(
 			inner,

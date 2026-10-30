@@ -8,6 +8,8 @@
     <file alias="art/business_logo.png">../../art/business_logo.png</file>
     <file alias="art/affiliate_logo.png">../../art/affiliate_logo.png</file>
     <file alias="art/logo_256.png">../../art/logo_256.png</file>
+    <file alias="art/app_icon.png">../../art/app_icon.png</file>
+    <file alias="art/app_icon_glyph.png">../../art/app_icon_glyph.png</file>
     <file alias="art/logo_256_no_margin.png">../../art/logo_256_no_margin.png</file>
     <file alias="art/themeimage.jpg">../../art/themeimage.jpg</file>
     <file alias="art/round_placeholder.jpg">../../art/round_placeholder.jpg</file>

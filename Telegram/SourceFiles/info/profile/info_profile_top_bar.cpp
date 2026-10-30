@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/info_profile_top_bar.h"
 
+#include "settings/sections/settings_extera.h"
+
 #include "extera/extera_badges.h"
 
 #include "api/api_peer_colors.h"
@@ -529,48 +531,67 @@ TopBar::TopBar(
 			const auto custom = Extera::BadgeCustomText(peer);
 			const auto name = peer->name();
 			const auto kind = Extera::BadgeKindFor(peer);
+			const auto exdToast = [=](const QString &text) {
+				const auto supporter = (kind == Kind::Donor)
+					|| (kind == Kind::Supporter)
+					|| (kind == Kind::Custom);
+				const auto invite = supporter
+					? tr::lng_exd_badge_invite_support(tr::now)
+					: tr::lng_exd_badge_invite_get(tr::now);
+				auto full = TextWithEntities{ text };
+				full.append(QChar('\n')).append(
+					Ui::Text::Link(invite, u"tg://donate"_q));
+				controller->showToast({
+					.text = std::move(full),
+					.filter = [=](const ClickHandlerPtr &, Qt::MouseButton) {
+						::Settings::ShowExteraSupportBox(controller);
+						return false;
+					},
+					.duration = crl::time(4000),
+				});
+			};
 			if (!custom.isEmpty()
 				&& kind != Kind::Developer
 				&& kind != Kind::OfficialChannel
 				&& kind != Kind::Supporter) {
-				controller->showToast(custom);
+				exdToast(custom);
 				return;
 			}
 			switch (kind) {
 			case Kind::Porter:
-				controller->showToast(tr::lng_extera_badge_developer(
+				exdToast(tr::lng_extera_badge_developer(
 					tr::now, lt_name, name));
 				break;
 			case Kind::PorterChannel:
-				controller->showToast(tr::lng_extera_badge_resource(
+				exdToast(tr::lng_extera_badge_resource(
 					tr::now, lt_name, name));
 				break;
 			case Kind::Developer:
-				controller->showToast(tr::lng_extera_badge_extera_developer(
+				exdToast(tr::lng_extera_badge_extera_developer(
 					tr::now, lt_name, name));
 				break;
 			case Kind::OfficialChannel:
-				controller->showToast(tr::lng_extera_badge_extera_resource(
+				exdToast(tr::lng_extera_badge_extera_resource(
 					tr::now, lt_name, name));
 				break;
 			case Kind::Supporter:
-				controller->showToast(tr::lng_extera_badge_supporter(
+				exdToast(tr::lng_extera_badge_supporter(
 					tr::now, lt_name, name));
 				break;
 			case Kind::Custom:
-				controller->showToast(
+				exdToast(
 					tr::lng_extera_badge_supporter(tr::now, lt_name, name));
 				break;
 			case Kind::Bughunter:
-				controller->showToast(tr::lng_exd_badge_bughunter(
+				exdToast(tr::lng_exd_badge_bughunter(
 					tr::now, lt_name, name));
 				break;
 			case Kind::Helper:
-				controller->showToast(tr::lng_exd_badge_helper(
+				exdToast(tr::lng_exd_badge_helper(
 					tr::now, lt_name, name));
 				break;
 			case Kind::Donor:
-				controller->showToast(tr::lng_exd_badge_donor(
+				exdToast(tr::lng_exd_badge_donor(
 					tr::now, lt_name, name));
 				break;
 			case Kind::None:

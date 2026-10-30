@@ -124,6 +124,7 @@ public:
 	[[nodiscard]] bool volumeSupported() const;
 	[[nodiscard]] rpl::producer<bool> volumeSupportedValue() const;
 
+	void resetSound();
 	void playSound(
 		not_null<Main::Session*> session,
 		DocumentId id,

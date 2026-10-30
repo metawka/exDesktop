@@ -1,8 +1,15 @@
 #include "settings/sections/settings_extera.h"
 
+#include <QtCore/QRegularExpression>
+
+#include "ui/search_field_controller.h"
+
 #include "core/application.h"
 #include "core/file_utilities.h"
 #include "core/version.h"
+#include "window/notifications_manager.h"
+#include "extera/extera_app_icon.h"
+#include "extera/extera_ws_proxy.h"
 #include "ui/style/style_core_font.h"
 #include "core/core_settings.h"
 #include "ui/boxes/choose_language_box.h"
@@ -617,6 +624,150 @@ void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
 	}));
 }
 
+void ShowAppIconBox(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(tr::lng_extera_app_icon());
+		box->setWidth(st::exteraAppIconBoxWidth);
+		box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); });
+		const auto variants = Extera::AppIcon::Variants();
+		const auto count = int(variants.size());
+		const auto titles = std::vector<QString>{
+			tr::lng_extera_app_icon_default(tr::now),
+			tr::lng_exd_app_icon_telegram(tr::now),
+			tr::lng_exd_app_icon_accent(tr::now),
+			tr::lng_exd_app_icon_dark(tr::now),
+			tr::lng_exd_app_icon_light(tr::now),
+		};
+		const auto currentId = Extera::String(u"app_icon"_q);
+		const auto currentSquare = Extera::Bool(u"app_icon_square"_q);
+		const auto current = [&] {
+			for (auto i = 0; i != count; ++i) {
+				if (variants[i].id == currentId) {
+					return i;
+				}
+			}
+			return 0;
+		}();
+		struct State {
+			int selected = 0;
+			bool square = false;
+			std::vector<QImage> images;
+		};
+		const auto state = box->lifetime().make_state<State>();
+		state->selected = current;
+		state->square = currentSquare;
+		const auto ratio = style::DevicePixelRatio();
+		const auto size = st::exteraAppIconSize;
+		const auto render = [=] {
+			state->images.clear();
+			for (const auto &variant : variants) {
+				auto image = Extera::AppIcon::Render(
+					size * ratio,
+					variant.id,
+					state->square);
+				image.setDevicePixelRatio(ratio);
+				state->images.push_back(std::move(image));
+			}
+		};
+		render();
+
+		const auto columns = 3;
+		const auto cell = st::exteraAppIconCellWidth;
+		const auto cellHeight = st::exteraAppIconCellHeight;
+		const auto rows = (count + columns - 1) / columns;
+		const auto grid = box->addRow(
+			object_ptr<Ui::FixedHeightWidget>(box, rows * cellHeight),
+			st::exteraAppIconGridPadding);
+		const auto skip = [=] {
+			return (grid->width() - columns * cell) / 2;
+		};
+		grid->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(grid);
+			auto hq = PainterHighQualityEnabler(p);
+			const auto left = skip();
+			for (auto i = 0; i != count; ++i) {
+				const auto x = left + (i % columns) * cell;
+				const auto y = (i / columns) * cellHeight + 4;
+				const auto rect = QRect(x + (cell - size) / 2, y, size, size);
+				p.drawImage(rect, state->images[i]);
+				if (i == state->selected) {
+					p.setBrush(Qt::NoBrush);
+					p.setPen(QPen(st::windowActiveTextFg, st::lineWidth * 2));
+					const auto outer = rect.marginsAdded({ 4, 4, 4, 4 });
+					if (state->square) {
+						const auto radius = outer.width() * 0.25;
+						p.drawRoundedRect(outer, radius, radius);
+					} else {
+						p.drawEllipse(outer);
+					}
+				}
+				p.setPen(st::windowFg);
+				p.setFont(st::exteraAppIconCaptionFont);
+				p.drawText(
+					QRect(
+						x,
+						y + size + st::exteraAppIconCaptionSkip,
+						cell,
+						st::exteraAppIconCaptionFont->height),
+					Qt::AlignHCenter | Qt::AlignTop,
+					st::exteraAppIconCaptionFont->elided(
+						titles[i],
+						cell - 4));
+			}
+		}, grid->lifetime());
+		grid->setCursor(style::cur_pointer);
+		grid->events(
+		) | rpl::filter([](not_null<QEvent*> e) {
+			return e->type() == QEvent::MouseButtonRelease;
+		}) | rpl::on_next([=](not_null<QEvent*> e) {
+			const auto point = static_cast<QMouseEvent*>(e.get())->pos();
+			const auto column = (point.x() - skip()) / cell;
+			const auto row = point.y() / cellHeight;
+			const auto index = row * columns + column;
+			if (point.x() < skip()
+				|| column >= columns
+				|| index < 0
+				|| index >= count) {
+				return;
+			}
+			state->selected = index;
+			grid->update();
+		}, grid->lifetime());
+
+		const auto square = box->addRow(
+			object_ptr<Ui::Checkbox>(
+				box,
+				tr::lng_exd_app_icon_square(tr::now),
+				currentSquare,
+				st::defaultBoxCheckbox),
+			st::exteraAppIconGridPadding);
+		square->checkedChanges() | rpl::on_next([=](bool checked) {
+			state->square = checked;
+			render();
+			grid->update();
+		}, square->lifetime());
+
+		box->addButton(tr::lng_extera_app_icon_apply(), [=] {
+			const auto index = state->selected;
+			const auto changed = (index != current)
+				|| (state->square != currentSquare);
+			box->closeBox();
+			if (!changed) {
+				return;
+			}
+			Config().setString(u"app_icon"_q, variants[index].id);
+			Config().setBool(u"app_icon_square"_q, state->square);
+			Extera::AppIcon::ApplyToShortcuts();
+			controller->show(Ui::MakeConfirmBox({
+				.text = tr::lng_extera_restart_required(),
+				.confirmed = [] { Core::Restart(); },
+				.confirmText = tr::lng_extera_restart(),
+			}));
+		});
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+	}));
+}
+
 void ShowGifBotBox(not_null<Window::SessionController*> controller) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(tr::lng_exd_gif_bot());
@@ -867,15 +1018,38 @@ void AddStreamerRow(SectionBuilder &builder) {
 	}, toggle->lifetime());
 }
 
-void BuildGeneral(SectionBuilder &builder) {
-	const auto controller = builder.controller();
-	const auto settings = &Core::App().settings();
+void PartGeneral0(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+	[[maybe_unused]] const auto settings = &Core::App().settings();
 
 	builder.addSkip();
 	builder.card([&] {
 		AddStreamerRow(builder);
 	});
 	builder.addDivider();
+}
+
+void PartGeneral1(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+	[[maybe_unused]] const auto settings = &Core::App().settings();
+
+	if (Extera::WsProxy::Available()) {
+		builder.addSkip();
+		builder.card([&] {
+			AddCoreToggle(
+				builder,
+				u"ws_proxy"_q,
+				tr::lng_exd_ws_proxy(),
+				[] { return Extera::WsProxy::Enabled(); },
+				[](bool v) { Extera::WsProxy::SetEnabled(v); });
+		});
+		builder.addAbout(tr::lng_exd_ws_proxy_about());
+	}
+}
+
+void PartGeneral2(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+	[[maybe_unused]] const auto settings = &Core::App().settings();
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_translate_messages());
@@ -935,6 +1109,11 @@ void BuildGeneral(SectionBuilder &builder) {
 		});
 	});
 	AddAbout(builder, tr::lng_extera_translate_about());
+}
+
+void PartGeneral3(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+	[[maybe_unused]] const auto settings = &Core::App().settings();
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_general());
@@ -957,6 +1136,11 @@ void BuildGeneral(SectionBuilder &builder) {
 			tr::lng_extera_filter_zalgo());
 	});
 	AddAbout(builder, tr::lng_extera_filter_zalgo_about());
+}
+
+void PartGeneral4(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+	[[maybe_unused]] const auto settings = &Core::App().settings();
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_speed_boost());
@@ -984,6 +1168,11 @@ void BuildGeneral(SectionBuilder &builder) {
 			tr::lng_extera_disable_notify_delay());
 	});
 	AddAbout(builder, tr::lng_extera_speed_about());
+}
+
+void PartGeneral5(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+	[[maybe_unused]] const auto settings = &Core::App().settings();
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_storage());
@@ -998,6 +1187,11 @@ void BuildGeneral(SectionBuilder &builder) {
 		});
 	});
 	AddAbout(builder, tr::lng_extera_save_folder_about());
+}
+
+void PartGeneral6(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+	[[maybe_unused]] const auto settings = &Core::App().settings();
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_profile());
@@ -1023,6 +1217,11 @@ void BuildGeneral(SectionBuilder &builder) {
 			});
 	});
 	AddAbout(builder, tr::lng_extera_show_id_about());
+}
+
+void PartGeneral7(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+	[[maybe_unused]] const auto settings = &Core::App().settings();
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_archive());
@@ -1048,10 +1247,8 @@ void BuildGeneral(SectionBuilder &builder) {
 	AddAbout(builder, tr::lng_extera_hide_archive_about());
 }
 
-// Appearance
-
-void BuildAppearance(SectionBuilder &builder) {
-	const auto controller = builder.controller();
+void PartAppearance0(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
 
 	builder.addSkip();
 	builder.card([&] {
@@ -1077,6 +1274,10 @@ void BuildAppearance(SectionBuilder &builder) {
 			tr::lng_extera_single_corner());
 	});
 	AddAbout(builder, tr::lng_extera_single_corner_about());
+}
+
+void PartAppearance1(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_chat_list());
@@ -1095,6 +1296,10 @@ void BuildAppearance(SectionBuilder &builder) {
 			tr::lng_extera_mini_avatars());
 	});
 	AddAbout(builder, tr::lng_extera_chat_list_about());
+}
+
+void PartAppearance2(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_folders());
@@ -1121,8 +1326,26 @@ void BuildAppearance(SectionBuilder &builder) {
 			u"hide_all_chats"_q,
 			tr::lng_extera_hide_all_chats());
 	});
+}
+
+void PartAppearance3(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+
+	builder.addSkip();
+	builder.card([&] {
+		builder.addButton({
+			.id = u"extera/app_icon"_q,
+			.title = tr::lng_extera_app_icon(),
+			.icon = { &st::exteraIconAppearance },
+			.onClick = [=] { ShowAppIconBox(controller); },
+		});
+	});
 
 	builder.addDivider();
+}
+
+void PartAppearance4(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_appearance());
@@ -1165,10 +1388,8 @@ void BuildAppearance(SectionBuilder &builder) {
 	AddAbout(builder, tr::lng_extera_custom_themes_about());
 }
 
-// Chats
-
-void BuildChats(SectionBuilder &builder) {
-	const auto actions = std::vector<const Phrase*>{
+void PartChats0(SectionBuilder &builder) {
+	[[maybe_unused]] const auto actions = std::vector<const Phrase*>{
 		&tr::lng_extera_action_reply,
 		&tr::lng_extera_action_reaction,
 		&tr::lng_extera_action_edit,
@@ -1207,6 +1428,17 @@ void BuildChats(SectionBuilder &builder) {
 			});
 	});
 	builder.addDivider();
+}
+
+void PartChats1(SectionBuilder &builder) {
+	[[maybe_unused]] const auto actions = std::vector<const Phrase*>{
+		&tr::lng_extera_action_reply,
+		&tr::lng_extera_action_reaction,
+		&tr::lng_extera_action_edit,
+		&tr::lng_extera_action_copy,
+		&tr::lng_extera_action_forward,
+		&tr::lng_extera_action_none,
+	};
 
 	builder.addSkip();
 	builder.card([&] {
@@ -1217,6 +1449,17 @@ void BuildChats(SectionBuilder &builder) {
 		});
 	});
 	AddAbout(builder, tr::lng_extera_ai_settings_about());
+}
+
+void PartChats2(SectionBuilder &builder) {
+	[[maybe_unused]] const auto actions = std::vector<const Phrase*>{
+		&tr::lng_extera_action_reply,
+		&tr::lng_extera_action_reaction,
+		&tr::lng_extera_action_edit,
+		&tr::lng_extera_action_copy,
+		&tr::lng_extera_action_forward,
+		&tr::lng_extera_action_none,
+	};
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_stickers());
@@ -1258,6 +1501,17 @@ void BuildChats(SectionBuilder &builder) {
 			});
 	});
 	AddAbout(builder, tr::lng_extera_hide_reactions_about());
+}
+
+void PartChats3(SectionBuilder &builder) {
+	[[maybe_unused]] const auto actions = std::vector<const Phrase*>{
+		&tr::lng_extera_action_reply,
+		&tr::lng_extera_action_reaction,
+		&tr::lng_extera_action_edit,
+		&tr::lng_extera_action_copy,
+		&tr::lng_extera_action_forward,
+		&tr::lng_extera_action_none,
+	};
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_gestures());
@@ -1274,6 +1528,17 @@ void BuildChats(SectionBuilder &builder) {
 			actions);
 	});
 	AddAbout(builder, tr::lng_extera_double_tap_about());
+}
+
+void PartChats4(SectionBuilder &builder) {
+	[[maybe_unused]] const auto actions = std::vector<const Phrase*>{
+		&tr::lng_extera_action_reply,
+		&tr::lng_extera_action_reaction,
+		&tr::lng_extera_action_edit,
+		&tr::lng_extera_action_copy,
+		&tr::lng_extera_action_forward,
+		&tr::lng_extera_action_none,
+	};
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_chats_section());
@@ -1331,6 +1596,13 @@ void BuildChats(SectionBuilder &builder) {
 			true);
 		AddToggle(
 			builder,
+			u"full_members"_q,
+			tr::lng_exd_full_members(),
+			{ u"members"_q, u"participants"_q },
+			tr::lng_exd_full_members_about(),
+			true);
+		AddToggle(
+			builder,
 			u"name_accent"_q,
 			tr::lng_exd_name_accent(),
 			{ u"color"_q, u"name"_q },
@@ -1349,6 +1621,17 @@ void BuildChats(SectionBuilder &builder) {
 			tr::lng_extera_hide_send_as());
 	});
 	AddAbout(builder, tr::lng_extera_hide_send_as_about());
+}
+
+void PartChats5(SectionBuilder &builder) {
+	[[maybe_unused]] const auto actions = std::vector<const Phrase*>{
+		&tr::lng_extera_action_reply,
+		&tr::lng_extera_action_reaction,
+		&tr::lng_extera_action_edit,
+		&tr::lng_extera_action_copy,
+		&tr::lng_extera_action_forward,
+		&tr::lng_extera_action_none,
+	};
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_messages());
@@ -1408,6 +1691,17 @@ void BuildChats(SectionBuilder &builder) {
 		});
 	});
 	builder.addDivider();
+}
+
+void PartChats6(SectionBuilder &builder) {
+	[[maybe_unused]] const auto actions = std::vector<const Phrase*>{
+		&tr::lng_extera_action_reply,
+		&tr::lng_extera_action_reaction,
+		&tr::lng_extera_action_edit,
+		&tr::lng_extera_action_copy,
+		&tr::lng_extera_action_forward,
+		&tr::lng_extera_action_none,
+	};
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_photos());
@@ -1415,6 +1709,17 @@ void BuildChats(SectionBuilder &builder) {
 		AddToggle(builder, u"always_send_hd"_q, tr::lng_extera_send_hd());
 	});
 	builder.addDivider();
+}
+
+void PartChats7(SectionBuilder &builder) {
+	[[maybe_unused]] const auto actions = std::vector<const Phrase*>{
+		&tr::lng_extera_action_reply,
+		&tr::lng_extera_action_reaction,
+		&tr::lng_extera_action_edit,
+		&tr::lng_extera_action_copy,
+		&tr::lng_extera_action_forward,
+		&tr::lng_extera_action_none,
+	};
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_videos());
@@ -1444,10 +1749,8 @@ void BuildChats(SectionBuilder &builder) {
 	AddAbout(builder, tr::lng_extera_auto_pause_about());
 }
 
-// Plugins
-
-void BuildPlugins(SectionBuilder &builder) {
-	const auto controller = builder.controller();
+void PartPlugins0(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
 
 	builder.addSkip();
 	builder.card([&] {
@@ -1490,6 +1793,11 @@ void BuildPlugins(SectionBuilder &builder) {
 			},
 		});
 	});
+}
+
+void PartPlugins1(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+
 	if (!Extera::Plugins::Available()) {
 		AddAbout(builder, tr::lng_extera_plugins_runtime_missing());
 	} else if (!Extera::Plugins::RuntimeError().isEmpty()) {
@@ -1497,6 +1805,10 @@ void BuildPlugins(SectionBuilder &builder) {
 	} else {
 		builder.addDivider();
 	}
+}
+
+void PartPlugins2(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
 
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_plugins());
@@ -1506,6 +1818,756 @@ void BuildPlugins(SectionBuilder &builder) {
 		return SectionBuilder::WidgetToAdd{ .widget = std::move(list) };
 	});
 }
+
+void PartOther0(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_badge_title());
+	builder.card([&] {
+		builder.addButton({
+			.id = u"extera/badge_buy"_q,
+			.title = tr::lng_exd_badge_get(),
+			.icon = { &st::menuIconPremium },
+			.onClick = [=] { ShowBadgeInfoBox(controller); },
+			.keywords = { u"badge"_q, u"verified"_q },
+		});
+	});
+	AddAbout(builder, tr::lng_exd_badge_about());
+}
+
+void PartOther1(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_donate());
+	builder.card([&] {
+		const auto wallet = [&](
+				const QString &id,
+				rpl::producer<QString> title,
+				const QString &address) {
+			builder.addButton({
+				.id = u"extera/donate_"_q + id,
+				.title = std::move(title),
+				.icon = { &st::menuIconCopy },
+				.label = rpl::single(address.left(6)
+					+ QString::fromUtf8("\xE2\x80\xA6")
+					+ address.right(4)),
+				.onClick = [=] {
+					QGuiApplication::clipboard()->setText(address);
+					controller->showToast(
+						tr::lng_exd_donate_copied(tr::now));
+				},
+				.keywords = { u"donate"_q, u"crypto"_q },
+			});
+		};
+		wallet(
+			u"ton"_q,
+			tr::lng_exd_donate_ton(),
+			u"UQBBklguWPdtllk0jUozVZm6DLqbEzqsXUZ0lK6tiKGxAS0T"_q);
+		wallet(
+			u"usdt"_q,
+			tr::lng_exd_donate_usdt(),
+			u"TPbiCARyfZpUgFtQsuHsKVikphB6viD2jk"_q);
+	});
+	AddAbout(builder, tr::lng_exd_donate_about());
+}
+
+void PartOther2(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_extera_updates());
+	builder.card([&] {
+		builder.addButton({
+			.id = u"extera/check_updates"_q,
+			.title = tr::lng_extera_check_updates(),
+			.icon = { &st::menuIconRestore },
+			.onClick = [=] {
+				using Result = Extera::Update::CheckResult;
+				const auto weak = base::make_weak(controller);
+				Extera::Update::CheckNow([=](Result result) {
+					const auto strong = weak.get();
+					if (!strong) {
+						return;
+					}
+					switch (result) {
+					case Result::Available:
+						Extera::Update::Install();
+						break;
+					case Result::Latest:
+						strong->showToast(
+							tr::lng_extera_updates_latest(tr::now));
+						break;
+					case Result::Failed:
+						strong->showToast(
+							tr::lng_extera_updates_failed(tr::now));
+						break;
+					}
+				});
+			},
+			.keywords = { u"update"_q, u"version"_q },
+		});
+		AddChoice(
+			builder,
+			u"auto_update"_q,
+			tr::lng_exd_auto_update,
+			{
+				&tr::lng_exd_auto_update_install,
+				&tr::lng_exd_auto_update_download,
+				&tr::lng_exd_auto_update_off,
+			});
+	});
+	builder.addDivider();
+}
+
+void PartOther3(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_extera_backup());
+	builder.card([&] {
+		builder.addButton({
+			.id = u"extera/export"_q,
+			.title = tr::lng_extera_export(),
+			.icon = { &st::exteraIconExport },
+			.onClick = [=] {
+				FileDialog::GetWritePath(
+					Core::App().getFileDialogParent(),
+					tr::lng_extera_export(tr::now),
+					u"JSON (*.json)"_q,
+					u"extera-settings.json"_q,
+					[=](QString &&path) {
+						auto file = QFile(path);
+						if (file.open(QIODevice::WriteOnly)) {
+							file.write(Config().exportJson());
+							controller->showToast(
+								tr::lng_extera_exported(tr::now));
+						}
+					});
+			},
+		});
+		builder.addButton({
+			.id = u"extera/import"_q,
+			.title = tr::lng_extera_import(),
+			.icon = { &st::exteraIconImport },
+			.onClick = [=] {
+				FileDialog::GetOpenPath(
+					Core::App().getFileDialogParent(),
+					tr::lng_extera_import(tr::now),
+					u"JSON (*.json)"_q,
+					[=](FileDialog::OpenResult &&result) {
+						auto data = result.remoteContent;
+						if (data.isEmpty() && !result.paths.isEmpty()) {
+							auto file = QFile(result.paths.front());
+							if (file.open(QIODevice::ReadOnly)) {
+								data = file.readAll();
+							}
+						}
+						controller->showToast(Config().importJson(data)
+							? tr::lng_extera_imported(tr::now)
+							: tr::lng_extera_import_failed(tr::now));
+					});
+			},
+		});
+		builder.addButton({
+			.id = u"extera/reset"_q,
+			.title = tr::lng_extera_reset(),
+			.icon = { &st::exteraIconReset },
+			.onClick = [=] {
+				controller->show(Ui::MakeConfirmBox({
+					.text = tr::lng_extera_reset_sure(),
+					.confirmed = [=](Fn<void()> close) {
+						Config().reset();
+						close();
+					},
+					.confirmText = tr::lng_extera_reset(),
+					.confirmStyle = &st::attentionBoxButton,
+				}));
+			},
+		});
+	});
+}
+
+void PartMain2(SectionBuilder &builder) {
+	[[maybe_unused]] const auto showOther = builder.showOther();
+
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_extera_port());
+	builder.card([&] {
+		AddLink(
+			builder,
+			u"developer"_q,
+			tr::lng_extera_port_developer(),
+			u"@metawka"_q,
+			u"https://t.me/metawka"_q,
+			{ &st::exteraIconDeveloper });
+		AddLink(
+			builder,
+			u"channel"_q,
+			tr::lng_extera_channel(),
+			u"@exDesktop"_q,
+			u"https://t.me/exDesktop"_q,
+			{ &st::exteraIconChannel });
+		AddLink(
+			builder,
+			u"forum"_q,
+			tr::lng_extera_forum(),
+			u"@exDesktopChat"_q,
+			u"https://t.me/exDesktopChat"_q,
+			{ &st::exteraIconForum });
+		AddLink(
+			builder,
+			u"website"_q,
+			tr::lng_extera_website(),
+			u"exteradesktop.xyz"_q,
+			u"https://exteradesktop.xyz"_q,
+			{ &st::exteraIconWebsite });
+	});
+}
+
+// Search
+
+[[nodiscard]] QString NormalizeQuery(QString text) {
+	text = text.toLower();
+	text.replace(QChar(0x0451), QChar(0x0435));
+	return text;
+}
+
+[[nodiscard]] QStringList QueryWords(const QString &text) {
+	static const auto split = QRegularExpression(u"[^\\p{L}\\p{N}]+"_q);
+	return NormalizeQuery(text).split(split, Qt::SkipEmptyParts);
+}
+
+[[nodiscard]] const std::vector<QStringList> &SynonymGroups() {
+	static const auto result = std::vector<QStringList>{
+		{ u"скры"_q, u"спрят"_q, u"убра"_q, u"hide"_q, u"hidden"_q },
+		{ u"телефон"_q, u"номер"_q, u"phone"_q, u"number"_q },
+		{ u"секунд"_q, u"second"_q, u"время"_q, u"time"_q },
+		{ u"перев"_q, u"translat"_q, u"язык"_q, u"language"_q },
+		{ u"эмодзи"_q, u"emoji"_q, u"смайл"_q },
+		{ u"стикер"_q, u"sticker"_q },
+		{ u"прокси"_q, u"proxy"_q, u"сеть"_q, u"network"_q, u"соедин"_q },
+		{ u"загруз"_q, u"скач"_q, u"выгруз"_q, u"download"_q, u"upload"_q },
+		{ u"уведом"_q, u"notif"_q, u"звук"_q, u"sound"_q },
+		{ u"тем"_q, u"theme"_q, u"цвет"_q, u"color"_q, u"оформл"_q },
+		{ u"иконк"_q, u"значок"_q, u"icon"_q, u"logo"_q },
+		{ u"аватар"_q, u"avatar"_q, u"скругл"_q, u"corner"_q, u"round"_q },
+		{ u"папк"_q, u"вкладк"_q, u"folder"_q, u"tab"_q },
+		{ u"архив"_q, u"archive"_q },
+		{ u"стример"_q, u"streamer"_q, u"stream"_q },
+		{ u"плагин"_q, u"plugin"_q },
+		{ u"нейросет"_q, u"gpt"_q, u"модел"_q, u"model"_q, u"ai"_q, u"ии"_q },
+		{ u"обнов"_q, u"update"_q },
+		{ u"бейдж"_q, u"галочк"_q, u"badge"_q, u"verif"_q },
+		{ u"донат"_q, u"поддерж"_q, u"donat"_q, u"support"_q },
+		{ u"сообщен"_q, u"message"_q },
+		{ u"участник"_q, u"member"_q, u"participant"_q },
+		{ u"ответ"_q, u"цитат"_q, u"reply"_q, u"quote"_q },
+		{ u"вычисл"_q, u"калькул"_q, u"формул"_q, u"math"_q, u"calc"_q },
+		{ u"счетчик"_q, u"символ"_q, u"counter"_q, u"char"_q },
+		{ u"фото"_q, u"изображ"_q, u"photo"_q, u"image"_q },
+		{ u"видео"_q, u"video"_q, u"кружок"_q, u"round"_q },
+		{ u"качеств"_q, u"quality"_q, u"hd"_q },
+		{ u"резерв"_q, u"экспорт"_q, u"импорт"_q, u"сброс"_q,
+			u"backup"_q, u"export"_q, u"import"_q, u"reset"_q },
+		{ u"жест"_q, u"двойн"_q, u"gesture"_q, u"double"_q },
+		{ u"реакц"_q, u"reaction"_q },
+		{ u"шрифт"_q, u"font"_q },
+		{ u"гиф"_q, u"gif"_q },
+	};
+	return result;
+}
+
+[[nodiscard]] QStringList ExpandWord(const QString &word) {
+	auto result = QStringList{ word };
+	for (const auto &group : SynonymGroups()) {
+		const auto hit = ranges::any_of(group, [&](const QString &stem) {
+			return word.startsWith(stem)
+				|| (word.size() >= 3 && stem.startsWith(word));
+		});
+		if (hit) {
+			for (const auto &stem : group) {
+				if (!result.contains(stem)) {
+					result.push_back(stem);
+				}
+			}
+		}
+	}
+	return result;
+}
+
+[[nodiscard]] int EditDistance(const QString &a, const QString &b) {
+	const auto n = int(a.size());
+	const auto m = int(b.size());
+	auto prev2 = std::vector<int>(m + 1);
+	auto prev = std::vector<int>(m + 1);
+	auto cur = std::vector<int>(m + 1);
+	for (auto j = 0; j <= m; ++j) {
+		prev[j] = j;
+	}
+	for (auto i = 1; i <= n; ++i) {
+		cur[0] = i;
+		for (auto j = 1; j <= m; ++j) {
+			const auto cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
+			cur[j] = std::min({
+				prev[j] + 1,
+				cur[j - 1] + 1,
+				prev[j - 1] + cost,
+			});
+			if (i > 1
+				&& j > 1
+				&& a[i - 1] == b[j - 2]
+				&& a[i - 2] == b[j - 1]) {
+				cur[j] = std::min(cur[j], prev2[j - 2] + 1);
+			}
+		}
+		prev2 = prev;
+		prev = cur;
+	}
+	return prev[m];
+}
+
+[[nodiscard]] bool FuzzyPrefix(const QString &word, const QString &term) {
+	if (word.size() < 4) {
+		return false;
+	}
+	const auto allowed = (word.size() >= 7) ? 2 : 1;
+	for (auto delta = -1; delta <= 1; ++delta) {
+		const auto length = int(word.size()) + delta;
+		if (length <= 0 || length > term.size()) {
+			continue;
+		}
+		if (EditDistance(word, term.left(length)) <= allowed) {
+			return true;
+		}
+	}
+	return false;
+}
+
+struct SearchMatch {
+	Builder::SearchEntry entry;
+	int score = 0;
+	QStringList matched;
+};
+
+[[nodiscard]] std::optional<SearchMatch> MatchEntry(
+		const Builder::SearchEntry &entry,
+		const QStringList &words) {
+	auto terms = QueryWords(entry.title);
+	for (const auto &keyword : entry.keywords) {
+		terms += QueryWords(keyword);
+	}
+	terms += QueryWords(QString(entry.id).replace('_', ' ').replace('/', ' '));
+	auto result = SearchMatch{ .entry = entry };
+	for (const auto &word : words) {
+		auto best = 0;
+		auto stem = QString();
+		const auto expanded = ExpandWord(word);
+		for (const auto &term : terms) {
+			if (term.startsWith(word)) {
+				best = 3;
+				stem = word;
+				break;
+			}
+			for (const auto &synonym : expanded) {
+				if (synonym != word && term.startsWith(synonym)) {
+					if (best < 2) {
+						best = 2;
+						stem = synonym;
+					}
+				}
+			}
+			if (best < 1 && FuzzyPrefix(word, term)) {
+				best = 1;
+				stem = term.left(word.size());
+			}
+		}
+		if (!best) {
+			return std::nullopt;
+		}
+		result.score += best;
+		result.matched.push_back(stem);
+	}
+	return result;
+}
+
+[[nodiscard]] TextWithEntities HighlightTitle(
+		const QString &title,
+		const QStringList &stems) {
+	auto result = TextWithEntities{ title };
+	const auto normalized = NormalizeQuery(title);
+	for (const auto &stem : stems) {
+		if (stem.isEmpty()) {
+			continue;
+		}
+		auto from = 0;
+		while (true) {
+			const auto index = normalized.indexOf(stem, from);
+			if (index < 0) {
+				break;
+			}
+			const auto boundary = !index
+				|| !normalized[index - 1].isLetterOrNumber();
+			if (boundary) {
+				result.entities.push_back(EntityInText(
+					EntityType::Bold,
+					index,
+					int(stem.size())));
+				break;
+			}
+			from = index + 1;
+		}
+	}
+	return result;
+}
+
+[[nodiscard]] QString EntryPath(Type section) {
+	const auto &registry = Builder::SearchRegistry::Instance();
+	const auto root = tr::lng_extera_title(tr::now);
+	auto parts = registry.sectionPath(section).split(u" > "_q);
+	const auto index = parts.indexOf(root);
+	if (index >= 0) {
+		parts = parts.mid(index + 1);
+	}
+	return parts.join(u" › "_q);
+}
+
+void FillSearchResults(
+		not_null<Ui::VerticalLayout*> container,
+		not_null<Window::SessionController*> controller,
+		Fn<void(Type)> showOther,
+		const std::vector<Type> &sections,
+		const QString &query) {
+	container->clear();
+	const auto words = QueryWords(query);
+	if (words.isEmpty()) {
+		container->resizeToWidth(container->width());
+		return;
+	}
+	auto matches = std::vector<SearchMatch>();
+	const auto &registry = Builder::SearchRegistry::Instance();
+	for (const auto &entry : registry.collectAll(&controller->session())) {
+		if (entry.id.isEmpty() || !ranges::contains(sections, entry.section)) {
+			continue;
+		}
+		if (auto match = MatchEntry(entry, words)) {
+			matches.push_back(std::move(*match));
+		}
+	}
+	ranges::stable_sort(matches, ranges::greater(), &SearchMatch::score);
+	if (matches.empty()) {
+		container->add(
+			object_ptr<Ui::FlatLabel>(
+				container,
+				tr::lng_search_tab_no_results(),
+				st::settingsSearchNoResults),
+			st::settingsSearchNoResultsPadding);
+	}
+	const auto &st = st::exteraButtonWithSubtitle;
+	for (const auto &match : matches | ranges::views::take(40)) {
+		const auto entry = match.entry;
+		const auto key = entry.id.startsWith(u"extera/"_q)
+			? entry.id.mid(7)
+			: QString();
+		const auto toggle = !key.isEmpty() && Extera::IsBoolKey(key);
+		const auto button = container->add(object_ptr<Ui::SettingsButton>(
+			container,
+			rpl::single(QString()),
+			st));
+		const auto title = Ui::CreateChild<Ui::FlatLabel>(
+			button,
+			st::exteraSearchTitle);
+		title->setMarkedText(HighlightTitle(entry.title, match.matched));
+		title->setAttribute(Qt::WA_TransparentForMouseEvents);
+		title->show();
+		const auto path = Ui::CreateChild<Ui::FlatLabel>(
+			button,
+			EntryPath(entry.section),
+			st::exteraSubtitle);
+		path->setAttribute(Qt::WA_TransparentForMouseEvents);
+		path->show();
+		button->widthValue(
+		) | rpl::on_next([=, &st](int width) {
+			const auto available = width
+				- st.padding.left()
+				- st.padding.right()
+				- (toggle ? (st.toggleSkip + st.toggle.diameter * 2) : 0);
+			title->resizeToWidth(available);
+			path->resizeToWidth(available);
+			title->moveToLeft(st.padding.left(), st.padding.top());
+			path->moveToLeft(
+				st.padding.left(),
+				st.padding.top() + st.height + st::exteraSubtitleSkip);
+		}, button->lifetime());
+		if (toggle) {
+			button->toggleOn(rpl::single(Extera::Bool(key)));
+			button->toggledChanges(
+			) | rpl::on_next([=](bool value) {
+				Extera::Config::Instance().setBool(key, value);
+			}, button->lifetime());
+		} else {
+			button->setClickedCallback([=] {
+				crl::on_main(controller, [=] {
+					controller->setHighlightControlId(entry.id);
+					showOther(entry.section);
+				});
+			});
+		}
+	}
+	container->resizeToWidth(container->width());
+}
+
+[[nodiscard]] std::vector<Type> AllCategorySections() {
+	return {
+		ExteraId(),
+		ExteraGeneralId(),
+		ExteraAppearanceId(),
+		ExteraChatsId(),
+		ExteraPluginsId(),
+		ExteraPluginsEngineId(),
+		ExteraNavigationId(),
+		ExteraAiChatId(),
+		ExteraPrivacyId(),
+		ExteraNetworkId(),
+		ExteraUpdatesId(),
+		ExteraSupportId(),
+	};
+}
+
+void AddCategorySearch(
+		SectionBuilder &builder,
+		std::vector<Type> sections,
+		FnMut<void()> content) {
+	const auto query = std::make_shared<rpl::variable<QString>>();
+	if (const auto controller = builder.controller()) {
+		const auto showOther = builder.showOther();
+		builder.add([=](const WidgetContext &ctx) {
+			auto result = object_ptr<Ui::VerticalLayout>(ctx.container);
+			const auto container = result.data();
+			auto search = CreateSectionSearchRow(container);
+			const auto row = search.row;
+			container->add(
+				object_ptr<Ui::RpWidget>::fromRaw(row.get()),
+				st::exteraSearchFieldPadding);
+			const auto results = container->add(
+				object_ptr<Ui::VerticalLayout>(container));
+			const auto searchController = container->lifetime().make_state<
+				std::unique_ptr<Ui::SearchFieldController>>(
+					std::move(search.controller));
+			(*searchController)->queryChanges(
+			) | rpl::on_next([=](const QString &value) {
+				*query = value;
+				FillSearchResults(
+					results,
+					controller,
+					showOther,
+					sections,
+					value);
+			}, row->lifetime());
+			return SectionBuilder::WidgetToAdd{ .widget = std::move(result) };
+		});
+	}
+	builder.scope(std::move(content), query->value(
+	) | rpl::map([](const QString &value) {
+		return value.trimmed().isEmpty();
+	}));
+}
+
+// Grid
+
+struct CategoryCard {
+	rpl::producer<QString> (*title)();
+	rpl::producer<QString> (*about)();
+	const style::icon *icon = nullptr;
+	Type (*target)() = nullptr;
+};
+
+void AddCategoryGrid(SectionBuilder &builder) {
+	const auto controller = builder.controller();
+	if (!controller) {
+		return;
+	}
+	const auto showOther = builder.showOther();
+	builder.add([=](const WidgetContext &ctx) {
+		const auto cards = std::make_shared<std::vector<CategoryCard>>(
+			std::vector<CategoryCard>{
+			{ [] { return tr::lng_extera_appearance(); },
+				[] { return tr::lng_exd_cat_appearance_about(); },
+				&st::menuIconPalette,
+				ExteraAppearanceId },
+			{ [] { return tr::lng_exd_cat_messages(); },
+				[] { return tr::lng_exd_cat_messages_about(); },
+				&st::exteraIconChats,
+				ExteraGeneralId },
+			{ [] { return tr::lng_exd_cat_translate(); },
+				[] { return tr::lng_exd_cat_translate_about(); },
+				&st::exteraIconTranslate,
+				ExteraChatsId },
+			{ [] { return tr::lng_exd_cat_privacy(); },
+				[] { return tr::lng_exd_cat_privacy_about(); },
+				&st::menuIconLock,
+				ExteraPrivacyId },
+			{ [] { return tr::lng_exd_cat_network(); },
+				[] { return tr::lng_exd_cat_network_about(); },
+				&st::menuIconNetwork,
+				ExteraNetworkId },
+			{ [] { return tr::lng_exd_cat_plugins(); },
+				[] { return tr::lng_exd_cat_plugins_about(); },
+				&st::exteraIconPlugins,
+				ExteraPluginsId },
+			{ [] { return tr::lng_exd_cat_updates(); },
+				[] { return tr::lng_exd_cat_updates_about(); },
+				&st::menuIconRestore,
+				ExteraUpdatesId },
+			{ [] { return tr::lng_exd_cat_support(); },
+				[] { return tr::lng_exd_cat_support_about(); },
+				&st::menuIconLike,
+				ExteraSupportId },
+		});
+		const auto count = int(cards->size());
+		const auto rows = (count + 1) / 2;
+		const auto cardHeight = st::exteraCategoryCardHeight;
+		const auto skip = st::exteraCategoryCardSkip;
+		auto result = object_ptr<Ui::FixedHeightWidget>(
+			ctx.container,
+			rows * cardHeight + (rows - 1) * skip);
+		const auto grid = result.data();
+		struct State {
+			int over = -1;
+			int pressed = -1;
+			std::vector<QString> titles;
+			std::vector<QString> abouts;
+		};
+		const auto state = grid->lifetime().make_state<State>();
+		for (const auto &card : *cards) {
+			state->titles.push_back(QString());
+			state->abouts.push_back(QString());
+		}
+		for (auto i = 0; i != count; ++i) {
+			(*cards)[i].title() | rpl::on_next([=](const QString &text) {
+				state->titles[i] = text;
+				grid->update();
+			}, grid->lifetime());
+			(*cards)[i].about() | rpl::on_next([=](const QString &text) {
+				state->abouts[i] = text;
+				grid->update();
+			}, grid->lifetime());
+		}
+		const auto cardRect = [=](int index) {
+			const auto width = (grid->width() - skip) / 2;
+			return QRect(
+				(index % 2) * (width + skip),
+				(index / 2) * (cardHeight + skip),
+				width,
+				cardHeight);
+		};
+		const auto cardAt = [=](QPoint point) {
+			for (auto i = 0; i != count; ++i) {
+				if (cardRect(i).contains(point)) {
+					return i;
+				}
+			}
+			return -1;
+		};
+		grid->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(grid);
+			auto hq = PainterHighQualityEnabler(p);
+			const auto radius = st::exteraCategoryCardRadius;
+			const auto tile = st::exteraCategoryTileSize;
+			const auto padding = st::exteraCategoryCardPadding;
+			for (auto i = 0; i != count; ++i) {
+				const auto rect = cardRect(i);
+				p.setPen(Qt::NoPen);
+				p.setBrush((i == state->over)
+					? st::windowBgRipple
+					: st::windowBgOver);
+				p.drawRoundedRect(rect, radius, radius);
+				const auto tileRect = QRect(
+					rect.x() + padding,
+					rect.y() + padding,
+					tile,
+					tile);
+				p.setBrush(st::windowBgActive);
+				p.drawRoundedRect(
+					tileRect,
+					st::exteraCategoryTileRadius,
+					st::exteraCategoryTileRadius);
+				(*cards)[i].icon->paintInCenter(
+					p,
+					tileRect,
+					st::windowFgActive->c);
+				const auto textLeft = rect.x() + padding;
+				const auto textWidth = rect.width() - 2 * padding;
+				auto top = tileRect.y() + tile + st::exteraCategoryTitleSkip;
+				p.setPen(st::windowBoldFg);
+				p.setFont(st::semiboldFont);
+				p.drawText(
+					QRect(textLeft, top, textWidth, st::semiboldFont->height),
+					Qt::AlignLeft | Qt::AlignTop,
+					st::semiboldFont->elided(state->titles[i], textWidth));
+				top += st::semiboldFont->height + st::exteraCategoryAboutSkip;
+				p.setPen(st::windowSubTextFg);
+				p.setFont(st::exteraCategoryAboutFont);
+				p.drawText(
+					QRect(
+						textLeft,
+						top,
+						textWidth,
+						rect.y() + rect.height() - top - padding / 2),
+					Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+					state->abouts[i]);
+			}
+		}, grid->lifetime());
+		grid->setMouseTracking(true);
+		grid->events(
+		) | rpl::on_next([=](not_null<QEvent*> e) {
+			const auto type = e->type();
+			if (type == QEvent::MouseMove) {
+				const auto over = cardAt(
+					static_cast<QMouseEvent*>(e.get())->pos());
+				if (state->over != over) {
+					state->over = over;
+					grid->setCursor((over >= 0)
+						? style::cur_pointer
+						: style::cur_default);
+					grid->update();
+				}
+			} else if (type == QEvent::Leave) {
+				state->over = -1;
+				grid->update();
+			} else if (type == QEvent::MouseButtonPress) {
+				state->pressed = cardAt(
+					static_cast<QMouseEvent*>(e.get())->pos());
+			} else if (type == QEvent::MouseButtonRelease) {
+				const auto index = cardAt(
+					static_cast<QMouseEvent*>(e.get())->pos());
+				const auto pressed = std::exchange(state->pressed, -1);
+				if (index >= 0 && index == pressed) {
+					const auto target = (*cards)[index].target();
+					crl::on_main(controller, [=] {
+						showOther(target);
+					});
+				}
+			}
+		}, grid->lifetime());
+		return SectionBuilder::WidgetToAdd{
+			.widget = std::move(result),
+			.margin = st::exteraCategoryGridPadding,
+		};
+	});
+}
+
+
+
+// Appearance
+
+
+// Chats
+
+
+// Plugins
+
 
 void BuildPluginsEngine(SectionBuilder &builder) {
 	const auto controller = builder.controller();
@@ -1764,241 +2826,218 @@ void BuildNavigation(SectionBuilder &builder) {
 
 // Other
 
-void BuildOther(SectionBuilder &builder) {
-	const auto controller = builder.controller();
 
-	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_exd_badge_title());
-	builder.card([&] {
-		builder.addButton({
-			.id = u"extera/badge_buy"_q,
-			.title = tr::lng_exd_badge_get(),
-			.icon = { &st::menuIconPremium },
-			.onClick = [=] { ShowBadgeInfoBox(controller); },
-			.keywords = { u"badge"_q, u"verified"_q },
-		});
+// Main
+
+
+void BuildMessages(SectionBuilder &builder) {
+	AddCategorySearch(builder, { ExteraGeneralId() }, [&] {
+		PartChats4(builder);
+		PartChats5(builder);
+		PartChats3(builder);
+		PartChats2(builder);
+		PartChats6(builder);
+		PartChats7(builder);
 	});
-	AddAbout(builder, tr::lng_exd_badge_about());
+}
 
-	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_exd_donate());
-	builder.card([&] {
-		const auto wallet = [&](
-				const QString &id,
-				rpl::producer<QString> title,
-				const QString &address) {
-			builder.addButton({
-				.id = u"extera/donate_"_q + id,
-				.title = std::move(title),
-				.icon = { &st::menuIconCopy },
-				.label = rpl::single(address.left(6)
-					+ QString::fromUtf8("\xE2\x80\xA6")
-					+ address.right(4)),
-				.onClick = [=] {
-					QGuiApplication::clipboard()->setText(address);
-					controller->showToast(
-						tr::lng_exd_donate_copied(tr::now));
-				},
-				.keywords = { u"donate"_q, u"crypto"_q },
+void BuildAppearance(SectionBuilder &builder) {
+	AddCategorySearch(builder, {
+		ExteraAppearanceId(),
+		ExteraNavigationId(),
+	}, [&] {
+		PartAppearance0(builder);
+		PartAppearance1(builder);
+		PartAppearance2(builder);
+		PartAppearance3(builder);
+		PartAppearance4(builder);
+		PartGeneral3(builder);
+		PartChats0(builder);
+		builder.addSkip();
+		builder.card([&] {
+			builder.addSectionButton({
+				.title = tr::lng_extera_nav_title(),
+				.targetSection = ExteraNavigationId(),
+				.icon = { &st::menuIconReorder },
 			});
-		};
-		wallet(
-			u"ton"_q,
-			tr::lng_exd_donate_ton(),
-			u"UQBBklguWPdtllk0jUozVZm6DLqbEzqsXUZ0lK6tiKGxAS0T"_q);
-		wallet(
-			u"usdt"_q,
-			tr::lng_exd_donate_usdt(),
-			u"TPbiCARyfZpUgFtQsuHsKVikphB6viD2jk"_q);
-	});
-	AddAbout(builder, tr::lng_exd_donate_about());
-
-	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_extera_updates());
-	builder.card([&] {
-		builder.addButton({
-			.id = u"extera/check_updates"_q,
-			.title = tr::lng_extera_check_updates(),
-			.icon = { &st::menuIconRestore },
-			.onClick = [=] {
-				using Result = Extera::Update::CheckResult;
-				const auto weak = base::make_weak(controller);
-				Extera::Update::CheckNow([=](Result result) {
-					const auto strong = weak.get();
-					if (!strong) {
-						return;
-					}
-					switch (result) {
-					case Result::Available:
-						Extera::Update::Install();
-						break;
-					case Result::Latest:
-						strong->showToast(
-							tr::lng_extera_updates_latest(tr::now));
-						break;
-					case Result::Failed:
-						strong->showToast(
-							tr::lng_extera_updates_failed(tr::now));
-						break;
-					}
-				});
-			},
-			.keywords = { u"update"_q, u"version"_q },
-		});
-		AddChoice(
-			builder,
-			u"auto_update"_q,
-			tr::lng_exd_auto_update,
-			{
-				&tr::lng_exd_auto_update_install,
-				&tr::lng_exd_auto_update_download,
-				&tr::lng_exd_auto_update_off,
-			});
-	});
-	builder.addDivider();
-
-	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_extera_backup());
-	builder.card([&] {
-		builder.addButton({
-			.id = u"extera/export"_q,
-			.title = tr::lng_extera_export(),
-			.icon = { &st::exteraIconExport },
-			.onClick = [=] {
-				FileDialog::GetWritePath(
-					Core::App().getFileDialogParent(),
-					tr::lng_extera_export(tr::now),
-					u"JSON (*.json)"_q,
-					u"extera-settings.json"_q,
-					[=](QString &&path) {
-						auto file = QFile(path);
-						if (file.open(QIODevice::WriteOnly)) {
-							file.write(Config().exportJson());
-							controller->showToast(
-								tr::lng_extera_exported(tr::now));
-						}
-					});
-			},
-		});
-		builder.addButton({
-			.id = u"extera/import"_q,
-			.title = tr::lng_extera_import(),
-			.icon = { &st::exteraIconImport },
-			.onClick = [=] {
-				FileDialog::GetOpenPath(
-					Core::App().getFileDialogParent(),
-					tr::lng_extera_import(tr::now),
-					u"JSON (*.json)"_q,
-					[=](FileDialog::OpenResult &&result) {
-						auto data = result.remoteContent;
-						if (data.isEmpty() && !result.paths.isEmpty()) {
-							auto file = QFile(result.paths.front());
-							if (file.open(QIODevice::ReadOnly)) {
-								data = file.readAll();
-							}
-						}
-						controller->showToast(Config().importJson(data)
-							? tr::lng_extera_imported(tr::now)
-							: tr::lng_extera_import_failed(tr::now));
-					});
-			},
-		});
-		builder.addButton({
-			.id = u"extera/reset"_q,
-			.title = tr::lng_extera_reset(),
-			.icon = { &st::exteraIconReset },
-			.onClick = [=] {
-				controller->show(Ui::MakeConfirmBox({
-					.text = tr::lng_extera_reset_sure(),
-					.confirmed = [=](Fn<void()> close) {
-						Config().reset();
-						close();
-					},
-					.confirmText = tr::lng_extera_reset(),
-					.confirmStyle = &st::attentionBoxButton,
-				}));
-			},
 		});
 	});
 }
 
-// Main
+void BuildTranslate(SectionBuilder &builder) {
+	AddCategorySearch(builder, { ExteraChatsId() }, [&] {
+		PartGeneral2(builder);
+	});
+}
+
+void BuildPlugins(SectionBuilder &builder) {
+	AddCategorySearch(builder, {
+		ExteraPluginsId(),
+		ExteraPluginsEngineId(),
+		ExteraAiChatId(),
+	}, [&] {
+		PartPlugins0(builder);
+		PartPlugins1(builder);
+		PartPlugins2(builder);
+		PartChats1(builder);
+	});
+}
+
+void BuildPrivacy(SectionBuilder &builder) {
+	AddCategorySearch(builder, { ExteraPrivacyId() }, [&] {
+		PartGeneral0(builder);
+		PartGeneral6(builder);
+		PartGeneral7(builder);
+	});
+}
+
+void AddNotificationsBlock(SectionBuilder &builder) {
+	const auto controller = builder.controller();
+	const auto settings = &Core::App().settings();
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_notify_title());
+	builder.card([&] {
+		AddCoreToggle(
+			builder,
+			u"notify_native"_q,
+			tr::lng_exd_notify_native(),
+			[=] { return settings->nativeNotifications(); },
+			[=](bool v) {
+				settings->setNativeNotifications(v);
+				Core::App().saveSettingsDelayed();
+				Core::App().notifications().createManager();
+			});
+		const auto cornerText = [](int corner) {
+			switch (corner) {
+			case 0: return tr::lng_exd_notify_top_left(tr::now);
+			case 1: return tr::lng_exd_notify_top_right(tr::now);
+			case 3: return tr::lng_exd_notify_bottom_left(tr::now);
+			}
+			return tr::lng_exd_notify_bottom_right(tr::now);
+		};
+		const auto corner = std::make_shared<rpl::variable<int>>(
+			int(settings->notificationsCorner()));
+		builder.addButton({
+			.id = u"extera/notify_corner"_q,
+			.title = tr::lng_exd_notify_corner(),
+			.st = &st::settingsButtonNoIcon,
+			.label = corner->value() | rpl::map(cornerText),
+			.onClick = [=] {
+				const auto order = std::vector<int>{ 0, 1, 3, 2 };
+				auto texts = std::vector<QString>();
+				auto selected = 0;
+				for (auto i = 0; i != int(order.size()); ++i) {
+					texts.push_back(cornerText(order[i]));
+					if (order[i] == corner->current()) {
+						selected = i;
+					}
+				}
+				controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+					SingleChoiceBox(box, {
+						.title = tr::lng_exd_notify_corner(),
+						.options = texts,
+						.initialSelection = selected,
+						.callback = [=](int index) {
+							using Corner = Core::Settings::ScreenCorner;
+							*corner = order[index];
+							settings->setNotificationsCorner(
+								Corner(order[index]));
+							Core::App().saveSettingsDelayed();
+							Core::App().notifications().notifySettingsChanged(
+								Window::Notifications::ChangeType::Corner);
+						},
+					});
+				}));
+			},
+			.keywords = { u"position"_q, u"corner"_q },
+		});
+		const auto soundText = [](const QString &path) {
+			return path.isEmpty()
+				? tr::lng_exd_notify_sound_default(tr::now)
+				: QFileInfo(path).fileName();
+		};
+		builder.addButton({
+			.id = u"extera/notify_sound"_q,
+			.title = tr::lng_exd_notify_sound(),
+			.st = &st::settingsButtonNoIcon,
+			.label = Config().stringChanges(
+				u"notify_sound"_q) | rpl::map(soundText),
+			.onClick = [=] {
+				FileDialog::GetOpenPath(
+					QPointer<QWidget>(),
+					tr::lng_exd_notify_sound(tr::now),
+					u"Audio (*.mp3 *.ogg *.wav *.m4a *.opus)"_q,
+					[=](FileDialog::OpenResult &&result) {
+						if (result.paths.isEmpty()) {
+							return;
+						}
+						Config().setString(
+							u"notify_sound"_q,
+							result.paths.front());
+						Core::App().notifications().resetSound();
+					});
+			},
+			.keywords = { u"sound"_q, u"audio"_q },
+		});
+		builder.addButton({
+			.id = u"extera/notify_sound_reset"_q,
+			.title = tr::lng_exd_notify_sound_reset(),
+			.st = &st::settingsButtonNoIcon,
+			.onClick = [=] {
+				Config().setString(u"notify_sound"_q, QString());
+				Core::App().notifications().resetSound();
+			},
+		});
+	});
+	AddAbout(builder, tr::lng_exd_notify_about());
+}
+
+void BuildNetwork(SectionBuilder &builder) {
+	AddCategorySearch(builder, { ExteraNetworkId() }, [&] {
+		PartGeneral1(builder);
+		PartGeneral4(builder);
+		PartGeneral5(builder);
+		AddNotificationsBlock(builder);
+	});
+}
+
+void BuildUpdates(SectionBuilder &builder) {
+	AddCategorySearch(builder, { ExteraUpdatesId() }, [&] {
+		PartOther2(builder);
+		PartOther3(builder);
+	});
+}
+
+void BuildSupport(SectionBuilder &builder) {
+	AddCategorySearch(builder, { ExteraSupportId() }, [&] {
+		PartOther0(builder);
+		PartOther1(builder);
+		PartMain2(builder);
+	});
+}
+
+void BuildOther(SectionBuilder &builder) {
+	if (!builder.controller()) {
+		return;
+	}
+	PartOther0(builder);
+	PartOther1(builder);
+	PartOther2(builder);
+	PartOther3(builder);
+}
 
 void BuildMain(SectionBuilder &builder) {
-	const auto showOther = builder.showOther();
-
 	AddHeader(builder);
-	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_extera_categories());
-	builder.card([&] {
-		const auto category = [&](
-				Type target,
-				rpl::producer<QString> title,
-				const style::icon *icon) {
+	AddCategorySearch(builder, AllCategorySections(), [&] {
+		AddCategoryGrid(builder);
+		builder.addSkip();
+		builder.card([&] {
 			builder.addSectionButton({
-				.title = std::move(title),
-				.targetSection = target,
-				.icon = { icon },
+				.title = tr::lng_extera_other(),
+				.targetSection = ExteraOtherId(),
+				.icon = { &st::exteraIconOther },
 			});
-		};
-		category(
-			ExteraGeneralId(),
-			tr::lng_extera_general(),
-			&st::exteraIconGeneral);
-		category(
-			ExteraAppearanceId(),
-			tr::lng_extera_appearance(),
-			&st::exteraIconAppearance);
-		category(
-			ExteraNavigationId(),
-			tr::lng_extera_nav_title(),
-			&st::menuIconReorder);
-		category(
-			ExteraChatsId(),
-			tr::lng_extera_chats(),
-			&st::exteraIconChats);
-		category(
-			ExteraPluginsId(),
-			tr::lng_extera_plugins(),
-			&st::exteraIconPlugins);
-		category(
-			ExteraOtherId(),
-			tr::lng_extera_other(),
-			&st::exteraIconOther);
-	});
-	builder.addDivider();
-
-	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_extera_port());
-	builder.card([&] {
-		AddLink(
-			builder,
-			u"developer"_q,
-			tr::lng_extera_port_developer(),
-			u"@metawka"_q,
-			u"https://t.me/metawka"_q,
-			{ &st::exteraIconDeveloper });
-		AddLink(
-			builder,
-			u"channel"_q,
-			tr::lng_extera_channel(),
-			u"@exDesktop"_q,
-			u"https://t.me/exDesktop"_q,
-			{ &st::exteraIconChannel });
-		AddLink(
-			builder,
-			u"forum"_q,
-			tr::lng_extera_forum(),
-			u"@exDesktopChat"_q,
-			u"https://t.me/exDesktopChat"_q,
-			{ &st::exteraIconForum });
-		AddLink(
-			builder,
-			u"website"_q,
-			tr::lng_extera_website(),
-			u"exteradesktop.xyz"_q,
-			u"https://exteradesktop.xyz"_q,
-			{ &st::exteraIconWebsite });
+		});
 	});
 }
 
@@ -2022,6 +3061,10 @@ using ExteraOther = ExteraSection<5>;
 using ExteraPluginsEngine = ExteraSection<6>;
 using ExteraNavigation = ExteraSection<7>;
 using ExteraAiChat = ExteraSection<8>;
+using ExteraPrivacy = ExteraSection<9>;
+using ExteraNetwork = ExteraSection<10>;
+using ExteraUpdates = ExteraSection<11>;
+using ExteraSupport = ExteraSection<12>;
 
 const auto kMainMeta = BuildHelper({
 	.id = ExteraMain::Id(),
@@ -2033,9 +3076,9 @@ const auto kMainMeta = BuildHelper({
 const auto kGeneralMeta = BuildHelper({
 	.id = ExteraGeneral::Id(),
 	.parentId = ExteraMain::Id(),
-	.title = &tr::lng_extera_general,
-	.icon = &st::exteraIconGeneral,
-}, BuildGeneral);
+	.title = &tr::lng_exd_cat_messages,
+	.icon = &st::exteraIconChats,
+}, BuildMessages);
 
 const auto kAppearanceMeta = BuildHelper({
 	.id = ExteraAppearance::Id(),
@@ -2047,14 +3090,14 @@ const auto kAppearanceMeta = BuildHelper({
 const auto kChatsMeta = BuildHelper({
 	.id = ExteraChats::Id(),
 	.parentId = ExteraMain::Id(),
-	.title = &tr::lng_extera_chats,
-	.icon = &st::exteraIconChats,
-}, BuildChats);
+	.title = &tr::lng_exd_cat_translate,
+	.icon = &st::exteraIconTranslate,
+}, BuildTranslate);
 
 const auto kPluginsMeta = BuildHelper({
 	.id = ExteraPlugins::Id(),
 	.parentId = ExteraMain::Id(),
-	.title = &tr::lng_extera_plugins,
+	.title = &tr::lng_exd_cat_plugins,
 	.icon = &st::exteraIconPlugins,
 }, BuildPlugins);
 
@@ -2074,17 +3117,45 @@ const auto kPluginsEngineMeta = BuildHelper({
 
 const auto kNavigationMeta = BuildHelper({
 	.id = ExteraNavigation::Id(),
-	.parentId = ExteraMain::Id(),
+	.parentId = ExteraAppearance::Id(),
 	.title = &tr::lng_extera_nav_title,
 	.icon = &st::menuIconReorder,
 }, BuildNavigation);
 
 const auto kAiChatMeta = BuildHelper({
 	.id = ExteraAiChat::Id(),
-	.parentId = ExteraChats::Id(),
+	.parentId = ExteraPlugins::Id(),
 	.title = &tr::lng_extera_ai_chat,
 	.icon = &st::menuIconBotCommands,
 }, BuildAiChat);
+
+const auto kPrivacyMeta = BuildHelper({
+	.id = ExteraPrivacy::Id(),
+	.parentId = ExteraMain::Id(),
+	.title = &tr::lng_exd_cat_privacy,
+	.icon = &st::menuIconLock,
+}, BuildPrivacy);
+
+const auto kNetworkMeta = BuildHelper({
+	.id = ExteraNetwork::Id(),
+	.parentId = ExteraMain::Id(),
+	.title = &tr::lng_exd_cat_network,
+	.icon = &st::menuIconNetwork,
+}, BuildNetwork);
+
+const auto kUpdatesMeta = BuildHelper({
+	.id = ExteraUpdates::Id(),
+	.parentId = ExteraMain::Id(),
+	.title = &tr::lng_exd_cat_updates,
+	.icon = &st::menuIconRestore,
+}, BuildUpdates);
+
+const auto kSupportMeta = BuildHelper({
+	.id = ExteraSupport::Id(),
+	.parentId = ExteraMain::Id(),
+	.title = &tr::lng_exd_cat_support,
+	.icon = &st::menuIconLike,
+}, BuildSupport);
 
 [[nodiscard]] const BuildHelper &Meta(int index) {
 	switch (index) {
@@ -2097,6 +3168,10 @@ const auto kAiChatMeta = BuildHelper({
 	case 6: return kPluginsEngineMeta;
 	case 7: return kNavigationMeta;
 	case 8: return kAiChatMeta;
+	case 9: return kPrivacyMeta;
+	case 10: return kNetworkMeta;
+	case 11: return kUpdatesMeta;
+	case 12: return kSupportMeta;
 	}
 	Unexpected("Index in Extera Meta.");
 }
@@ -2104,14 +3179,18 @@ const auto kAiChatMeta = BuildHelper({
 [[nodiscard]] rpl::producer<QString> Title(int index) {
 	switch (index) {
 	case 0: return tr::lng_extera_title();
-	case 1: return tr::lng_extera_general();
+	case 1: return tr::lng_exd_cat_messages();
 	case 2: return tr::lng_extera_appearance();
-	case 3: return tr::lng_extera_chats();
-	case 4: return tr::lng_extera_plugins();
+	case 3: return tr::lng_exd_cat_translate();
+	case 4: return tr::lng_exd_cat_plugins();
 	case 5: return tr::lng_extera_other();
 	case 6: return tr::lng_extera_plugins_engine_title();
 	case 7: return tr::lng_extera_nav_title();
 	case 8: return tr::lng_extera_ai_chat();
+	case 9: return tr::lng_exd_cat_privacy();
+	case 10: return tr::lng_exd_cat_network();
+	case 11: return tr::lng_exd_cat_updates();
+	case 12: return tr::lng_exd_cat_support();
 	}
 	Unexpected("Index in Extera Title.");
 }
@@ -2132,6 +3211,10 @@ rpl::producer<QString> ExteraSection<Index>::title() {
 }
 
 } // namespace
+
+void ShowExteraSupportBox(not_null<Window::SessionController*> controller) {
+	ShowBadgeInfoBox(controller);
+}
 
 Type ExteraId() {
 	return ExteraMain::Id();
@@ -2167,6 +3250,22 @@ Type ExteraNavigationId() {
 
 Type ExteraAiChatId() {
 	return ExteraAiChat::Id();
+}
+
+Type ExteraPrivacyId() {
+	return ExteraPrivacy::Id();
+}
+
+Type ExteraNetworkId() {
+	return ExteraNetwork::Id();
+}
+
+Type ExteraUpdatesId() {
+	return ExteraUpdates::Id();
+}
+
+Type ExteraSupportId() {
+	return ExteraSupport::Id();
 }
 
 } // namespace Settings

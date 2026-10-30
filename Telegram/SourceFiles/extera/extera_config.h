@@ -48,6 +48,7 @@ private:
 };
 
 [[nodiscard]] bool Bool(const QString &key);
+[[nodiscard]] bool IsBoolKey(const QString &key);
 [[nodiscard]] int Int(const QString &key);
 [[nodiscard]] QString String(const QString &key);
 [[nodiscard]] int RecentStickersLimit(int serverLimit);

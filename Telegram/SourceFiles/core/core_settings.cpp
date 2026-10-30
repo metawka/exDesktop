@@ -1380,6 +1380,12 @@ void Settings::writePrefImpl<QByteArray>(
 }
 
 QString Settings::getSoundPath(const QString &key) const {
+	if (key == u"msg_incoming"_q) {
+		const auto custom = Extera::String(u"notify_sound"_q);
+		if (!custom.isEmpty() && QFile::exists(custom)) {
+			return custom;
+		}
+	}
 	auto it = _soundOverrides.find(key);
 	if (it != _soundOverrides.end()) {
 		return it->second;

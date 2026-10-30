@@ -222,6 +222,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_info.h"
 #include "styles/style_iv.h"
 #include "styles/style_layers.h"
+#include "styles/style_menu_icons.h"
 
 #include <QtGui/QWindow>
 #include <QtCore/QMimeData>
@@ -7694,6 +7695,15 @@ void HistoryWidget::moveFieldControls() {
 	}
 	if (_ttlInfo) {
 		_ttlInfo->move(width() - right - _ttlInfo->width(), buttonsBottom);
+		if (_ttlInfo->isVisible()) {
+			right += _ttlInfo->width();
+		}
+	}
+	if (_exdCharsCounter) {
+		_exdCharsCounter->move(
+			width() - right - _exdCharsCounter->width(),
+			buttonsBottom + (_tabbedSelectorToggle->height()
+				- _exdCharsCounter->height()) / 2);
 	}
 	updateAiButtonGeometry();
 	updateSendAsFileGeometry();
@@ -7763,6 +7773,9 @@ void HistoryWidget::updateFieldSize() {
 	}
 	if (_ttlInfo && _ttlInfo->isVisible()) {
 		fieldWidth -= _ttlInfo->width();
+	}
+	if (_exdCharsCounter) {
+		fieldWidth -= _exdCharsCounter->width() + st::exteraCharsCounterSkip;
 	}
 
 	if (_fieldDisabled) {
@@ -10430,7 +10443,9 @@ void HistoryWidget::checkCharsLimitation() {
 		: limits.messageLengthCurrent();
 	const auto count = _fieldCharsCountManager.count();
 	const auto remove = count - maxTextSize;
-	if (remove > 0 || (counter && count > 0)) {
+	const auto hadCounter = (_exdCharsCounter != nullptr);
+	if (remove > 0) {
+		_exdCharsCounter = nullptr;
 		if (!_charsLimitation) {
 			_charsLimitation = base::make_unique_q<CharactersLimitLabel>(
 				this,
@@ -10438,9 +10453,33 @@ void HistoryWidget::checkCharsLimitation() {
 				style::al_bottom);
 			_charsLimitation->show();
 		}
-		_charsLimitation->setLeft((remove > 0) ? remove : -count);
+		_charsLimitation->setLeft(remove);
+	} else if (counter && count > 0) {
+		_charsLimitation = nullptr;
+		if (!_exdCharsCounter) {
+			_exdCharsCounter = base::make_unique_q<Ui::FlatLabel>(
+				this,
+				st::exteraCharsCounter);
+			_exdCharsCounter->setAttribute(Qt::WA_TransparentForMouseEvents);
+			_exdCharsCounter->show();
+			_exdCharsCountShown = -1;
+		}
+		const auto text = QString::number(count);
+		if (_exdCharsCountShown != count) {
+			_exdCharsCountShown = count;
+			_exdCharsCounter->setText(text);
+			_exdCharsCounter->resizeToNaturalWidth(
+				st::exteraCharsCounter.style.font->width(text) + 1);
+			updateFieldSize();
+			moveFieldControls();
+		}
 	} else {
 		_charsLimitation = nullptr;
+		_exdCharsCounter = nullptr;
+	}
+	if (hadCounter && !_exdCharsCounter) {
+		updateFieldSize();
+		moveFieldControls();
 	}
 }
 

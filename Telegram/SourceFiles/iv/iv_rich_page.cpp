@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "iv/iv_rich_page.h"
 
+#include "extera/extera_config.h"
+
 #include "base/algorithm.h"
 #include "base/flat_map.h"
 #include "base/qthelp_url.h"
@@ -987,11 +989,28 @@ bool AppendRichText(
 		return AppendRichText(data.vtext(), result, context, anchorId, anchorIds)
 			&& AddEntity(&result->text, from, EntityType::Code);
 	}, [&](const MTPDtextUrl &data) {
+		const auto target = qs(data.vurl());
+		if (Extera::Bool(u"local_premium_emoji"_q)
+			&& target.startsWith(u"tg://emoji?id="_q)) {
+			const auto id = target.mid(14).toULongLong();
+			const auto alt = data.vtext().match([](const MTPDtextPlain &d) {
+				return qs(d.vtext());
+			}, [](const auto &) {
+				return QString();
+			});
+			if (id && !alt.isEmpty()) {
+				return AppendQuoteAtom(result, context, alt, [&] {
+					result->text.append(Ui::Text::SingleCustomEmoji(
+						::Data::SerializeCustomEmojiId(id),
+						alt));
+					return true;
+				});
+			}
+		}
 		const auto from = result->text.text.size();
 		if (!AppendRichText(data.vtext(), result, context, anchorId, anchorIds)) {
 			return false;
 		}
-		const auto target = qs(data.vurl());
 		if (!AppendEmptyLinkTarget(result, context, from, target)) {
 			return false;
 		}

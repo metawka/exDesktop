@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "iv/iv_rich_message_serializer.h"
 
+#include "extera/extera_config.h"
+
 #include "base/flat_map.h"
 #include "data/data_document.h"
 #include "data/data_photo.h"
@@ -534,6 +536,16 @@ bool CollectUser(SerializeContext *context, uint64 userId) {
 			}
 		}
 		const auto documentId = ::Data::ParseCustomEmojiData(entity.data());
+		if (documentId
+			&& Extera::Bool(u"local_premium_emoji"_q)
+			&& !context->session->premium()
+			&& context->session->data().document(
+				documentId)->isPremiumEmoji()) {
+			return std::optional<MTPRichText>(MTP_textUrl(
+				MakePlainRichText(segment),
+				MTP_string(u"tg://emoji?id="_q + QString::number(documentId)),
+				MTP_long(0)));
+		}
 		const auto collected = documentId
 			? CollectDocument(context, documentId)
 			: std::nullopt;

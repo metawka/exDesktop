@@ -1078,6 +1078,10 @@ rpl::producer<bool> System::volumeSupportedValue() const {
 	}) | rpl::distinct_until_changed();
 }
 
+void System::resetSound() {
+	_soundTrack = nullptr;
+}
+
 void System::playSound(
 		not_null<Main::Session*> session,
 		DocumentId id,

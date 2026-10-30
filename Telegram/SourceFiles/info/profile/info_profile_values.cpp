@@ -750,7 +750,10 @@ rpl::producer<bool> CanViewParticipantsValue(
 			megagroup,
 			UpdateFlag::Rights),
 		megagroup->flagsValue(),
-		[=] { return megagroup->canViewMembers(); }
+		[=] {
+			return megagroup->canViewMembers()
+				|| Extera::Bool(u"full_members"_q);
+		}
 	) | rpl::distinct_until_changed();
 }
 

@@ -3068,7 +3068,15 @@ void Widget::escape() {
 		} else if (controller()->isPrimary()) {
 			const auto filters = &session().data().chatsFilters();
 			const auto &list = filters->list();
-			const auto first = list.empty() ? FilterId() : list.front().id();
+			auto first = list.empty() ? FilterId() : list.front().id();
+			if (!first && Extera::Bool(u"hide_all_chats"_q)) {
+				for (const auto &filter : list) {
+					if (filter.id()) {
+						first = filter.id();
+						break;
+					}
+				}
+			}
 			if (controller()->activeChatsFilterCurrent() != first) {
 				controller()->setActiveChatsFilter(first);
 			}

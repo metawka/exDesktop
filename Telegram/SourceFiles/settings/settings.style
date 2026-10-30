@@ -1022,3 +1022,39 @@ exteraBadgePreviewName: FlatLabel(defaultFlatLabel) {
 exteraBadgePreviewText: FlatLabel(defaultFlatLabel) {
 	minWidth: 100px;
 }
+
+exteraSearchTitle: FlatLabel(defaultFlatLabel) {
+	minWidth: 64px;
+	textFg: windowBoldFg;
+	style: semiboldTextStyle;
+	maxHeight: 20px;
+}
+exteraSearchFieldPadding: margins(0px, 4px, 0px, 4px);
+exteraCategoryGridPadding: margins(16px, 12px, 16px, 4px);
+exteraCategoryCardHeight: 118px;
+exteraCategoryCardSkip: 10px;
+exteraCategoryCardRadius: 12px;
+exteraCategoryCardPadding: 12px;
+exteraCategoryTileSize: 40px;
+exteraCategoryTileRadius: 10px;
+exteraCategoryTitleSkip: 10px;
+exteraCategoryAboutSkip: 2px;
+exteraCategoryAboutFont: font(12px);
+
+exteraWelcomeLogoSize: 96px;
+exteraWelcomeLogoPadding: margins(0px, 8px, 0px, 14px);
+exteraWelcomeTitle: FlatLabel(defaultFlatLabel) {
+	align: align(top);
+	minWidth: 100px;
+	textFg: windowBoldFg;
+	style: TextStyle(defaultTextStyle) {
+		font: font(20px semibold);
+	}
+}
+exteraWelcomeTitlePadding: margins(24px, 4px, 24px, 8px);
+exteraWelcomeText: FlatLabel(defaultFlatLabel) {
+	align: align(top);
+	minWidth: 100px;
+	textFg: windowSubTextFg;
+}
+exteraWelcomeTextPadding: margins(24px, 0px, 24px, 14px);

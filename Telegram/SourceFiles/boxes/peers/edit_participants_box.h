@@ -311,6 +311,7 @@ private:
 	void removeAdmin(not_null<UserData*> user);
 	void removeAdminSure(not_null<UserData*> user);
 	bool appendRow(not_null<PeerData*> participant);
+	bool exdAppendAuthors();
 	bool prependRow(not_null<PeerData*> participant);
 	bool removeRow(not_null<PeerData*> participant);
 	void refreshCustomStatus(not_null<PeerListRow*> row) const;

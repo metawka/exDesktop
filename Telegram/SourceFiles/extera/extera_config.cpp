@@ -86,7 +86,7 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"select_service"_q, true },
 		{ u"gif_bot"_q, QString() },
 		{ u"favorite_emoji"_q, QString() },
-		{ u"auto_update"_q, 0 },
+		{ u"auto_update"_q, 1 },
 		{ u"plugins_no_auto_safe"_q, false },
 		{ u"quote_reply"_q, false },
 		{ u"name_accent"_q, false },
@@ -116,7 +116,14 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"material_design"_q, true },
 		{ u"custom_chat_themes"_q, true },
 		{ u"app_icon"_q, QString() },
+		{ u"app_icon_square"_q, false },
+		{ u"full_members"_q, true },
+		{ u"ws_proxy"_q, true },
+		{ u"ws_proxy_secret"_q, QString() },
+		{ u"ws_proxy_port"_q, 0 },
 		{ u"welcome_shown"_q, false },
+		{ u"wizard_shown"_q, false },
+		{ u"notify_sound"_q, QString() },
 		{ u"local_premium_emoji"_q, true },
 		{ u"poll_results_before_voting"_q, true },
 		{ u"bottom_button"_q, 0 },
@@ -302,6 +309,10 @@ void Config::saveNow() {
 	}
 	file.write(QJsonDocument(_values).toJson(QJsonDocument::Indented));
 	file.commit();
+}
+
+bool IsBoolKey(const QString &key) {
+	return Defaults().value(key).isBool();
 }
 
 bool Bool(const QString &key) {

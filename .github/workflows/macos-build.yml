@@ -107,16 +107,17 @@ jobs:
           APP=Telegram.app
           BIN="$APP/Contents/MacOS/Telegram"
           mkdir -p "$APP/Contents/Frameworks" "$APP/Contents/Resources/python311/lib"
-          LINKED=$(otool -L "$BIN" | awk '/libpython3\.11/ {print $1}' | head -1)
-          if [ -z "$LINKED" ]; then
-            echo "libpython3.11 is not linked"
-            exit 1
+          otool -L "$BIN"
+          LINKED=$(otool -L "$BIN" | awk 'tolower($1) ~ /python/ {print $1}' | head -1)
+          if [ -n "$LINKED" ]; then
+            cp -L "$pythonLocation/lib/libpython3.11.dylib" "$APP/Contents/Frameworks/"
+            chmod u+w "$APP/Contents/Frameworks/libpython3.11.dylib"
+            install_name_tool -id @executable_path/../Frameworks/libpython3.11.dylib \
+              "$APP/Contents/Frameworks/libpython3.11.dylib"
+            install_name_tool -change "$LINKED" @executable_path/../Frameworks/libpython3.11.dylib "$BIN"
+          else
+            echo "Python is linked statically"
           fi
-          cp -L "$pythonLocation/lib/libpython3.11.dylib" "$APP/Contents/Frameworks/"
-          chmod u+w "$APP/Contents/Frameworks/libpython3.11.dylib"
-          install_name_tool -id @executable_path/../Frameworks/libpython3.11.dylib \
-            "$APP/Contents/Frameworks/libpython3.11.dylib"
-          install_name_tool -change "$LINKED" @executable_path/../Frameworks/libpython3.11.dylib "$BIN"
           cp -R "$pythonLocation/lib/python3.11" "$APP/Contents/Resources/python311/lib/python3.11"
           rm -rf "$APP/Contents/Resources/python311/lib/python3.11/test" \
             "$APP/Contents/Resources/python311/lib/python3.11/site-packages"

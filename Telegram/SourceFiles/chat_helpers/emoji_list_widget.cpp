@@ -2156,6 +2156,12 @@ void EmojiListWidget::fillRecentMenu(
 			TextUtilities::SetClipboardText({ text, { text } });
 		}, &st().icons.menuEmojiCopy);
 	}
+	if (document) {
+		const auto emojiId = QString::number(document->id);
+		addAction(tr::lng_exd_copy_emoji_id(tr::now), [=] {
+			QGuiApplication::clipboard()->setText(emojiId);
+		}, &st().icons.menuEmojiCopy);
+	}
 	if (emoji || document) {
 		auto favoriteId = RecentEmojiId{ emoji };
 		if (document) {

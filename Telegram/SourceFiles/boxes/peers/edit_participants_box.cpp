@@ -6,6 +6,10 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/peers/edit_participants_box.h"
+
+#include "extera/extera_config.h"
+#include "history/view/history_view_element.h"
+#include "history/history_item.h"
 #include "extera/extera_utils.h"
 
 #include "api/api_chat_participants.h"
@@ -1451,6 +1455,10 @@ void ParticipantsBoxController::restoreState(
 		}
 		const auto was = _fullCountValue.current();
 		PeerListController::restoreState(std::move(state));
+		if (exdAppendAuthors()) {
+			resort();
+			refreshRows();
+		}
 		const auto now = delegate()->peerListFullRowsCount();
 		if (now > 0 || _allLoaded) {
 			refreshDescription();
@@ -1779,8 +1787,14 @@ void ParticipantsBoxController::loadMoreRows() {
 		return;
 	}
 
+	const auto exdHidden = (_role == Role::Members || _role == Role::Profile)
+		&& channel->isMegagroup()
+		&& !channel->canViewMembers()
+		&& Extera::Bool(u"full_members"_q);
 	const auto filter = [&] {
-		if (_role == Role::Members || _role == Role::Profile) {
+		if (exdHidden) {
+			return MTP_channelParticipantsAdmins();
+		} else if (_role == Role::Members || _role == Role::Profile) {
 			return MTP_channelParticipantsRecent();
 		} else if (_role == Role::Admins) {
 			return MTP_channelParticipantsAdmins();
@@ -1804,6 +1818,7 @@ void ParticipantsBoxController::loadMoreRows() {
 		MTP_long(participantsHash)
 	)).done([=](const MTPchannels_ChannelParticipants &result) {
 		auto added = false;
+		auto exdReceived = 0;
 		const auto firstLoad = !_offset;
 		_loadRequestId = 0;
 
@@ -1815,6 +1830,7 @@ void ParticipantsBoxController::loadMoreRows() {
 			const auto &[availableCount, list] = wasRecentRequest
 				? Api::ChatParticipants::ParseRecent(channel, data)
 				: Api::ChatParticipants::Parse(channel, data);
+			exdReceived = int(list.size());
 			for (const auto &data : list) {
 				if (const auto participant = _additional.applyParticipant(
 						data)) {
@@ -1833,6 +1849,22 @@ void ParticipantsBoxController::loadMoreRows() {
 			LOG(("API Error: "
 				"channels.channelParticipantsNotModified received!"));
 		});
+		const auto exdPartial = (_role == Role::Members || _role == Role::Profile)
+			&& channel->isMegagroup()
+			&& !channel->amCreator()
+			&& !channel->hasAdminRights()
+			&& Extera::Bool(u"full_members"_q)
+			&& firstLoad
+			&& (exdHidden
+				|| (channel->flags() & ChannelDataFlag::ParticipantsHidden)
+				|| (exdReceived < perPage
+					&& channel->membersCount() > exdReceived));
+		if (exdPartial) {
+			if (exdAppendAuthors()) {
+				added = true;
+			}
+			_allLoaded = true;
+		}
 		if (_offset > 0 && _role == Role::Admins && channel->isMegagroup()) {
 			if (channel->mgInfo->admins.empty() && channel->mgInfo->adminsLoaded) {
 				channel->mgInfo->adminsLoaded = false;
@@ -1865,6 +1897,40 @@ void ParticipantsBoxController::refreshDescription() {
 		: tr::lng_blocked_list_not_found(tr::now));
 }
 
+bool ParticipantsBoxController::exdAppendAuthors() {
+	if (_role != Role::Members && _role != Role::Profile) {
+		return false;
+	}
+	const auto channel = _peer->asMegagroup();
+	if (!channel
+		|| channel->amCreator()
+		|| channel->hasAdminRights()
+		|| !Extera::Bool(u"full_members"_q)) {
+		return false;
+	}
+	const auto rows = delegate()->peerListFullRowsCount();
+	const auto partial = !channel->canViewMembers()
+		|| (channel->flags() & ChannelDataFlag::ParticipantsHidden)
+		|| (rows < kParticipantsFirstPageCount
+			&& channel->membersCount() > rows);
+	if (!partial) {
+		return false;
+	}
+	auto added = false;
+	if (const auto history = channel->owner().historyLoaded(channel)) {
+		for (const auto &block : history->blocks) {
+			for (const auto &view : block->messages) {
+				if (const auto user = view->data()->from()->asUser()) {
+					if (appendRow(user)) {
+						added = true;
+					}
+				}
+			}
+		}
+	}
+	return added;
+}
+
 bool ParticipantsBoxController::feedMegagroupLastParticipants() {
 	if ((_role != Role::Members && _role != Role::Profile)
 		|| delegate()->peerListFullRowsCount() > 0) {
@@ -1872,6 +1938,10 @@ bool ParticipantsBoxController::feedMegagroupLastParticipants() {
 	}
 	const auto megagroup = _peer->asMegagroup();
 	if (!megagroup || !megagroup->canViewMembers()) {
+		return false;
+	} else if (Extera::Bool(u"full_members"_q)
+		&& !megagroup->amCreator()
+		&& !megagroup->hasAdminRights()) {
 		return false;
 	}
 	const auto info = megagroup->mgInfo.get();

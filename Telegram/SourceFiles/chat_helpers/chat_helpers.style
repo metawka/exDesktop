@@ -1901,3 +1901,11 @@ aiComposeBodyLabel: FlatLabel(defaultFlatLabel) {
 		}
 	}
 }
+
+exteraCharsCounter: FlatLabel(defaultFlatLabel) {
+	textFg: windowSubTextFg;
+	style: TextStyle(defaultTextStyle) {
+		font: font(12px);
+	}
+}
+exteraCharsCounterSkip: 8px;

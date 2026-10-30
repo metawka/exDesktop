@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/application.h"
 #include "extera/extera_update.h"
+#include "extera/extera_ws_proxy.h"
 #include "extera/extera_streamer.h"
 
 #include "ui/widgets/checkbox.h"
@@ -551,6 +552,8 @@ void Application::run() {
 	Extera::StartBadges();
 	Extera::Plugins::Start();
 	Extera::Update::Start();
+	Extera::WsProxy::Start();
+	Extera::StartWelcome();
 	Extera::Streamer::Start();
 
 	Test::Fire(u"launch_finished"_q);

@@ -7,7 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/controls/history_view_characters_limit.h"
 
+#include "ui/painter.h"
 #include "ui/rect.h"
+#include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
 
 namespace {
@@ -66,6 +68,24 @@ void CharactersLimitLabel::setLeft(int value) {
 	if (orderChanged) {
 		_position(height(), _widgetToAlign->geometry());
 	}
+}
+
+void CharactersLimitLabel::paintEvent(QPaintEvent *e) {
+	if (_pill) {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto padding = st::msgServiceFont->spacew * 2;
+		const auto w = std::min(width(), textMaxWidth() + 2 * padding);
+		const auto h = height();
+		const auto radius = st::roundRadiusLarge;
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::historyComposeAreaBg);
+		p.drawRoundedRect(
+			QRectF((width() - w) / 2., 0., w, h + radius),
+			radius,
+			radius);
+	}
+	Ui::FlatLabel::paintEvent(e);
 }
 
 } // namespace HistoryView::Controls

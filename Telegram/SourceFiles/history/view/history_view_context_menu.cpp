@@ -2970,6 +2970,27 @@ void AddEmojiPacksAction(
 		CollectEmojiPacks(item, source),
 		source,
 		controller);
+	if (source != EmojiPacksSource::Message) {
+		return;
+	}
+	auto ids = QStringList();
+	for (const auto &entity : item->originalText().entities) {
+		if (entity.type() == EntityType::CustomEmoji) {
+			const auto id = QString::number(
+				Data::ParseCustomEmojiData(entity.data()));
+			if (!ids.contains(id)) {
+				ids.push_back(id);
+			}
+		}
+	}
+	if (ids.isEmpty()) {
+		return;
+	}
+	const auto text = ids.join(QChar('\n'));
+	menu->addAction(tr::lng_exd_copy_emoji_id(tr::now), [=] {
+		QGuiApplication::clipboard()->setText(text);
+		controller->showToast(tr::lng_exd_emoji_id_copied(tr::now));
+	}, &st::menuIconCopy);
 }
 
 void AddSelectRestrictionAction(

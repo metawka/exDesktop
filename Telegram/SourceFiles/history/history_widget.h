@@ -971,6 +971,8 @@ private:
 	std::unique_ptr<Ui::RpWidget> _sendRestriction;
 	using CharactersLimitLabel = HistoryView::Controls::CharactersLimitLabel;
 	base::unique_qptr<CharactersLimitLabel> _charsLimitation;
+	base::unique_qptr<Ui::FlatLabel> _exdCharsCounter;
+	int _exdCharsCountShown = -1;
 	QString _sendRestrictionKey;
 	Ui::Animations::Simple _inPhotoEditOver;
 	bool _inDetails = false;
