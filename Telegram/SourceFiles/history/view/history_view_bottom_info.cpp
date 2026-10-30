@@ -549,8 +549,9 @@ void BottomInfo::layoutDateText() {
 		})).append("  ");
 	}
 	const auto marker = QString(QChar(0x270E)) + ' ';
+	const auto searchFrom = name.size();
 	const auto markerAt = Extera::Bool(u"edited_icon"_q)
-		? full.indexOf(marker)
+		? full.indexOf(marker, searchFrom)
 		: -1;
 	if (markerAt >= 0) {
 		marked.append(full.left(markerAt));

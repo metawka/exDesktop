@@ -4773,7 +4773,9 @@ void ApiWrap::sendMessage(
 		if (hook.strategy == Extera::Plugins::SendStrategy::Cancel) {
 			return;
 		} else if (hook.strategy == Extera::Plugins::SendStrategy::Modify) {
-			message.textWithTags = TextWithTags{ hook.text };
+			if (message.textWithTags.text != hook.text) {
+				message.textWithTags = TextWithTags{ hook.text };
+			}
 		}
 	}
 	const auto history = message.action.history;
