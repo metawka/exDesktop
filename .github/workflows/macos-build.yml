@@ -106,15 +106,37 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent Telegram.app \
             "$GITHUB_WORKSPACE/exteraDesktop-macos-arm64.zip"
 
+      - name: Build DMG
+        working-directory: tdesktop/out/Release
+        run: |
+          STAGE_DIR="$RUNNER_TEMP/dmg-stage"
+          mkdir -p "$STAGE_DIR"
+          ditto Telegram.app "$STAGE_DIR/exteraDesktop.app"
+          ln -s /Applications "$STAGE_DIR/Applications"
+          hdiutil create \
+            -volname "exteraDesktop" \
+            -srcfolder "$STAGE_DIR" \
+            -fs HFS+ \
+            -fsargs "-c c=64,a=16,e=16" \
+            -format UDZO \
+            -imagekey zlib-level=9 \
+            "$GITHUB_WORKSPACE/exteraDesktop-macos-arm64.dmg"
+          codesign --force --sign - "$GITHUB_WORKSPACE/exteraDesktop-macos-arm64.dmg"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: exteraDesktop-macos-arm64
-          path: exteraDesktop-macos-arm64.zip
+          path: |
+            exteraDesktop-macos-arm64.zip
+            exteraDesktop-macos-arm64.dmg
 
       - name: Attach to release
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" "exteraDesktop-macos-arm64.zip"
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            "exteraDesktop-macos-arm64.zip" \
+            "exteraDesktop-macos-arm64.dmg"
