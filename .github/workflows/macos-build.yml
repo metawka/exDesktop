@@ -150,6 +150,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "$GITHUB_REF_NAME" \
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             "exDesktop-macos-arm64.$VERSION.zip" \
             "exDesktop-macos-arm64.$VERSION.dmg" --clobber
