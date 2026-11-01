@@ -13,7 +13,7 @@ OUT = ROOT / 'trusted_hashes.json'
 EXTENSIONS = ('.plugin', '.py')
 MAX_SIZE = 20 * 1024 * 1024
 MISS_LIMIT = 300
-TOKEN = os.environ['TG_BOT_TOKEN']
+TOKEN = os.environ.get('TG_BOT_TOKEN', '')
 DUMP = int(os.environ.get('TG_DUMP_CHAT') or 1388181090)
 API = f'https://api.telegram.org/bot{TOKEN}/'
 FILES = f'https://api.telegram.org/file/bot{TOKEN}/'
@@ -27,6 +27,8 @@ class ApiError(Exception):
 
 
 def call(method, **params):
+    if not TOKEN:
+        raise ApiError("TG_BOT_TOKEN environment variable is not set")
     data = urllib.parse.urlencode({
         key: json.dumps(value) if isinstance(value, (list, dict, bool)) else value
         for key, value in params.items()
@@ -36,12 +38,18 @@ def call(method, **params):
             with urllib.request.urlopen(API + method, data, timeout=60) as response:
                 return json.load(response)['result']
         except urllib.error.HTTPError as error:
-            result = json.load(error)
-        retry = (result.get('parameters') or {}).get('retry_after')
-        if retry:
-            time.sleep(retry + 1)
+            try:
+                result = json.load(error)
+            except Exception:
+                result = {}
+            retry = (result.get('parameters') or {}).get('retry_after')
+            if retry:
+                time.sleep(retry + 1)
+                continue
+            raise ApiError(result.get('description', 'HTTP error'))
+        except urllib.error.URLError:
+            time.sleep(3)
             continue
-        raise ApiError(result.get('description', ''))
 
 
 def download(file_id):

@@ -45,12 +45,20 @@ def get_input_user(user_id):
 
 
 def get_input_channel(channel_id):
-    dialog = -abs(int(channel_id or 0))
+    cid = int(channel_id or 0)
+    if not cid:
+        return TLRPC.TL_inputChannelEmpty()
+    if abs(cid) < 1000000000000:
+        dialog = -1000000000000 - abs(cid)
+    else:
+        dialog = -abs(cid)
     info = peer_info(dialog)
-    if info.get("type") != "channel":
+    if not info or info.get("type") != "channel":
+        info = peer_info(cid)
+    if not info or info.get("type") != "channel":
         return TLRPC.TL_inputChannelEmpty()
     return TLRPC.TL_inputChannel(
-        channel_id=int(info.get("bare_id") or 0),
+        channel_id=int(info.get("bare_id") or abs(cid)),
         access_hash=int(info.get("access_hash") or 0))
 
 

@@ -34,10 +34,23 @@ struct Page {
 void Render(
 		const QString &path,
 		int width,
+		std::shared_ptr<std::atomic<bool>> cancelled,
 		Fn<void(int count)> counted,
 		Fn<void(Page page)> rendered) {
 	crl::async([=] {
-		base::WinRT::Try([] { winrt::init_apartment(); });
+		auto uninit = false;
+		base::WinRT::Try([&] {
+			winrt::init_apartment();
+			uninit = true;
+		});
+		const auto uninitGuard = gsl::finally([&] {
+			if (uninit) {
+				base::WinRT::Try([] { winrt::uninit_apartment(); });
+			}
+		});
+		if (cancelled && cancelled->load(std::memory_order_relaxed)) {
+			return;
+		}
 		using namespace winrt::Windows::Data::Pdf;
 		using namespace winrt::Windows::Storage;
 		using namespace winrt::Windows::Storage::Streams;
@@ -48,11 +61,20 @@ void Render(
 				winrt::hstring(native)).get();
 			document = PdfDocument::LoadFromFileAsync(file).get();
 		});
+		if (cancelled && cancelled->load(std::memory_order_relaxed)) {
+			return;
+		}
 		const auto count = document
 			? std::min(int(document->PageCount()), kMaxPages)
 			: 0;
 		crl::on_main([=] { counted(count); });
+		if (!document || count <= 0) {
+			return;
+		}
 		for (auto i = 0; i != count; ++i) {
+			if (cancelled && cancelled->load(std::memory_order_relaxed)) {
+				break;
+			}
 			auto image = QImage();
 			base::WinRT::Try([&] {
 				const auto page = document->GetPage(uint32_t(i));
@@ -61,6 +83,9 @@ void Render(
 				options.DestinationWidth(uint32_t(width));
 				page.RenderToStreamAsync(stream, options).get();
 				const auto size = uint32_t(stream.Size());
+				if (!size) {
+					return;
+				}
 				auto reader = DataReader(stream.GetInputStreamAt(0));
 				reader.LoadAsync(size).get();
 				auto bytes = std::vector<uint8_t>(size);
@@ -69,6 +94,9 @@ void Render(
 					reinterpret_cast<const uchar*>(bytes.data()),
 					int(bytes.size()));
 			});
+			if (cancelled && cancelled->load(std::memory_order_relaxed)) {
+				break;
+			}
 			crl::on_main([=] { rendered({ i, image }); });
 		}
 	});
@@ -79,7 +107,7 @@ void Render(
 
 bool Supported() {
 #ifdef Q_OS_WIN
-	return true;
+	return base::WinRT::Supported();
 #else
 	return false;
 #endif
@@ -112,7 +140,11 @@ void Show(
 			- st::boxRowPadding.right();
 		const auto ratio = style::DevicePixelRatio();
 		const auto guard = base::make_weak(box.get());
-		Render(path, pageWidth * ratio, [=](int count) {
+		const auto cancelled = std::make_shared<std::atomic<bool>>(false);
+		box->lifetime().add([=] {
+			cancelled->store(true, std::memory_order_relaxed);
+		});
+		Render(path, pageWidth * ratio, cancelled, [=](int count) {
 			if (!guard) {
 				return;
 			}

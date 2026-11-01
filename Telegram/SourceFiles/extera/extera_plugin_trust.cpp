@@ -49,9 +49,14 @@ void Release(const std::shared_ptr<Verification> &state) {
 void Download(
 		not_null<Main::Session*> session,
 		not_null<DocumentData*> document,
+		const std::shared_ptr<Verification> &state,
 		int64 offset,
 		QByteArray collected,
 		Fn<void(QByteArray)> done) {
+	if (state->finished) {
+		done(QByteArray());
+		return;
+	}
 	auto location = MTPInputFileLocation();
 	document->mtpInput().match([&](const MTPDinputDocument &data) {
 		location = MTP_inputDocumentFileLocation(
@@ -71,6 +76,10 @@ void Download(
 		MTP_long(offset),
 		MTP_int(kChunk)
 	)).done([=](const MTPupload_File &result) mutable {
+		if (state->finished) {
+			done(QByteArray());
+			return;
+		}
 		auto part = QByteArray();
 		result.match([&](const MTPDupload_file &data) {
 			part = qba(data.vbytes());
@@ -78,7 +87,7 @@ void Download(
 		});
 		collected.append(part);
 		if (part.size() == kChunk && collected.size() < kMaxSize) {
-			Download(session, document, offset + kChunk, collected, done);
+			Download(session, document, state, offset + kChunk, std::move(collected), done);
 		} else {
 			done(collected);
 		}
@@ -98,7 +107,11 @@ void CheckCandidate(
 	}
 	state->checked.emplace(document->id);
 	++state->pending;
-	Download(session, document, 0, QByteArray(), [=](QByteArray bytes) {
+	Download(session, document, state, 0, QByteArray(), [=](QByteArray bytes) {
+		if (state->finished) {
+			Release(state);
+			return;
+		}
 		const auto hash = QString::fromLatin1(QCryptographicHash::hash(
 			bytes,
 			QCryptographicHash::Sha256).toHex());

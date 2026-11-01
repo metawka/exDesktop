@@ -242,6 +242,14 @@ void ShowToast(const QString &text) {
 		}
 		return owner->peer(peerFromUser(UserId(dialogId)));
 	} else if (dialogId < 0) {
+		if (-dialogId >= 1000000000000LL) {
+			const auto bare = uint64(-dialogId - 1000000000000LL);
+			if (const auto channel = owner->peerLoaded(
+					peerFromChannel(ChannelId(bare)))) {
+				return channel;
+			}
+			return owner->peer(peerFromChannel(ChannelId(bare)));
+		}
 		const auto bare = BareId(-dialogId);
 		if (const auto channel = owner->peerLoaded(
 				peerFromChannel(ChannelId(bare)))) {
@@ -571,8 +579,8 @@ PyObject *NativePeerInfo(PyObject *self, PyObject *args) {
 		return Py_BuildValue("s", "{}");
 	}
 	auto info = QJsonObject{
-		{ u"id"_q, double(dialog) },
-		{ u"dialog_id"_q, double(dialog) },
+		{ u"id"_q, QString::number(dialog) },
+		{ u"dialog_id"_q, QString::number(dialog) },
 		{ u"type"_q, peer->isUser()
 			? u"user"_q
 			: peer->isChat() ? u"chat"_q : u"channel"_q },
@@ -608,7 +616,8 @@ PyObject *NativeGetHistory(PyObject *self, PyObject *args) {
 	for (auto it = state.recent.rbegin()
 		; it != state.recent.rend() && array.size() < limit
 		; ++it) {
-		if (int64(it->value(u"dialog_id"_q).toDouble()) == dialog) {
+		const auto itemDialog = it->value(u"dialog_id"_q).toString().toLongLong();
+		if (itemDialog == dialog || int64(it->value(u"dialog_id"_q).toDouble()) == dialog) {
 			array.append(*it);
 		}
 	}
@@ -641,6 +650,10 @@ PyObject *NativeSendMedia(PyObject *self, PyObject *args) {
 		const auto peer = ResolveDialog(session, dialog);
 		if (!peer) {
 			ShowToast(tr::lng_extera_plugins_no_chat(tr::now));
+			return;
+		}
+		if (!QFileInfo::exists(pathValue)) {
+			ShowToast(u"File not found: "_q + pathValue);
 			return;
 		}
 		auto file = Ui::PreparedFile(pathValue);

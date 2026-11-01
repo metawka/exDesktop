@@ -237,6 +237,7 @@ def _scan_embedded_dex(source: str) -> Dict[str, List[str]]:
             continue
         defined_all.extend(sorted(_dotted(name) for name in defined))
         if not loaded:
+            _note_opaque(found, "embedded DEX binary")
             continue
         external = [_dotted(name) for name in types if name not in defined]
         calls = [f"{_dotted(owner)}.{name}" for owner, name in methods if owner not in defined]
@@ -452,7 +453,7 @@ def _note_opaque(found: Dict[str, List[str]], evidence: str) -> None:
 def _is_bytecode(name: str, raw: bytes) -> bool:
     if name.endswith(".pyc"):
         return True
-    if raw[2:4] != b"\r\n":
+    if len(raw) < 4 or raw[2:4] != b"\r\n":
         return False
     try:
         raw.decode("utf-8")
@@ -515,48 +516,58 @@ _LOCATION_LIMIT = 4
 _LOCATION_TEXT = 160
 
 
-def _read_text(path: str) -> str:
+def _read_sources(path: str):
     if zipfile.is_zipfile(path):
+        results = []
         with zipfile.ZipFile(path) as archive:
             for info in archive.infolist():
-                if info.filename.endswith(".py"):
-                    with archive.open(info) as handle:
-                        return handle.read(_MAX_SOURCE_BYTES).decode(
-                            "utf-8", errors="replace")
-        return ""
-    with open(path, "rb") as handle:
-        return handle.read(_MAX_SOURCE_BYTES).decode("utf-8", errors="replace")
+                if info.filename.endswith(".py") and not info.is_dir():
+                    try:
+                        with archive.open(info) as handle:
+                            text = handle.read(_MAX_SOURCE_BYTES).decode(
+                                "utf-8", errors="replace")
+                            results.append(text)
+                    except Exception:
+                        continue
+        return results
+    try:
+        with open(path, "rb") as handle:
+            return [handle.read(_MAX_SOURCE_BYTES).decode("utf-8", errors="replace")]
+    except Exception:
+        return []
 
 
 def locations(path: str) -> Dict[str, dict]:
     try:
-        source = _read_text(path)
+        sources = _read_sources(path)
     except Exception:
         return {}
     found: Dict[str, dict] = {}
 
     def note(permission, number, text):
         entry = found.setdefault(permission, {"lines": [], "total": 0, "seen": set()})
-        if number in entry["seen"]:
+        key = (number, text)
+        if key in entry["seen"]:
             return
-        entry["seen"].add(number)
+        entry["seen"].add(key)
         entry["total"] += 1
         if len(entry["lines"]) < _LOCATION_LIMIT:
             entry["lines"].append([number, text.strip()[:_LOCATION_TEXT]])
 
-    for number, line in enumerate(source.splitlines(), 1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        for marker, permission, _ in _MARKERS:
-            if marker in line:
-                note(permission, number, line)
-        match = _IMPORT_LINE.match(line)
-        if match:
-            name = (match.group(1) or match.group(2)).split(".")[0]
-            entry = _IMPORT_PERMISSIONS.get(name)
-            if entry:
-                note(entry[0], number, line)
+    for source in sources:
+        for number, line in enumerate(source.splitlines(), 1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            for marker, permission, _ in _MARKERS:
+                if marker in line:
+                    note(permission, number, line)
+            match = _IMPORT_LINE.match(line)
+            if match:
+                name = (match.group(1) or match.group(2)).split(".")[0]
+                entry = _IMPORT_PERMISSIONS.get(name)
+                if entry:
+                    note(entry[0], number, line)
     for entry in found.values():
         entry.pop("seen", None)
     return found
