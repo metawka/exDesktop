@@ -126,7 +126,7 @@
 |:--|:--|
 | Windows | установщик `exDesktop-setup-x64.*.exe` или портативная версия `exDesktop-portable-x64.*.zip` |
 | Linux | `exDesktop-linux-x64.*.tar.gz`, запуск файла `exDesktop` из архива |
-| macOS | `exDesktop-macos-arm64.*.zip` для Apple Silicon |
+| macOS | `exDesktop-macos-arm64.*.dmg` или `.zip` для Apple Silicon |
 
 Все файлы доступны на [странице релизов](https://github.com/metawka/exDesktop/releases/latest). exDesktop устанавливается рядом с Telegram Desktop и хранит данные отдельно.
 

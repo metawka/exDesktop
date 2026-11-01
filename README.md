@@ -126,7 +126,7 @@
 |:--|:--|
 | Windows | `exDesktop-setup-x64.*.exe` installer or `exDesktop-portable-x64.*.zip` portable version |
 | Linux | `exDesktop-linux-x64.*.tar.gz`, run `exDesktop` from the archive |
-| macOS | `exDesktop-macos-arm64.*.zip` for Apple Silicon |
+| macOS | `exDesktop-macos-arm64.*.dmg` or `.zip` for Apple Silicon |
 
 All files are available on the [releases page](https://github.com/metawka/exDesktop/releases/latest). exDesktop installs beside Telegram Desktop and keeps its data separate.
 
