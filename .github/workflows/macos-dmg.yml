@@ -1,0 +1,30 @@
+name: macOS DMG
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-15
+    steps:
+      - name: Package DMG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "exDesktop-macos-arm64.$VERSION.zip"
+          ditto -x -k "exDesktop-macos-arm64.$VERSION.zip" dmg
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname exDesktop -srcfolder dmg -ov -format UDZO \
+            "exDesktop-macos-arm64.$VERSION.dmg"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
+            "exDesktop-macos-arm64.$VERSION.dmg" --clobber
