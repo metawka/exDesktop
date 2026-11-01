@@ -29,6 +29,15 @@ class MarkdownEntity:
         )
         return entity_to_dict(raw)
 
+    def __getitem__(self, index: int) -> Any:
+        return (self.type, self.offset, self.length, self.url)[index]
+
+    def __iter__(self):
+        return iter((self.type, self.offset, self.length, self.url))
+
+    def __len__(self) -> int:
+        return 4
+
     def __repr__(self) -> str:
         return (f"MarkdownEntity({self.type}, offset={self.offset}, "
                 f"length={self.length})")

@@ -379,7 +379,6 @@ class BasePlugin:
 
     def on_app_event(self, event_type: str):
         pass
-<<<<<<< HEAD
 
     def create_settings(self) -> Optional[list]:
         return None
@@ -413,6 +412,8 @@ class BasePlugin:
         self._extera_state("_extera_menu_callbacks", dict)
         if "_extera_send_message_registered" not in self.__dict__:
             self.__dict__["_extera_send_message_registered"] = False
+        if type(self).on_send_message_hook is not BasePlugin.on_send_message_hook:
+            self.add_on_send_message_hook(0)
 
     @property
     def plugin_id(self) -> Optional[str]:
@@ -567,6 +568,10 @@ class BasePlugin:
             return
 
     def _extera_cleanup_resources(self):
+        try:
+            _host.remove_send_hook(self.id)
+        except Exception:
+            pass
         for module_name, cleanup in (("file_utils", "_unregister_all_for_plugin"),
                                      ("intents", "_unhandle_all_for_plugin")):
             try:
@@ -574,5 +579,3 @@ class BasePlugin:
                 getattr(module, cleanup)(self._extera_plugin_id)
             except Exception:
                 pass
-=======
->>>>>>> 45ac16f (fix(plugins-py): fix ArrayList semantics, markdown link offsets, and settings leak on unload)

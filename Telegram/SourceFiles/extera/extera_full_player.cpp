@@ -914,7 +914,7 @@ void View::paintControls(QPainter &p) {
 	p.drawText(
 		QRect(slider.x(), timesTop, slider.width(), _timeFont->height),
 		Qt::AlignRight,
-		u"-"_q + FormatTime(total - now));
+		u"-"_q + FormatTime(std::max(total - now, crl::time(0))));
 
 	const auto paintSkip = [&](QPoint center, bool forward, bool over) {
 		p.setBrush(QColor(255, 255, 255, over ? 255 : 210));
@@ -1056,17 +1056,19 @@ public:
 
 protected:
 	void prepare() override {
-		const auto view = Ui::CreateChild<View>(this, _controller);
-		view->resizeToWidth(S(760));
-		view->moveToLeft(0, 0);
-		view->show();
-		setStyle(st::exteraPlayerBox);
-		setNoContentMargin(true);
-		setDimensions(S(760), view->height());
+		if (const auto controller = _controller.get()) {
+			const auto view = Ui::CreateChild<View>(this, controller);
+			view->resizeToWidth(S(760));
+			view->moveToLeft(0, 0);
+			view->show();
+			setStyle(st::exteraPlayerBox);
+			setNoContentMargin(true);
+			setDimensions(S(760), view->height());
+		}
 	}
 
 private:
-	const not_null<Window::SessionController*> _controller;
+	const base::weak_ptr<Window::SessionController> _controller;
 
 };
 

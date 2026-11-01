@@ -33,10 +33,14 @@ constexpr auto kResolverBotId = 7424190611ULL;
 const auto kResolverBot = u"tgdb_search_bot"_q;
 
 [[nodiscard]] QString Trim(QString text) {
-	return text
-		.replace('+', QString())
-		.replace(' ', QString())
-		.replace('-', QString());
+	auto result = QString();
+	result.reserve(text.size());
+	for (const auto ch : text) {
+		if (ch.isDigit()) {
+			result.append(ch);
+		}
+	}
+	return result;
 }
 
 class ResolvePhoneAction final : public Ui::Menu::ItemBase {

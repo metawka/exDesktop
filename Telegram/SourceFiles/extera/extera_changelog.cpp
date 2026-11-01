@@ -329,15 +329,16 @@ void Start() {
 	}) | rpl::take(1) | rpl::on_next([](Main::Session *session) {
 		const auto seen = Int(u"changelog_seen"_q);
 		const auto current = CurrentKey();
-		Config::Instance().setInt(u"changelog_seen"_q, current);
 		if (seen >= current || (!seen && !Bool(u"wizard_shown"_q))) {
+			Config::Instance().setInt(u"changelog_seen"_q, current);
 			return;
 		}
-		base::call_delayed(kShowDelay, [] {
+		base::call_delayed(kShowDelay, [=] {
 			const auto window = Core::App().activePrimaryWindow();
 			if (const auto controller = window
 					? window->sessionController()
 					: nullptr) {
+				Config::Instance().setInt(u"changelog_seen"_q, current);
 				ShowWhenReady(controller);
 			}
 		});

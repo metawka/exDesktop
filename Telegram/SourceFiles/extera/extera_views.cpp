@@ -742,6 +742,13 @@ void DismissSheet(int64 id) {
 			it->second.close();
 		}
 		Sheets.erase(id);
+		for (auto wit = Widgets.begin(); wit != Widgets.end(); ) {
+			if (!wit->second) {
+				wit = Widgets.erase(wit);
+			} else {
+				++wit;
+			}
+		}
 	});
 }
 

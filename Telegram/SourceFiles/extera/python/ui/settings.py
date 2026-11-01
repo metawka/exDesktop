@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional
 
 _registered = {}
@@ -6,7 +6,7 @@ _registered = {}
 
 @dataclass
 class Header:
-    text: str
+    text: str = ""
 
 
 @dataclass
@@ -16,9 +16,9 @@ class Divider:
 
 @dataclass
 class Switch:
-    key: str
-    text: str
-    default: bool
+    key: str = ""
+    text: str = ""
+    default: bool = False
     subtext: Optional[str] = None
     icon: Optional[str] = None
     on_change: Optional[Callable] = None
@@ -28,10 +28,10 @@ class Switch:
 
 @dataclass
 class Selector:
-    key: str
-    text: str
-    default: int
-    items: List[str]
+    key: str = ""
+    text: str = ""
+    default: int = 0
+    items: List[str] = field(default_factory=list)
     subtext: Optional[str] = None
     icon: Optional[str] = None
     on_change: Optional[Callable] = None
@@ -41,8 +41,8 @@ class Selector:
 
 @dataclass
 class Input:
-    key: str
-    text: str
+    key: str = ""
+    text: str = ""
     default: Optional[str] = None
     subtext: Optional[str] = None
     icon: Optional[str] = None
@@ -53,7 +53,7 @@ class Input:
 
 @dataclass
 class Text:
-    text: str
+    text: str = ""
     subtext: Optional[str] = None
     icon: Optional[str] = None
     accent: bool = False
@@ -66,8 +66,8 @@ class Text:
 
 @dataclass
 class EditText:
-    key: str
-    hint: str
+    key: str = ""
+    hint: str = ""
     default: str = ""
     multiline: bool = False
     max_length: Optional[int] = None
@@ -77,8 +77,8 @@ class EditText:
 
 @dataclass
 class Slider:
-    key: str
-    text: str
+    key: str = ""
+    text: str = ""
     default: float = 0
     min: float = 0
     max: float = 100

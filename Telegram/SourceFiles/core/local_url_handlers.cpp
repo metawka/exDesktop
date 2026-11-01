@@ -1857,8 +1857,12 @@ bool ShowExteraPlugin(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
-	if (!controller || !Extera::Plugins::Started()) {
+	if (!controller) {
 		return false;
+	}
+	if (!Extera::Plugins::Started()) {
+		controller->showToast(u"Плагины отключены"_q);
+		return true;
 	}
 	Extera::Plugins::ShowPluginSettings(controller, match->captured(1));
 	return true;

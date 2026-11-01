@@ -262,7 +262,7 @@ void CollectChannels(
 		}
 	}
 	ranges::sort(items, ranges::less(), [](not_null<HistoryItem*> item) {
-		return item->position();
+		return item->date();
 	});
 	items.erase(ranges::unique(items), end(items));
 	if (int(items.size()) > kMaxPosts) {

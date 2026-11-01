@@ -9,6 +9,12 @@ from html.parser import HTMLParser
 
 import _extera
 
+try:
+    from tl_runtime import ArrayList
+except ImportError:
+    class ArrayList(list):
+        pass
+
 
 # Stub
 
@@ -384,6 +390,12 @@ class _ReplyStub(Stub):
 
 
 # Formatting
+
+try:
+    from markdown_utils import parse_markdown, parse_html, MarkdownEntity, ParsedText
+except ImportError:
+    pass
+
 
 def format_text(text, parse_mode):
     from text_formatting import parse_text

@@ -5,7 +5,7 @@ from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Tuple
 
 
-class TLEntityType(Enum):
+class TLEntityType(str, Enum):
     CODE = "code"
     PRE = "pre"
     STRIKETHROUGH = "strikethrough"
@@ -16,6 +16,19 @@ class TLEntityType(Enum):
     SPOILER = "spoiler"
     CUSTOM_EMOJI = "custom_emoji"
     BLOCKQUOTE = "blockquote"
+
+    def __eq__(self, other):
+        val = getattr(other, "value", other)
+        if str(self.value) == str(val):
+            return True
+        if self is TLEntityType.STRIKETHROUGH and val in ("strike", "s"):
+            return True
+        if self is TLEntityType.TEXT_LINK and val in ("url", "link", "text_url"):
+            return True
+        return super().__eq__(other)
+
+    def __hash__(self):
+        return hash(self.value)
 
 
 @dataclass
@@ -216,17 +229,22 @@ def _parse_markdown(text: str) -> Tuple[str, List[RawEntity]]:
             entities.append(RawEntity(offset, len(alt), TLEntityType.CUSTOM_EMOJI,
                                       document_id=document_id))
         elif kind == "link":
-            body = match.group("linktext")
+            raw_body = match.group("linktext")
             url = match.group("linkurl")
+            body, nested_entities = _parse_markdown(raw_body)
             out.append(body)
-            plain_length += len(body)
+            body_len = len(body)
             emoji_id = url[len("tg://emoji?id="):] if url.startswith("tg://emoji?id=") else url
             if emoji_id.isdigit():
-                entities.append(RawEntity(offset, len(body), TLEntityType.CUSTOM_EMOJI,
+                entities.append(RawEntity(offset, body_len, TLEntityType.CUSTOM_EMOJI,
                                           document_id=int(emoji_id)))
             else:
-                entities.append(RawEntity(offset, len(body), TLEntityType.TEXT_LINK,
+                entities.append(RawEntity(offset, body_len, TLEntityType.TEXT_LINK,
                                           url=url))
+            for ne in nested_entities:
+                ne.offset += offset
+                entities.append(ne)
+            plain_length += body_len
         else:
             group_name, entity_type = _MD_INLINE_TYPES[kind]
             body = match.group(group_name)
