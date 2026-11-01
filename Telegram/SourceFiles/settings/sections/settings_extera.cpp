@@ -2082,6 +2082,22 @@ void PartPlugins1(SectionBuilder &builder) {
 	} else if (!Extera::Plugins::RuntimeError().isEmpty()) {
 		AddAbout(builder, rpl::single(Extera::Plugins::RuntimeError()));
 	} else {
+		builder.card([&] {
+			builder.addButton({
+				.id = u"extera/plugin_store"_q,
+				.title = rpl::single(QString::fromUtf8("Каталог плагинов")),
+				.icon = { &st::menuIconBotCommands },
+				.onClick = [=] { Extera::Plugins::ShowPluginStore(controller); },
+				.keywords = { u"store"_q, u"catalog"_q, u"plugins"_q },
+			});
+			builder.addButton({
+				.id = u"extera/plugin_install_file"_q,
+				.title = tr::lng_extera_plugins_install(),
+				.icon = { &st::menuIconPlus },
+				.onClick = [=] { Extera::Plugins::ChooseAndInstall(controller); },
+				.keywords = { u"install"_q, u"plugin"_q },
+			});
+		});
 		builder.addDivider();
 	}
 }

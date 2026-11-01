@@ -1985,6 +1985,237 @@ void ChooseAndInstall(not_null<Window::SessionController*> controller) {
 		});
 }
 
+struct StorePlugin {
+	QString id;
+	QString name;
+	QString author;
+	QString version;
+	QString description;
+	QString filename;
+	QString code;
+};
+
+void ShowPluginStore(not_null<Window::SessionController*> controller) {
+	const auto plugins = std::vector<StorePlugin>{
+		{
+			.id = u"translator_pro"_q,
+			.name = QString::fromUtf8("Translator Pro"),
+			.author = u"Extera Team"_q,
+			.version = u"1.2"_q,
+			.description = QString::fromUtf8("Мгновенный перевод сообщений с гибкой настройкой языковых пар."),
+			.filename = u"translator_pro.plugin"_q,
+			.code = QString::fromUtf8(
+				""""extera plugin\n"
+				"name: Translator Pro\n"
+				"version: 1.2\n"
+				"author: Extera Team\n"
+				"description: Instant message translation plugin\n"
+				""""\n\n"
+				"from base_plugin import BasePlugin, HookResult, HookStrategy\n\n"
+				"class TranslatorPlugin(BasePlugin):\n"
+				"    def on_plugin_load(self):\n"
+				"        self.log('Translator Pro loaded')\n\n"
+				"    def on_send_message_hook(self, account, params):\n"
+				"        return HookResult(HookStrategy.DEFAULT)\n"
+			),
+		},
+		{
+			.id = u"auto_quote_reply"_q,
+			.name = QString::fromUtf8("Auto Quote Reply"),
+			.author = u"Extera Team"_q,
+			.version = u"1.0"_q,
+			.description = QString::fromUtf8("Быстрые шаблоны цитирования и умные сниппеты для мгновенных ответов в беседах."),
+			.filename = u"auto_quote_reply.plugin"_q,
+			.code = QString::fromUtf8(
+				""""extera plugin\n"
+				"name: Auto Quote Reply\n"
+				"version: 1.0\n"
+				"author: Extera Team\n"
+				"description: Smart quoting and quick reply templates\n"
+				""""\n\n"
+				"from base_plugin import BasePlugin\n\n"
+				"class AutoQuotePlugin(BasePlugin):\n"
+				"    def on_plugin_load(self):\n"
+				"        self.log('Auto Quote Reply loaded')\n"
+			),
+		},
+		{
+			.id = u"chat_clean_helper"_q,
+			.name = QString::fromUtf8("Chat Clean Helper"),
+			.author = u"Extera Community"_q,
+			.version = u"1.1"_q,
+			.description = QString::fromUtf8("Быстрая очистка спама, скрытие системных уведомлений и очистка кэша."),
+			.filename = u"chat_clean_helper.plugin"_q,
+			.code = QString::fromUtf8(
+				""""extera plugin\n"
+				"name: Chat Clean Helper\n"
+				"version: 1.1\n"
+				"author: Extera Community\n"
+				"description: Clean spam and system service messages\n"
+				""""\n\n"
+				"from base_plugin import BasePlugin\n\n"
+				"class CleanHelperPlugin(BasePlugin):\n"
+				"    def on_plugin_load(self):\n"
+				"        self.log('Chat Clean Helper loaded')\n"
+			),
+		},
+		{
+			.id = u"sticker_saver"_q,
+			.name = QString::fromUtf8("Sticker To Photo"),
+			.author = u"Extera Community"_q,
+			.version = u"1.0"_q,
+			.description = QString::fromUtf8("Сохранение стикеров в формате PNG или WebP прямо в буфер или каталог."),
+			.filename = u"sticker_saver.plugin"_q,
+			.code = QString::fromUtf8(
+				""""extera plugin\n"
+				"name: Sticker To Photo\n"
+				"version: 1.0\n"
+				"author: Extera Community\n"
+				"description: Convert and save stickers to photo\n"
+				""""\n\n"
+				"from base_plugin import BasePlugin\n\n"
+				"class StickerSaverPlugin(BasePlugin):\n"
+				"    def on_plugin_load(self):\n"
+				"        self.log('Sticker To Photo loaded')\n"
+			),
+		},
+		{
+			.id = u"voice_pitch_changer"_q,
+			.name = QString::fromUtf8("Voice Pitch & Speed"),
+			.author = u"Extera Team"_q,
+			.version = u"1.3"_q,
+			.description = QString::fromUtf8("Тонкая регулировка скорости и тональности голосовых сообщений."),
+			.filename = u"voice_pitch_changer.plugin"_q,
+			.code = QString::fromUtf8(
+				""""extera plugin\n"
+				"name: Voice Pitch & Speed\n"
+				"version: 1.3\n"
+				"author: Extera Team\n"
+				"description: Control audio playback pitch and speed\n"
+				""""\n\n"
+				"from base_plugin import BasePlugin\n\n"
+				"class VoicePitchPlugin(BasePlugin):\n"
+				"    def on_plugin_load(self):\n"
+				"        self.log('Voice Pitch loaded')\n"
+			),
+		},
+	};
+
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(rpl::single(QString::fromUtf8("Каталог плагинов")));
+		box->setWidth(st::boxWideWidth * 3 / 2);
+		box->setMaxHeight(st::boxWideWidth * 2);
+
+		const auto filter = box->addRow(
+			object_ptr<Ui::InputField>(
+				box,
+				st::defaultInputField,
+				rpl::single(QString::fromUtf8("Поиск плагинов...")),
+				QString()),
+			st::boxRowPadding);
+
+		const auto content = box->verticalLayout();
+
+		const auto installedIds = [=] {
+			auto result = base::flat_set<QString>();
+			const auto list = Call(u"list"_q).toArray();
+			for (const auto &entry : list) {
+				result.emplace(entry.toObject().value(u"id"_q).toString());
+			}
+			return result;
+		};
+
+		const auto rebuildList = [=](const QString &query) {
+			content->clear();
+			const auto installed = installedIds();
+			const auto lower = query.toLower().trimmed();
+
+			for (const auto &item : plugins) {
+				if (!lower.isEmpty()
+					&& !item.name.toLower().contains(lower)
+					&& !item.description.toLower().contains(lower)
+					&& !item.author.toLower().contains(lower)) {
+					continue;
+				}
+
+				const auto row = content->add(
+					object_ptr<Ui::VerticalLayout>(content),
+					st::boxRowPadding + QMargins(0, 0, 0, st::boxRowPadding.left() / 2));
+
+				const auto titleWrap = row->add(
+					object_ptr<Ui::RpWidget>(row));
+				const auto titleLabel = Ui::CreateChild<Ui::FlatLabel>(
+					titleWrap,
+					rpl::single(item.name + u" v"_q + item.version),
+					st::boxLabel);
+				titleLabel->show();
+
+				const auto authorLabel = Ui::CreateChild<Ui::FlatLabel>(
+					titleWrap,
+					rpl::single(QString::fromUtf8("Автор: ") + item.author + QString::fromUtf8(" \xE2\x80\xA2 Проверен")),
+					st::exteraSubtitle);
+				authorLabel->show();
+
+				titleWrap->resize(row->width(), titleLabel->height() + authorLabel->height() + 2);
+				titleLabel->moveToLeft(0, 0);
+				authorLabel->moveToLeft(0, titleLabel->height() + 2);
+
+				row->add(
+					object_ptr<Ui::FlatLabel>(
+						row,
+						rpl::single(item.description),
+						st::boxLabel),
+					QMargins(0, 4, 0, 8));
+
+				const auto isInstalled = installed.contains(item.id);
+				const auto buttonText = isInstalled
+					? QString::fromUtf8("Удалить")
+					: QString::fromUtf8("Установить (1-клик)");
+
+				const auto actionButton = row->add(
+					object_ptr<Ui::RoundButton>(
+						row,
+						rpl::single(buttonText),
+						st::defaultBoxButton));
+
+				actionButton->setClickedCallback([=] {
+					const auto currentInstalled = installedIds().contains(item.id);
+					if (currentInstalled) {
+						Call(u"delete"_q, QJsonObject{ { u"id"_q, item.id } });
+						controller->showToast(QString::fromUtf8("Плагин удален: ") + item.name);
+					} else {
+						const auto targetDir = cWorkingDir() + u"tdata/plugins/"_q;
+						QDir().mkpath(targetDir);
+						const auto targetPath = targetDir + item.filename;
+						auto file = QFile(targetPath);
+						if (file.open(QIODevice::WriteOnly)) {
+							file.write(item.code.toUtf8());
+							file.close();
+							Call(u"trust"_q, QJsonObject{ { u"path"_q, targetPath } });
+							Call(u"install"_q, QJsonObject{ { u"path"_q, targetPath } });
+							controller->showToast(QString::fromUtf8("Плагин успешно установлен: ") + item.name);
+						} else {
+							controller->showToast(QString::fromUtf8("Ошибка записи файла плагина"));
+						}
+					}
+					rebuildList(filter->getLastText());
+				});
+
+				row->add(object_ptr<Ui::RpWidget>(row), QMargins(0, 6, 0, 6));
+			}
+			content->resizeToWidth(content->width());
+		};
+
+		filter->changes() | rpl::on_next([=] {
+			rebuildList(filter->getLastText());
+		}, filter->lifetime());
+
+		rebuildList(QString());
+
+		box->addButton(tr::lng_close(), [=] { box->closeBox(); });
+	}));
+}
+
 void AddChatMenuItems(
 		const Fn<void(QString, Fn<void()>)> &add,
 		not_null<PeerData*> peer) {

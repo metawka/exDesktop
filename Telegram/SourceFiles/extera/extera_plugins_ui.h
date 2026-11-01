@@ -35,6 +35,7 @@ void ShowInstallBox(
 	bool trusted);
 
 void ChooseAndInstall(not_null<Window::SessionController*> controller);
+void ShowPluginStore(not_null<Window::SessionController*> controller);
 
 void AddChatMenuItems(
 	const Fn<void(QString, Fn<void()>)> &add,
