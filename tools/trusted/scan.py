@@ -17,6 +17,7 @@ TOKEN = os.environ['TG_BOT_TOKEN']
 DUMP = int(os.environ.get('TG_DUMP_CHAT') or 1388181090)
 API = f'https://api.telegram.org/bot{TOKEN}/'
 FILES = f'https://api.telegram.org/file/bot{TOKEN}/'
+ADDED = []
 
 
 # Api
@@ -88,6 +89,7 @@ def add(state, known, message, chat, message_id):
         'message': message_id,
         'name': name,
     })
+    ADDED.append((chat, message_id, name))
     print(f'added {name} from {bare(chat)}/{message_id}')
 
 
@@ -164,6 +166,36 @@ def backfill(state, known, chat):
           f'not forwardable {skipped}')
 
 
+# Report
+
+def report():
+    if not ADDED:
+        return
+    titles = {}
+    lines = [f'Добавлено в доверенные плагины: {len(ADDED)}']
+    for chat, message_id, name in ADDED:
+        if chat not in titles:
+            try:
+                info = call('getChat', chat_id=chat)
+                titles[chat] = (info.get('title') or str(bare(chat)), info.get('username'))
+            except ApiError:
+                titles[chat] = (str(bare(chat)), None)
+        title, username = titles[chat]
+        link = (f'https://t.me/{username}/{message_id}' if username
+                else f'https://t.me/c/{bare(chat)}/{message_id}')
+        lines.append(f'{name} · {title} · {link}')
+    text = ''
+    for line in lines:
+        if len(text) + len(line) + 1 > 4000:
+            call('sendMessage', chat_id=DUMP, text=text,
+                 disable_web_page_preview=True)
+            text = ''
+        text += line + '\n'
+    if text:
+        call('sendMessage', chat_id=DUMP, text=text,
+             disable_web_page_preview=True)
+
+
 # Main
 
 def main():
@@ -179,6 +211,10 @@ def main():
         OUT.write_text(
             json.dumps(state, ensure_ascii=False, indent=2) + '\n',
             encoding='utf-8', newline='\n')
+        try:
+            report()
+        except Exception as error:
+            print(f'report failed: {error}')
 
 
 if __name__ == '__main__':
