@@ -19,6 +19,7 @@
 #include "styles/style_chat.h"
 #include "styles/style_settings.h"
 #include "styles/style_widgets.h"
+#include <QtCore/QTimer>
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 #include "extera/extera_utils.h"
@@ -496,7 +497,42 @@ const style::icon *QuickActionIcon(const QString &id) {
 	return nullptr;
 }
 
+void CloseSubmenusOutside(not_null<Ui::PopupMenu*> menu) {
+	const auto weak = base::make_weak(menu.get());
+	const auto timer = new QTimer(menu.get());
+	QObject::connect(timer, &QTimer::timeout, [=] {
+		const auto strong = weak.get();
+		if (!strong || !strong->isVisible()) {
+			return;
+		}
+		const auto cursor = QCursor::pos();
+		if (!strong->geometry().contains(cursor)) {
+			return;
+		}
+		const auto inner = strong->menu();
+		if (QRect(inner->mapToGlobal(QPoint()), inner->size()).contains(cursor)) {
+			return;
+		}
+		auto submenus = std::vector<Ui::PopupMenu*>();
+		for (const auto widget : QApplication::topLevelWidgets()) {
+			const auto popup = dynamic_cast<Ui::PopupMenu*>(widget);
+			if (!popup || popup == strong || !popup->isVisible()) {
+				continue;
+			}
+			if (popup->geometry().contains(cursor)) {
+				return;
+			}
+			submenus.push_back(popup);
+		}
+		for (const auto popup : submenus) {
+			popup->hideMenu(true);
+		}
+	});
+	timer->start(100);
+}
+
 void ApplyQuickActions(not_null<Ui::PopupMenu*> menu) {
+	CloseSubmenusOutside(menu);
 	if (!Bool(u"menu_quick_row"_q)) {
 		return;
 	}
