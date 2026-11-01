@@ -15,6 +15,10 @@
     "donor": {
       "emoji": "5413871448441793380",
       "text": ""
+    },
+    "trusted": {
+      "emoji": "5420443203671208138",
+      "text": ""
     }
   },
   "users": [
@@ -62,6 +66,16 @@
     {
       "id": 3978523897,
       "type": "developer"
+    }
+  ],
+  "trusted": [
+    {
+      "id": 2189715950,
+      "name": "exteraGram Plugins"
+    },
+    {
+      "id": 3914431400,
+      "name": "exDesktop Plugins"
     }
   ]
 }
