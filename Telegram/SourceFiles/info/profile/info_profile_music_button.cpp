@@ -16,6 +16,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat.h"
 #include "styles/style_info.h"
 
+#include <QtGui/QPainterPath>
+
+#include <algorithm>
+
 namespace Info::Profile {
 
 MusicButton::MusicButton(
@@ -54,14 +58,6 @@ void MusicButton::setOverrideBg(std::optional<QColor> color) {
 void MusicButton::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
 
-	if (_overrideBg) {
-		p.fillRect(e->rect(), Ui::BlendColors(
-			*_overrideBg,
-			Qt::black,
-			st::infoProfileTopBarActionButtonBgOpacity));
-	} else {
-		p.fillRect(e->rect(), st::shadowFg);
-	}
 	const auto lightBackground = _overrideBg
 		&& Ui::IsLightBackground(*_overrideBg);
 	const auto rippleColor = !_overrideBg
@@ -71,23 +67,24 @@ void MusicButton::paintEvent(QPaintEvent *e) {
 				? QColor(Qt::black)
 				: st::groupCallMembersFg->c),
 			st::infoProfileTopBarBackdropRippleOpacity));
-	paintRipple(p, QPoint(), rippleColor ? &*rippleColor : nullptr);
 
 	const auto &icon = st::topicButtonArrow;
 	const auto iconWidth = icon.width();
 	const auto iconHeight = icon.height();
 
 	const auto padding = st::infoMusicButtonPadding;
+	const auto sideInset = padding.left();
 	const auto skip = st::normalFont->spacew;
 
 	const auto titleWidth = _title.maxWidth();
 	const auto performerWidth = _performer.maxWidth();
-	const auto totalNeeded = titleWidth + performerWidth + skip;
-	const auto availableWidth = width()
+	const auto totalNeeded = titleWidth + performerWidth;
+	const auto availableWidth = std::max(0, width()
+		- 2 * sideInset
 		- rect::m::sum::h(padding)
 		- iconWidth
-		- skip
-		- _noteWidth;
+		- 2 * skip
+		- _noteWidth);
 
 	auto actualTitleWidth = 0;
 	auto actualPerformerWidth = 0;
@@ -106,9 +103,29 @@ void MusicButton::paintEvent(QPaintEvent *e) {
 		+ actualTitleWidth
 		+ skip
 		+ iconWidth;
-	const auto centerX = width() / 2;
-	const auto contentStartX = centerX - totalContentWidth / 2;
+	const auto pillWidth = totalContentWidth + rect::m::sum::h(padding);
+	const auto pillLeft = (width() - pillWidth) / 2;
+	const auto contentStartX = pillLeft + padding.left();
 	const auto textTop = (height() - st::normalFont->height) / 2;
+
+	const auto pill = QRectF(
+		pillLeft,
+		0,
+		pillWidth,
+		height());
+	auto outline = QPainterPath();
+	outline.addRoundedRect(pill, pill.height() / 2., pill.height() / 2.);
+	p.save();
+	p.setRenderHint(QPainter::Antialiasing);
+	p.fillPath(outline, _overrideBg
+		? Ui::BlendColors(
+			*_overrideBg,
+			Qt::black,
+			st::infoProfileTopBarActionButtonBgOpacity)
+		: st::shadowFg->c);
+	p.setClipPath(outline, Qt::IntersectClip);
+	paintRipple(p, QPoint(), rippleColor ? &*rippleColor : nullptr);
+	p.restore();
 
 	p.setPen(!_overrideBg
 		? st::windowBoldFg->c
