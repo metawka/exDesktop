@@ -118,3 +118,19 @@ git submodule update --init Telegram/lib_ui cmake
 ```bash
 git apply patches/exdesktop_linux_port.patch
 ```
+
+
+---
+
+## 7. Ускорение повторных сборок (ccache / sccache)
+
+Проект поддерживает автоматическое кэширование объектных файлов (`.o` / `.obj`) через `ccache` или `sccache` для всех операционных систем.
+
+При наличии `ccache` или `sccache` повторная сборка проекта ускоряется приблизительно в 2–5 раз:
+```bash
+# Установка ccache на Linux:
+sudo apt install ccache   # Ubuntu/Debian
+sudo dnf install ccache   # Fedora
+sudo pacman -S ccache     # Arch Linux
+```
+CMake автоматически находит `ccache`/`sccache` и активирует `CMAKE_<LANG>_COMPILER_LAUNCHER`.

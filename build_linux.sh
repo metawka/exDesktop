@@ -61,13 +61,23 @@ run_configure() {
     echo "==> Initializing submodules (lib_ui, cmake)..."
     git submodule update --init Telegram/lib_ui cmake
     
+        local CACHE_ARGS=()
+    if command -v sccache >/dev/null 2>&1; then
+        echo "==> Using sccache compiler cache for accelerated rebuilds."
+        CACHE_ARGS=(-DDESKTOP_APP_USE_COMPILER_CACHE=ON)
+    elif command -v ccache >/dev/null 2>&1; then
+        echo "==> Using ccache compiler cache for accelerated rebuilds."
+        CACHE_ARGS=(-DDESKTOP_APP_USE_COMPILER_CACHE=ON)
+    fi
+
     echo "==> Configuring CMake in ${BUILD_DIR} (${CONFIG})..."
     cmake -B "${BUILD_DIR}" -G Ninja \
         -DCMAKE_BUILD_TYPE="${CONFIG}" \
         "${API_ARGS[@]}" \
+        "${CACHE_ARGS[@]}" \
         -DDESKTOP_APP_DISABLE_X11_INTEGRATION=OFF \
         -DDESKTOP_APP_DISABLE_WAYLAND_INTEGRATION=OFF \
-        "${@:2}"
+        "${@:2}" 
 }
 
 run_build() {

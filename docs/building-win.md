@@ -72,3 +72,18 @@ For better debugging you may want to install Qt Visual Studio Tools:
 * Install **Qt Visual Studio Tools** extension
 
 [api_credentials]: api_credentials.md
+
+
+## Compiler Cache Acceleration (sccache)
+
+The project includes built-in support for compiler caching (`sccache` / `ccache`) across all operating systems.
+On Windows with MSVC, `sccache` caches `.obj` files, reducing subsequent build and recompile times by ~2x-5x:
+
+```cmd
+cargo install sccache
+:: or via scoop:
+scoop install sccache
+```
+
+CMake will automatically detect `sccache` and enable `DESKTOP_APP_USE_COMPILER_CACHE=ON` with Embedded debug information (`/Z7`).
+You can also use the included `build_win.bat` script which auto-configures compiler cache.
