@@ -132,4 +132,4 @@ jobs:
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" "exDesktop-linux-x64.$VERSION.tar.gz" --clobber
+        run: gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "exDesktop-linux-x64.$VERSION.tar.gz" --clobber
