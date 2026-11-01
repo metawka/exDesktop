@@ -75,10 +75,12 @@
   "trusted": [
     {
       "id": 2189715950,
+      "username": "exteraPluginsSup",
       "name": "exteraGram Plugins"
     },
     {
       "id": 3914431400,
+      "username": "exDesktopPlugins",
       "name": "exDesktop Plugins"
     }
   ]
