@@ -8,6 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/profile/info_profile_badge.h"
 
 #include "extera/extera_badges.h"
+#include "extera/extera_plugin_trust.h"
+#include "extera/extera_plugins_ui.h"
 
 #include "data/data_changes.h"
 #include "data/data_emoji_statuses.h"
@@ -30,6 +32,7 @@ namespace {
 
 [[nodiscard]] bool HasPremiumClick(const Badge::Content &content) {
 	return content.badge == BadgeType::Premium
+		|| content.badge == BadgeType::Trusted
 		|| (content.badge == BadgeType::Verified && content.emojiStatusId);
 }
 
@@ -101,6 +104,8 @@ void Badge::setContent(Content content) {
 			return tr::lng_fake_badge(tr::now);
 		case BadgeType::Direct:
 			return tr::lng_direct_badge(tr::now);
+		case BadgeType::Trusted:
+			return tr::lng_exd_trusted_sources(tr::now);
 		}
 		Unexpected("badge type");
 	}());
@@ -182,6 +187,23 @@ void Badge::setContent(Content content) {
 			}
 		}, _view->lifetime());
 	} break;
+	case BadgeType::Trusted: {
+		const auto &style = st();
+		const auto size = std::max(
+			style.premium.width(),
+			style.premium.height());
+		_view->resize(size, size);
+		_view->paintRequest(
+		) | rpl::on_next([=, badge = _view.data()] {
+			auto p = QPainter(badge);
+			const auto inner = size * 0.84;
+			const auto shift = (size - inner) / 2.;
+			Extera::Plugins::PaintPuzzle(
+				p,
+				QRectF(shift, shift, inner, inner),
+				(_overrideSt ? _overrideSt->premiumFg : style.premiumFg)->c);
+		}, _view->lifetime());
+	} break;
 	case BadgeType::Scam:
 	case BadgeType::Fake:
 	case BadgeType::Direct: {
@@ -252,7 +274,9 @@ void Badge::move(int left, int top, int bottom) {
 	const auto star = !_emojiStatus
 		&& (_content.badge == BadgeType::Premium
 			|| _content.badge == BadgeType::Verified);
-	const auto fake = !_emojiStatus && !star;
+	const auto fake = !_emojiStatus
+		&& !star
+		&& (_content.badge != BadgeType::Trusted);
 	const auto skip = fake ? 0 : style.position.x();
 	const auto badgeLeft = left + skip;
 	const auto badgeTop = top
@@ -300,9 +324,18 @@ rpl::producer<Badge::Content> BadgeContentForPeer(not_null<PeerData*> peer) {
 rpl::producer<Badge::Content> VerifiedContentForPeer(
 		not_null<PeerData*> peer) {
 	const auto extera = Extera::BadgeEmoji(peer);
+	const auto trusted = Extera::PluginTrust::IsTrustedChannel(peer);
 	return BadgeValue(peer) | rpl::map([=](BadgeType badge) {
 		if (badge != BadgeType::Verified) {
-			if (extera) {
+			if (trusted) {
+				if (const auto emoji = Extera::PluginTrust::TrustedEmoji()) {
+					return Badge::Content{
+						BadgeType::Premium,
+						EmojiStatusId{ .documentId = emoji },
+					};
+				}
+				return Badge::Content{ BadgeType::Trusted };
+			} else if (extera) {
 				return Badge::Content{
 					BadgeType::Premium,
 					EmojiStatusId{ .documentId = extera },

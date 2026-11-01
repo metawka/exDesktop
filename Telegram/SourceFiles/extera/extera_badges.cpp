@@ -45,6 +45,7 @@ struct OwnLists {
 	base::flat_map<QString, QString> typeText;
 	base::flat_map<uint64, OwnBadge> users;
 	base::flat_map<uint64, OwnBadge> channels;
+	std::optional<std::vector<TrustedSource>> trusted;
 };
 
 struct Lists {
@@ -63,6 +64,15 @@ Lists &Data() {
 OwnLists &Own() {
 	static auto result = OwnLists();
 	return result;
+}
+
+base::flat_set<QString> &Hashes() {
+	static auto result = base::flat_set<QString>();
+	return result;
+}
+
+[[nodiscard]] QString HashesCachePath() {
+	return cWorkingDir() + u"tdata/exd_trusted_hashes.json"_q;
 }
 
 [[nodiscard]] QString OwnCachePath() {
@@ -150,8 +160,58 @@ bool ApplyOwn(const QByteArray &bytes) {
 	}
 	lists.users = ReadOwn(object.value(u"users"_q));
 	lists.channels = ReadOwn(object.value(u"channels"_q));
+	if (object.contains(u"trusted"_q)) {
+		auto trusted = std::vector<TrustedSource>();
+		for (const auto &entry : object.value(u"trusted"_q).toArray()) {
+			const auto source = entry.toObject();
+			if (const auto id = ReadId(source.value(u"id"_q))) {
+				trusted.push_back({
+					.id = id,
+					.username = source.value(u"username"_q).toString(),
+				});
+			}
+		}
+		lists.trusted = std::move(trusted);
+	}
 	Own() = std::move(lists);
 	return true;
+}
+
+bool ApplyHashes(const QByteArray &bytes) {
+	const auto document = QJsonDocument::fromJson(bytes);
+	if (!document.isObject()) {
+		return false;
+	}
+	auto hashes = base::flat_set<QString>();
+	const auto list = document.object().value(u"hashes"_q).toArray();
+	for (const auto &entry : list) {
+		const auto hash = entry.toObject().value(u"sha256"_q).toString();
+		if (hash.size() == 64) {
+			hashes.emplace(hash.toLower());
+		}
+	}
+	Hashes() = std::move(hashes);
+	return true;
+}
+
+void RefreshHashes(QNetworkAccessManager *manager) {
+	auto request = QNetworkRequest(QUrl(
+		u"https://raw.githubusercontent.com/metawka/exDesktop/main/trusted_hashes.json"_q));
+	request.setRawHeader("User-Agent", "exDesktop");
+	const auto reply = manager->get(request);
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		reply->deleteLater();
+		if (reply->error() != QNetworkReply::NoError) {
+			return;
+		}
+		const auto bytes = reply->readAll();
+		if (ApplyHashes(bytes)) {
+			auto file = QFile(HashesCachePath());
+			if (file.open(QIODevice::WriteOnly)) {
+				file.write(bytes);
+			}
+		}
+	});
 }
 
 void RefreshOwn(QNetworkAccessManager *manager) {
@@ -220,11 +280,17 @@ void StartBadges() {
 	if (own.open(QIODevice::ReadOnly)) {
 		ApplyOwn(own.readAll());
 	}
+	auto hashes = QFile(HashesCachePath());
+	if (hashes.open(QIODevice::ReadOnly)) {
+		ApplyHashes(hashes.readAll());
+	}
 	const auto manager = new QNetworkAccessManager(qApp);
 	RefreshOwn(manager);
+	RefreshHashes(manager);
 	const auto timer = new QTimer(manager);
 	QObject::connect(timer, &QTimer::timeout, [=] {
 		RefreshOwn(manager);
+		RefreshHashes(manager);
 	});
 	timer->start(kRefreshInterval);
 }
@@ -310,6 +376,14 @@ QString BadgeCustomText(not_null<PeerData*> peer) {
 	}
 	auto text = i->second.text;
 	return text.replace(u"**"_q, QString());
+}
+
+std::optional<std::vector<TrustedSource>> TrustedSources() {
+	return Own().trusted;
+}
+
+bool IsTrustedHash(const QString &sha256) {
+	return Hashes().contains(sha256.toLower());
 }
 
 DocumentId BadgeTypeEmoji(const QString &type) {

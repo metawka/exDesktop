@@ -144,16 +144,21 @@ base::options::toggle OptionDisableTouchbar({
 const char kOptionNewWindowsSizeAsFirst[] = "new-windows-size-as-first";
 const char kOptionDisableTouchbar[] = "touchbar-disabled";
 
-const QImage &Logo() {
-	static const auto result = [] {
-		return Extera::AppIcon::Current(256);
-	}();
+[[nodiscard]] QImage &LogoStorage() {
+	static auto result = Extera::AppIcon::Current(256);
 	return result;
 }
 
+const QImage &Logo() {
+	return LogoStorage();
+}
+
 const QImage &LogoNoMargin() {
-	static const auto result = Extera::AppIcon::Current(256);
-	return result;
+	return LogoStorage();
+}
+
+void RefreshLogo() {
+	LogoStorage() = Extera::AppIcon::Current(256);
 }
 
 void ConvertIconToBlack(QImage &image) {

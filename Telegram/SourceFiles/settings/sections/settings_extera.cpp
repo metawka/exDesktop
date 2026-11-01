@@ -16,14 +16,19 @@
 #include "boxes/translate_box.h"
 #include "boxes/download_path_box.h"
 #include "extera/extera_config.h"
+#include "extera/extera_plugin_trust.h"
 #include "extera/extera_badges.h"
+#include "data/data_channel.h"
+#include "data/data_session.h"
 #include "data/data_user.h"
 #include "extera/extera_menu.h"
 #include "history/view/media/history_view_sticker.h"
+#include "ui/filter_icons.h"
 #include "extera/extera_navigation.h"
 #include "extera/extera_streamer.h"
 #include "extera/extera_ai_chat.h"
 #include "extera/extera_welcome.h"
+#include "extera/extera_changelog.h"
 #include "extera/extera_plugins_ui.h"
 #include "extera/extera_plugins.h"
 #include "extera/extera_update.h"
@@ -45,6 +50,7 @@
 #include "ui/painter.h"
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
+#include <QtSvg/QSvgRenderer>
 #include "ui/widgets/fields/input_field.h"
 #include "ui/wrap/vertical_layout_reorder.h"
 #include "ui/painter.h"
@@ -55,6 +61,7 @@
 #include "ui/wrap/padding_wrap.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
+#include "ui/text/text_utilities.h"
 #include "ui/vertical_list.h"
 #include "window/main_window.h"
 #include "window/window_session_controller.h"
@@ -462,10 +469,151 @@ void PaintAvatarPreview(QPainter &p, QRect frame, int corners) {
 	p.setOpacity(1.);
 }
 
+void AddLivePreview(
+		SectionBuilder &builder,
+		Fn<int()> height,
+		Fn<void(QPainter&, QRect)> paint,
+		std::vector<QString> keys) {
+	builder.add([=](const WidgetContext &ctx) {
+		auto result = object_ptr<Ui::FixedHeightWidget>(
+			ctx.container,
+			height());
+		const auto raw = result.data();
+		raw->paintRequest(
+		) | rpl::on_next([=] {
+			auto p = QPainter(raw);
+			auto hq = PainterHighQualityEnabler(p);
+			const auto frame = raw->rect();
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::boxDividerBg);
+			const auto radius = st::exteraCardRadius;
+			p.drawRoundedRect(frame, radius, radius);
+			paint(p, frame);
+		}, raw->lifetime());
+		Config().changes(
+		) | rpl::filter([=](const QString &key) {
+			return ranges::contains(keys, key);
+		}) | rpl::on_next([=] {
+			raw->resize(raw->width(), height());
+			raw->update();
+		}, raw->lifetime());
+		return SectionBuilder::WidgetToAdd{
+			.widget = std::move(result),
+			.margin = st::exteraPreviewPadding,
+		};
+	});
+}
+
+void PaintTextBars(
+		QPainter &p,
+		QRectF rect,
+		const style::color &color,
+		int lines) {
+	const auto line = st::exteraPreviewLine / 2.;
+	const auto gap = (rect.height() - lines * line) / (lines + 1);
+	p.setBrush(color);
+	for (auto i = 0; i != lines; ++i) {
+		const auto width = rect.width() * ((i + 1 == lines) ? 0.55 : 0.9);
+		p.drawRoundedRect(
+			QRectF(rect.x(), rect.y() + gap + i * (line + gap), width, line),
+			line / 2.,
+			line / 2.);
+	}
+}
+
+void PaintLastSeenPreview(QPainter &p, QRect frame) {
+	const auto skip = st::exteraPreviewSkip;
+	const auto size = st::exteraPreviewAvatar;
+	const auto top = frame.y() + (frame.height() - size) / 2;
+	p.setPen(Qt::NoPen);
+	p.setBrush(st::activeButtonBg);
+	p.drawEllipse(QRect(frame.x() + skip, top, size, size));
+	const auto left = frame.x() + skip * 2 + size;
+	PaintTextBars(
+		p,
+		QRectF(left, top, frame.width() * 0.3, size / 2.),
+		st::windowFg,
+		1);
+	const auto text = Extera::Bool(u"relative_last_seen"_q)
+		? tr::lng_status_lastseen_minutes(tr::now, lt_count, 5)
+		: tr::lng_status_lastseen_today(
+			tr::now,
+			lt_time,
+			QLocale().toString(
+				QTime::currentTime().addSecs(-300),
+				QLocale::ShortFormat));
+	p.setPen(st::windowSubTextFg);
+	p.setFont(st::normalFont);
+	p.drawText(
+		QRect(left, top + size / 2, frame.width() - left, size / 2),
+		Qt::AlignLeft | Qt::AlignVCenter,
+		text);
+}
+
+void PaintFolderTabsPreview(QPainter &p, QRect frame) {
+	const auto style = Extera::Int(u"folder_title_style"_q);
+	struct Tab {
+		Ui::FilterIcon icon;
+		QString title;
+	};
+	const auto tabs = std::vector<Tab>{
+		{ Ui::FilterIcon::All, tr::lng_filters_all(tr::now) },
+		{ Ui::FilterIcon::Groups, tr::lng_filters_type_groups(tr::now) },
+		{ Ui::FilterIcon::Channels, tr::lng_filters_type_channels(tr::now) },
+	};
+	const auto skip = st::exteraPreviewSkip;
+	const auto &font = st::semiboldFont;
+	auto left = frame.x() + skip;
+	const auto center = frame.y() + frame.height() / 2;
+	for (auto i = 0; i != int(tabs.size()); ++i) {
+		const auto &tab = tabs[i];
+		const auto active = (i == 0);
+		const auto &icons = Ui::LookupFilterIcon(tab.icon);
+		const auto icon = active ? icons.active : icons.normal;
+		const auto showIcon = (style != 1);
+		const auto showText = (style != 2);
+		auto width = 0;
+		if (showIcon) {
+			width += icon->width();
+		}
+		if (showText) {
+			width += (showIcon ? skip / 2 : 0) + font->width(tab.title);
+		}
+		auto x = left;
+		if (showIcon) {
+			icon->paint(
+				p,
+				x,
+				center - icon->height() / 2,
+				frame.width(),
+				active ? st::activeButtonBg->c : st::windowSubTextFg->c);
+			x += icon->width() + skip / 2;
+		}
+		if (showText) {
+			p.setFont(font);
+			p.setPen(active ? st::activeButtonBg : st::windowSubTextFg);
+			p.drawText(
+				QRect(x, frame.y(), font->width(tab.title), frame.height()),
+				Qt::AlignVCenter,
+				tab.title);
+		}
+		if (active) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::activeButtonBg);
+			const auto line = st::lineWidth * 3;
+			p.drawRoundedRect(
+				QRect(left, frame.bottom() - line - skip / 2, width, line),
+				line / 2.,
+				line / 2.);
+		}
+		left += width + skip * 2;
+	}
+}
+
 [[nodiscard]] int StickerPreviewHeight() {
 	return HistoryView::Sticker::Size().height()
 		+ st::exteraPreviewBubble
-		+ 3 * st::exteraPreviewSkip;
+		+ st::exteraPreviewSkip * 3;
 }
 
 void PaintStickerPreview(QPainter &p, QRect frame, int value) {
@@ -475,17 +623,99 @@ void PaintStickerPreview(QPainter &p, QRect frame, int value) {
 	const auto bubble = QRectF(
 		frame.x() + skip,
 		frame.y() + skip,
-		frame.width() * 0.4,
+		frame.width() * 0.5,
 		st::exteraPreviewBubble);
+	p.setPen(Qt::NoPen);
 	p.setBrush(st::msgInBg);
 	p.drawRoundedRect(bubble, st::bubbleRadiusLarge, st::bubbleRadiusLarge);
-	p.drawImage(
-		QRect(
-			frame.x() + frame.width() - skip - side,
-			frame.y() + frame.height() - skip - side,
-			side,
-			side),
-		image);
+	PaintTextBars(
+		p,
+		bubble.marginsRemoved({ 12., 6., 12., 6. }),
+		st::msgInDateFg,
+		2);
+	const auto sticker = QRect(
+		frame.x() + frame.width() - skip - side,
+		frame.y() + frame.height() - skip - side,
+		side,
+		side);
+	p.drawImage(sticker, image);
+	const auto timeMode = Extera::Int(u"sticker_time"_q);
+	if (timeMode != 2) {
+		const auto time = QLocale().toString(
+			QTime::currentTime(),
+			QLocale::ShortFormat);
+		const auto &font = st::msgDateFont;
+		const auto width = font->width(time) + skip;
+		const auto height = font->height + 4;
+		const auto rect = (timeMode == 1)
+			? QRect(
+				sticker.x() - width - skip / 2,
+				sticker.bottom() - height,
+				width,
+				height)
+			: QRect(
+				sticker.right() - width - 4,
+				sticker.bottom() - height - 4,
+				width,
+				height);
+		p.setBrush(st::msgServiceBg);
+		p.drawRoundedRect(rect, height / 2., height / 2.);
+		p.setPen(st::msgServiceFg);
+		p.setFont(font);
+		p.drawText(rect, Qt::AlignCenter, time);
+		p.setPen(Qt::NoPen);
+	}
+}
+
+void PaintGesturesPreview(
+		QPainter &p,
+		QRect frame,
+		const std::vector<const Phrase*> &actions) {
+	const auto skip = st::exteraPreviewSkip;
+	const auto height = st::exteraPreviewBubble;
+	const auto width = frame.width() * 0.5;
+	const auto &font = st::normalFont;
+	const auto paintBubble = [&](bool out, int top, int action) {
+		const auto x = out
+			? (frame.x() + frame.width() - skip - width)
+			: (frame.x() + skip);
+		const auto bubble = QRectF(x, top, width, height);
+		p.setPen(Qt::NoPen);
+		p.setBrush(out ? st::msgOutBg : st::msgInBg);
+		p.drawRoundedRect(
+			bubble,
+			st::bubbleRadiusLarge,
+			st::bubbleRadiusLarge);
+		PaintTextBars(
+			p,
+			bubble.marginsRemoved({ 12., 6., 12., 6. }),
+			out ? st::msgOutDateFg : st::msgInDateFg,
+			2);
+		const auto index = std::clamp(action, 0, int(actions.size()) - 1);
+		const auto label = (*actions[index])(tr::now);
+		const auto labelWidth = font->width(label) + skip;
+		const auto labelHeight = font->height + 6;
+		const auto labelRect = QRect(
+			out
+				? int(bubble.x() - labelWidth - skip / 2)
+				: int(bubble.right() + skip / 2),
+			int(bubble.y() + (height - labelHeight) / 2),
+			labelWidth,
+			labelHeight);
+		p.setBrush(st::activeButtonBg);
+		p.drawRoundedRect(labelRect, labelHeight / 2., labelHeight / 2.);
+		p.setPen(st::activeButtonFg);
+		p.setFont(font);
+		p.drawText(labelRect, Qt::AlignCenter, label);
+	};
+	paintBubble(
+		false,
+		frame.y() + skip,
+		Extera::Int(u"double_click_incoming"_q));
+	paintBubble(
+		true,
+		frame.y() + skip * 2 + height,
+		Extera::Int(u"double_click_outgoing"_q));
 }
 
 void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
@@ -757,12 +987,7 @@ void ShowAppIconBox(not_null<Window::SessionController*> controller) {
 			}
 			Config().setString(u"app_icon"_q, variants[index].id);
 			Config().setBool(u"app_icon_square"_q, state->square);
-			Extera::AppIcon::ApplyToShortcuts();
-			controller->show(Ui::MakeConfirmBox({
-				.text = tr::lng_extera_restart_required(),
-				.confirmed = [] { Core::Restart(); },
-				.confirmText = tr::lng_extera_restart(),
-			}));
+			Extera::AppIcon::Apply();
 		});
 		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
 	}));
@@ -1080,15 +1305,52 @@ void PartGeneral2(SectionBuilder &builder) {
 			.st = &st::settingsButtonNoIcon,
 			.label = settings->translateToValue(
 			) | rpl::map([](LanguageId id) {
-				return Ui::LanguageName(id);
+				return Extera::Bool(u"translate_follow_app"_q)
+					? tr::lng_exd_translate_follow_app(tr::now)
+					: Ui::LanguageName(id);
 			}),
 			.onClick = [=] {
-				controller->show(Ui::ChooseTranslateToBox(
-					settings->translateTo(),
-					[=](LanguageId id) {
-						settings->setTranslateTo(id);
+				controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+					const auto &core = Core::App().settings();
+					auto selected = std::vector<LanguageId>{
+						core.translateTo(),
+					};
+					for (const auto &id : core.skipTranslationLanguages()) {
+						if (id != selected.front()) {
+							selected.push_back(id);
+						}
+					}
+					Ui::ChooseLanguageBox(
+						box,
+						tr::lng_languages(),
+						[=](const std::vector<LanguageId> &ids) {
+							Config().setBool(
+								u"translate_follow_app"_q,
+								false);
+							settings->setTranslateTo(ids.front());
+							Core::App().saveSettingsDelayed();
+						},
+						selected,
+						false,
+						nullptr);
+					const auto follow = Extera::Bool(u"translate_follow_app"_q);
+					auto text = tr::lng_exd_translate_follow_app(
+						tr::now);
+					const auto button = box->verticalLayout()->insert(
+						0,
+						object_ptr<Ui::SettingsButton>(
+							box->verticalLayout(),
+							rpl::single(follow
+								? Ui::Text::Bold(text)
+								: TextWithEntities{ text }),
+							st::settingsButtonNoIcon));
+					button->setClickedCallback([=] {
+						Config().setBool(u"translate_follow_app"_q, true);
+						settings->setTranslateTo(LanguageId());
 						Core::App().saveSettingsDelayed();
-					}));
+						box->closeBox();
+					});
+				}));
 			},
 		});
 		builder.addButton({
@@ -1162,10 +1424,6 @@ void PartGeneral4(SectionBuilder &builder) {
 			builder,
 			u"upload_boost"_q,
 			tr::lng_extera_upload_boost());
-		AddToggle(
-			builder,
-			u"disable_notification_delay"_q,
-			tr::lng_extera_disable_notify_delay());
 	});
 	AddAbout(builder, tr::lng_extera_speed_about());
 }
@@ -1202,6 +1460,11 @@ void PartGeneral6(SectionBuilder &builder) {
 			tr::lng_extera_relative_last_seen(),
 			{},
 			tr::lng_extera_lastseen_days(lt_count, rpl::single(2.)));
+		AddLivePreview(
+			builder,
+			[] { return st::exteraPreviewAvatarHeight; },
+			PaintLastSeenPreview,
+			{ u"relative_last_seen"_q });
 		AddToggle(
 			builder,
 			u"hide_phone"_q,
@@ -1313,6 +1576,11 @@ void PartAppearance2(SectionBuilder &builder) {
 				&tr::lng_extera_folder_title_text,
 				&tr::lng_extera_folder_title_icons,
 			});
+		AddLivePreview(
+			builder,
+			[] { return st::exteraPreviewAvatarHeight; },
+			PaintFolderTabsPreview,
+			{ u"folder_title_style"_q });
 		AddChoice(
 			builder,
 			u"folder_counter"_q,
@@ -1411,12 +1679,13 @@ void PartChats0(SectionBuilder &builder) {
 			std::move(sizes),
 			{ &tr::lng_extera_sticker_small, &tr::lng_extera_sticker_large },
 			[](int value) { return QString::number(value); });
-		AddPreview(
+		AddLivePreview(
 			builder,
-			u"sticker_size"_q,
-			st::exteraPreviewStickerHeight,
-			PaintStickerPreview,
-			StickerPreviewHeight);
+			StickerPreviewHeight,
+			[](QPainter &p, QRect frame) {
+				PaintStickerPreview(p, frame, 0);
+			},
+			{ u"sticker_size"_q, u"sticker_time"_q });
 		AddChoice(
 			builder,
 			u"sticker_time"_q,
@@ -1526,6 +1795,16 @@ void PartChats3(SectionBuilder &builder) {
 			u"double_click_outgoing"_q,
 			tr::lng_extera_double_click_outgoing,
 			actions);
+		AddLivePreview(
+			builder,
+			[] {
+				return st::exteraPreviewBubble * 2
+					+ st::exteraPreviewSkip * 3;
+			},
+			[=](QPainter &p, QRect frame) {
+				PaintGesturesPreview(p, frame, actions);
+			},
+			{ u"double_click_incoming"_q, u"double_click_outgoing"_q });
 	});
 	AddAbout(builder, tr::lng_extera_double_tap_about());
 }
@@ -1907,6 +2186,17 @@ void PartOther2(SectionBuilder &builder) {
 				});
 			},
 			.keywords = { u"update"_q, u"version"_q },
+		});
+		builder.addButton({
+			.id = u"extera/changelog"_q,
+			.title = tr::lng_exd_changelog_title(),
+			.icon = { &st::menuIconInfo },
+			.onClick = [=] {
+				if (controller) {
+					Extera::Changelog::Show(controller);
+				}
+			},
+			.keywords = { u"changelog"_q, u"release"_q, u"what's new"_q },
 		});
 		AddChoice(
 			builder,
@@ -2376,11 +2666,23 @@ void AddCategorySearch(
 
 // Grid
 
+const char *kCardSvgs[] = {
+	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path fill="#ffffff" d="M480-60.78q-85.86 0-162.3-33.2-76.44-33.19-133.48-90.24-57.05-57.04-90.24-133.49-33.2-76.45-33.2-162.32 0-86.93 33.63-163.32 33.63-76.39 91.68-133.22 58.04-56.82 135.39-89.74 77.35-32.91 165.16-32.91 83.62 0 158.3 28.91 74.67 28.92 131.28 79.96 56.61 51.05 89.8 120.77 33.2 69.72 33.2 150.45 0 118.39-70.85 188.37t-178.2 69.98h-60.99q-6.74 0-9.96 3.87-3.22 3.87-3.22 9.3 0 10.87 11.61 26.59t11.61 41.89q0 54.52-33.72 86.43-33.72 31.92-85.5 31.92ZM309.78-457q17-17 17-43t-17-43q-17-17-43-17t-43 17q-17 17-17 43t17 43q17 17 43 17t43-17Zm116.61-154.91q17-17 17-43t-17-43q-17-17-43-17t-43 17q-17 17-17 43t17 43q17 17 43 17t43-17Zm193.22 0q17-17 17-43t-17-43q-17-17-43-17t-43 17q-17 17-17 43t17 43q17 17 43 17t43-17ZM734.52-457q17-17 17-43t-17-43q-17-17-43-17t-43 17q-17 17-17 43t17 43q17 17 43 17t43-17Z"/></svg>)exd",
+	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path fill="#ffffff" d="m220.78-220.78-69.39 69.39q-25.22 25.22-57.91 11.61-32.7-13.61-32.7-49.09v-604.35q0-44.3 30.85-75.15 30.85-30.85 75.15-30.85h626.44q44.3 0 75.15 30.85 30.85 30.85 30.85 75.15v466.44q0 44.3-30.85 75.15-30.85 30.85-75.15 30.85H220.78ZM280-400h240q17 0 28.5-11.5T560-440q0-17-11.5-28.5T520-480H280q-17 0-28.5 11.5T240-440q0 17 11.5 28.5T280-400Zm0-120h400q17 0 28.5-11.5T720-560q0-17-11.5-28.5T680-600H280q-17 0-28.5 11.5T240-560q0 17 11.5 28.5T280-520Zm0-120h400q17 0 28.5-11.5T720-680q0-17-11.5-28.5T680-720H280q-17 0-28.5 11.5T240-680q0 17 11.5 28.5T280-640Z"/></svg>)exd",
+	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path fill="#ffffff" d="m600.74-159.04-22.13 63.65q-5.13 15.52-18.81 25.06-13.67 9.55-30.19 9.55-26.78 0-42.96-21.87-16.17-21.87-6.48-48.09l144.09-398.04q6.7-17.22 21.5-27.61t33.02-10.39h41.87q18.22 0 33.02 10.39 14.81 10.39 21.51 27.61l144.08 397.91q9.7 25.78-6.26 47.94-15.96 22.15-43.3 22.15-16.96 0-30.7-9.55-13.74-9.54-19.87-26.06l-21.56-62.65H600.74Zm-252.31-213.7L188-212.74q-15.52 15.52-36.83 15.46-21.3-.07-37.26-16.02-15.52-15.53-15.52-37.33 0-21.8 15.52-37.33l161-161q-40.65-41.78-70.56-87.06-29.92-45.28-51.66-97.2h116.79q15.48 29.96 34.91 56.13 19.44 26.18 45.17 53.48 31.87-34.13 64.83-88.83 32.96-54.69 49.26-100.78H70.39q-22.09 0-37.54-15.45-15.46-15.46-15.46-37.55 0-22.08 15.46-37.54 15.45-15.46 37.54-15.46h227v-27q0-22.08 15.46-37.54 15.45-15.46 37.54-15.46t37.54 15.46q15.46 15.46 15.46 37.54v27h227q22.09 0 37.54 15.46 15.46 15.46 15.46 37.54 0 22.09-15.46 37.55-15.45 15.45-37.54 15.45H575.3q-22.13 69.18-64.97 144.61-42.85 75.44-87.24 121.09l68.87 70.3-39.61 110.83-103.92-106.35Zm285.22 117.7h130.44l-65.22-189.31-65.22 189.31Z"/></svg>)exd",
+	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path fill="#ffffff" d="M246.78-62.48q-43.72 0-74.86-31.14-31.14-31.13-31.14-74.86v-386.43q0-43.73 31.14-74.87 31.14-31.13 74.86-31.13h24.74v-63.61q0-87.52 60.76-148.85T480-934.7q86.96 0 147.72 61.33 60.76 61.33 60.76 148.85v63.61h24.74q43.72 0 74.86 31.13 31.14 31.14 31.14 74.87v386.43q0 43.73-31.14 74.86-31.14 31.14-74.86 31.14H246.78ZM536.5-305.2q23.5-23.5 23.5-56.5t-23.5-56.5Q513-441.7 480-441.7t-56.5 23.5Q400-394.7 400-361.7t23.5 56.5q23.5 23.5 56.5 23.5t56.5-23.5ZM377.52-660.91h204.96v-63.61q0-43.41-29.63-73.79Q523.22-828.7 480-828.7t-72.85 30.39q-29.63 30.38-29.63 73.79v63.61Z"/></svg>)exd",
+	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path fill="#ffffff" d="M409-149q-29-29-29-71t29-71q29-29 71-29t71 29q29 29 29 71t-29 71q-29 29-71 29t-71-29Zm209.83-388.13q65.52 22.87 119.95 62.61 22.26 16.13 23.05 44.02.78 27.89-19.48 48.15-19.83 19.83-48.22 21.18-28.39 1.34-51.78-13.79-35.18-22.6-75.81-35.06T480-422.48q-45.35 0-85.7 12.18-40.34 12.17-75.52 34.78-23.95 15.13-52.63 13.85-28.67-1.29-48.5-21.11-19.82-20.26-19.26-47.87.57-27.61 22.83-43.74 54.43-39.74 119.95-62.68Q406.7-560 480-560q73.3 0 138.83 22.87Zm92.43-223q108.52 39.87 195.96 112.04 22.82 18.7 24.39 46.81 1.56 28.11-19.26 48.93-19.83 19.83-48.22 20.61-28.39.78-51.78-16.91-69.74-54.48-153.59-84.15-83.85-29.68-178.76-29.68T301.24-632.8q-83.85 29.67-153.59 84.15-23.39 17.69-51.5 16.91-28.11-.78-47.93-20.61-20.83-20.82-19.55-48.93 1.29-28.11 24.11-46.81 87.44-72.17 195.96-112.04Q357.26-800 480-800t231.26 39.87Z"/></svg>)exd",
+	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path fill="#ffffff" d="M193.78-100.78q-39.08 0-66.32-27.24-27.24-27.24-27.24-66.33v-121.61q0-15.52 10.54-26.84 10.54-11.33 26.07-15.03 36.73-9.69 61.47-36.78 24.74-27.09 24.74-64.26 0-37.3-24.45-63.89-24.46-26.59-61.2-36.72-14.96-4.13-25.78-15.74-10.83-11.61-10.83-26.56v-124.44q0-38.65 27.18-65.82 27.17-27.18 66.39-27.18h114.08q10.96-51 53.07-87.19 42.11-36.2 97.37-36.2 58.22 0 100.89 36.2 42.68 36.19 50.11 87.19h115.78q38.65 0 66.11 27.18 27.46 27.17 27.46 65.82v131.74q36 20.26 58.85 56.52 22.84 36.26 22.84 79.09 0 44.96-22.84 82.07-22.85 37.1-58.85 53.54v128.91q0 39.09-27.46 66.33-27.46 27.24-66.11 27.24H193.78Z"/></svg>)exd",
+	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path fill="#ffffff" d="M480.57-100.78q-78.4 0-147.57-29.91-69.17-29.92-120.5-81.24-51.33-51.33-81.24-120.5-29.91-69.18-29.91-147.57 0-78.39 29.91-147.57 29.91-69.17 81.24-120.5 51.33-51.32 120.5-81.24 69.17-29.91 147.57-29.91 83.13 0 157.19 33.87 74.07 33.87 127.89 96.74v-41.56q0-18.7 12.92-31.33 12.91-12.63 31.6-12.63 18.7 0 31.33 12.63 12.63 12.63 12.63 31.33V-613q0 22.09-15.46 37.54Q823.22-560 801.13-560H643.96q-18.7 0-31.89-13.2-13.2-13.19-13.2-31.89 0-18.69 12.91-31.61 12.92-12.91 31.61-12.91h49.65q-39.3-49.22-94.78-76.41-55.48-27.2-117.69-27.2-114.18 0-193.7 79.52-79.52 79.53-79.52 193.7 0 114.17 79.52 193.7 79.52 79.52 193.7 79.52 89.91 0 160.67-52.2 70.76-52.19 97.59-135.41 6.69-19.96 24.5-30.5 17.8-10.54 38.89-7.41 22.08 3.13 35.48 19.3 13.39 16.17 7.69 35.7-32.95 121.26-133.91 198.89-100.96 77.63-230.91 77.63ZM524.52-496l94.91 94.35q12.7 12.69 12.7 31.39 0 18.69-12.7 31.39-12.69 12.7-31.39 12.7-18.69 0-31.39-12.7L451.43-444.09q-7.69-7.69-11.54-17.17-3.85-9.48-3.85-20.31v-154.47q0-18.7 12.92-31.33Q461.87-680 480.57-680q18.69 0 31.32 12.63 12.63 12.63 12.63 31.33V-496Z"/></svg>)exd",
+	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path fill="#ffffff" d="M441.61-137.02q-18.74-6.98-33.7-21.37l-70.13-64.13Q232.91-317.83 146.85-415.3 60.78-512.78 60.78-634q0-102.48 68.09-171.13 68.09-68.65 170.56-68.65 51.87 0 98.31 19.95 46.43 19.96 81.69 56.7 35.27-36.74 81.7-56.7 46.44-19.95 98.3-19.95 102.48 0 171.42 68.65 68.93 68.65 68.93 171.13 0 121.22-86.41 219.2-86.41 97.97-193.28 193.84l-68.57 63.13q-14.95 14.4-33.98 21.09-19.02 6.7-38.11 6.7-19.08 0-37.82-6.98Z"/></svg>)exd",
+};
+
 struct CategoryCard {
 	rpl::producer<QString> (*title)();
 	rpl::producer<QString> (*about)();
 	const style::icon *icon = nullptr;
 	Type (*target)() = nullptr;
+	QColor color;
 };
 
 void AddCategoryGrid(SectionBuilder &builder) {
@@ -2395,35 +2697,43 @@ void AddCategoryGrid(SectionBuilder &builder) {
 			{ [] { return tr::lng_extera_appearance(); },
 				[] { return tr::lng_exd_cat_appearance_about(); },
 				&st::menuIconPalette,
-				ExteraAppearanceId },
+				ExteraAppearanceId,
+				QColor(0x8E, 0x6C, 0xEF) },
 			{ [] { return tr::lng_exd_cat_messages(); },
 				[] { return tr::lng_exd_cat_messages_about(); },
 				&st::exteraIconChats,
-				ExteraGeneralId },
+				ExteraGeneralId,
+				QColor(0x3A, 0x9B, 0xF0) },
 			{ [] { return tr::lng_exd_cat_translate(); },
 				[] { return tr::lng_exd_cat_translate_about(); },
 				&st::exteraIconTranslate,
-				ExteraChatsId },
+				ExteraChatsId,
+				QColor(0x26, 0xB0, 0xA2) },
 			{ [] { return tr::lng_exd_cat_privacy(); },
 				[] { return tr::lng_exd_cat_privacy_about(); },
 				&st::menuIconLock,
-				ExteraPrivacyId },
+				ExteraPrivacyId,
+				QColor(0x5B, 0x6B, 0xE8) },
 			{ [] { return tr::lng_exd_cat_network(); },
 				[] { return tr::lng_exd_cat_network_about(); },
 				&st::menuIconNetwork,
-				ExteraNetworkId },
+				ExteraNetworkId,
+				QColor(0xF0, 0x8A, 0x3A) },
 			{ [] { return tr::lng_exd_cat_plugins(); },
 				[] { return tr::lng_exd_cat_plugins_about(); },
 				&st::exteraIconPlugins,
-				ExteraPluginsId },
+				ExteraPluginsId,
+				QColor(0xE2, 0x55, 0x7B) },
 			{ [] { return tr::lng_exd_cat_updates(); },
 				[] { return tr::lng_exd_cat_updates_about(); },
 				&st::menuIconRestore,
-				ExteraUpdatesId },
+				ExteraUpdatesId,
+				QColor(0x3C, 0xB3, 0x71) },
 			{ [] { return tr::lng_exd_cat_support(); },
 				[] { return tr::lng_exd_cat_support_about(); },
 				&st::menuIconLike,
-				ExteraSupportId },
+				ExteraSupportId,
+				QColor(0xF2, 0x54, 0x5B) },
 		});
 		const auto count = int(cards->size());
 		const auto rows = (count + 1) / 2;
@@ -2438,6 +2748,7 @@ void AddCategoryGrid(SectionBuilder &builder) {
 			int pressed = -1;
 			std::vector<QString> titles;
 			std::vector<QString> abouts;
+			std::vector<QImage> icons;
 		};
 		const auto state = grid->lifetime().make_state<State>();
 		for (const auto &card : *cards) {
@@ -2485,21 +2796,46 @@ void AddCategoryGrid(SectionBuilder &builder) {
 				p.drawRoundedRect(rect, radius, radius);
 				const auto tileRect = QRect(
 					rect.x() + padding,
-					rect.y() + padding,
+					rect.y() + (rect.height() - tile) / 2,
 					tile,
 					tile);
-				p.setBrush(st::windowBgActive);
+				p.setBrush((*cards)[i].color);
 				p.drawRoundedRect(
 					tileRect,
 					st::exteraCategoryTileRadius,
 					st::exteraCategoryTileRadius);
-				(*cards)[i].icon->paintInCenter(
-					p,
-					tileRect,
-					st::windowFgActive->c);
-				const auto textLeft = rect.x() + padding;
-				const auto textWidth = rect.width() - 2 * padding;
-				auto top = tileRect.y() + tile + st::exteraCategoryTitleSkip;
+				const auto iconSize = tile * 3 / 5;
+				const auto ratio = style::DevicePixelRatio();
+				if (state->icons.size() <= size_t(i)) {
+					state->icons.resize(count);
+				}
+				auto &image = state->icons[i];
+				if (image.width() != iconSize * ratio) {
+					image = QImage(
+						QSize(iconSize, iconSize) * ratio,
+						QImage::Format_ARGB32_Premultiplied);
+					image.fill(Qt::transparent);
+					image.setDevicePixelRatio(ratio);
+					auto q = QPainter(&image);
+					QSvgRenderer(QByteArray(kCardSvgs[i])).render(
+						&q,
+						QRectF(0, 0, iconSize, iconSize));
+				}
+				p.drawImage(
+					QRect(
+						tileRect.x() + (tile - iconSize) / 2,
+						tileRect.y() + (tile - iconSize) / 2,
+						iconSize,
+						iconSize),
+					image);
+				const auto textLeft = tileRect.x() + tile + st::exteraCategoryTitleSkip;
+				const auto textWidth = rect.x() + rect.width() - padding - textLeft;
+				const auto &aboutFont = st::exteraCategoryAboutFont;
+				const auto aboutLines = (aboutFont->width(state->abouts[i]) > textWidth) ? 2 : 1;
+				const auto textHeight = st::semiboldFont->height
+					+ st::exteraCategoryAboutSkip
+					+ aboutLines * aboutFont->height;
+				auto top = rect.y() + (rect.height() - textHeight) / 2;
 				p.setPen(st::windowBoldFg);
 				p.setFont(st::semiboldFont);
 				p.drawText(
@@ -2508,13 +2844,13 @@ void AddCategoryGrid(SectionBuilder &builder) {
 					st::semiboldFont->elided(state->titles[i], textWidth));
 				top += st::semiboldFont->height + st::exteraCategoryAboutSkip;
 				p.setPen(st::windowSubTextFg);
-				p.setFont(st::exteraCategoryAboutFont);
+				p.setFont(aboutFont);
 				p.drawText(
 					QRect(
 						textLeft,
 						top,
 						textWidth,
-						rect.y() + rect.height() - top - padding / 2),
+						aboutLines * aboutFont->height),
 					Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
 					state->abouts[i]);
 			}
@@ -2600,24 +2936,17 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 					Config().setBool(u"plugins_unknown_sources"_q, false);
 					return;
 				}
-				const auto confirmed = std::make_shared<bool>(false);
-				controller->show(Ui::MakeConfirmBox({
-					.text = tr::lng_extera_plugins_unknown_warning(
-						tr::now,
-						tr::rich),
-					.confirmed = [=](Fn<void()> close) {
-						*confirmed = true;
-						Config().setBool(u"plugins_unknown_sources"_q, true);
-						close();
-					},
-					.cancelled = [=](Fn<void()> close) {
-						unknownStates->fire(false);
-						close();
-					},
-					.confirmText = tr::lng_extera_plugins_unknown_allow(),
-					.confirmStyle = &st::attentionBoxButton,
-					.title = tr::lng_extera_plugins_unknown(),
-				}));
+				Extera::Plugins::ShowUnknownSourcesWarning(
+					controller,
+					[=](bool allowed) {
+						if (allowed) {
+							Config().setBool(
+								u"plugins_unknown_sources"_q,
+								true);
+						} else {
+							unknownStates->fire(false);
+						}
+					});
 			}, unknown->lifetime());
 		}
 		AddToggle(
@@ -2649,12 +2978,19 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 	});
 	AddAbout(builder, tr::lng_extera_plugins_safe_about());
 
+
 	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_extera_plugins_runtime());
+	builder.addSubsectionTitle(tr::lng_exd_plugins_sdk());
 	builder.card([&] {
 		builder.addButton({
+			.id = u"extera/plugins_sdk"_q,
+			.title = tr::lng_exd_plugins_sdk_version(),
+			.st = &st::settingsButtonNoIcon,
+			.label = rpl::single(QString::fromLatin1(Extera::Plugins::kSdkVersion)),
+		});
+		builder.addButton({
 			.id = u"extera/plugins_runtime"_q,
-			.title = tr::lng_extera_plugins_runtime_python(),
+			.title = tr::lng_exd_plugins_engine(),
 			.st = &st::settingsButtonNoIcon,
 			.label = rpl::single(Extera::Plugins::Started()
 				? tr::lng_extera_plugins_runtime_running(tr::now)
@@ -2673,15 +3009,36 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 			QString(),
 			u"https://plugins.exteragram.app/docs"_q,
 			{ &st::menuIconFaq });
-		AddLink(
-			builder,
-			u"plugins_trusted"_q,
-			tr::lng_extera_plugins_trusted(),
-			QString(),
-			u"https://t.me/exteraPlugins"_q,
-			{ &st::menuIconStar });
+		for (const auto &source : Extera::PluginTrust::Sources()) {
+			const auto bare = source.id;
+			const auto username = source.username;
+			const auto channel = controller
+				? controller->session().data().channelLoaded(ChannelId(bare))
+				: nullptr;
+			builder.addButton({
+				.id = u"extera/trusted_"_q + QString::number(bare),
+				.title = rpl::single(channel
+					? channel->name()
+					: !username.isEmpty()
+					? (u"@"_q + username)
+					: tr::lng_exd_trusted_channel(
+						tr::now,
+						lt_id,
+						QString::number(bare))),
+				.icon = { &st::menuIconExdPuzzle },
+				.onClick = [=] {
+					if (channel) {
+						controller->showPeerHistory(
+							channel,
+							Window::SectionShow::Way::Forward);
+					} else if (!username.isEmpty()) {
+						UrlClickHandler::Open(u"https://t.me/"_q + username);
+					}
+				},
+			});
+		}
 	});
-	AddAbout(builder, tr::lng_extera_plugins_powered());
+	AddAbout(builder, tr::lng_exd_trusted_sources_about());
 }
 
 // AI Chat
@@ -2891,113 +3248,11 @@ void BuildPrivacy(SectionBuilder &builder) {
 	});
 }
 
-void AddNotificationsBlock(SectionBuilder &builder) {
-	const auto controller = builder.controller();
-	const auto settings = &Core::App().settings();
-	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_exd_notify_title());
-	builder.card([&] {
-		AddCoreToggle(
-			builder,
-			u"notify_native"_q,
-			tr::lng_exd_notify_native(),
-			[=] { return settings->nativeNotifications(); },
-			[=](bool v) {
-				settings->setNativeNotifications(v);
-				Core::App().saveSettingsDelayed();
-				Core::App().notifications().createManager();
-			});
-		const auto cornerText = [](int corner) {
-			switch (corner) {
-			case 0: return tr::lng_exd_notify_top_left(tr::now);
-			case 1: return tr::lng_exd_notify_top_right(tr::now);
-			case 3: return tr::lng_exd_notify_bottom_left(tr::now);
-			}
-			return tr::lng_exd_notify_bottom_right(tr::now);
-		};
-		const auto corner = std::make_shared<rpl::variable<int>>(
-			int(settings->notificationsCorner()));
-		builder.addButton({
-			.id = u"extera/notify_corner"_q,
-			.title = tr::lng_exd_notify_corner(),
-			.st = &st::settingsButtonNoIcon,
-			.label = corner->value() | rpl::map(cornerText),
-			.onClick = [=] {
-				const auto order = std::vector<int>{ 0, 1, 3, 2 };
-				auto texts = std::vector<QString>();
-				auto selected = 0;
-				for (auto i = 0; i != int(order.size()); ++i) {
-					texts.push_back(cornerText(order[i]));
-					if (order[i] == corner->current()) {
-						selected = i;
-					}
-				}
-				controller->show(Box([=](not_null<Ui::GenericBox*> box) {
-					SingleChoiceBox(box, {
-						.title = tr::lng_exd_notify_corner(),
-						.options = texts,
-						.initialSelection = selected,
-						.callback = [=](int index) {
-							using Corner = Core::Settings::ScreenCorner;
-							*corner = order[index];
-							settings->setNotificationsCorner(
-								Corner(order[index]));
-							Core::App().saveSettingsDelayed();
-							Core::App().notifications().notifySettingsChanged(
-								Window::Notifications::ChangeType::Corner);
-						},
-					});
-				}));
-			},
-			.keywords = { u"position"_q, u"corner"_q },
-		});
-		const auto soundText = [](const QString &path) {
-			return path.isEmpty()
-				? tr::lng_exd_notify_sound_default(tr::now)
-				: QFileInfo(path).fileName();
-		};
-		builder.addButton({
-			.id = u"extera/notify_sound"_q,
-			.title = tr::lng_exd_notify_sound(),
-			.st = &st::settingsButtonNoIcon,
-			.label = Config().stringChanges(
-				u"notify_sound"_q) | rpl::map(soundText),
-			.onClick = [=] {
-				FileDialog::GetOpenPath(
-					QPointer<QWidget>(),
-					tr::lng_exd_notify_sound(tr::now),
-					u"Audio (*.mp3 *.ogg *.wav *.m4a *.opus)"_q,
-					[=](FileDialog::OpenResult &&result) {
-						if (result.paths.isEmpty()) {
-							return;
-						}
-						Config().setString(
-							u"notify_sound"_q,
-							result.paths.front());
-						Core::App().notifications().resetSound();
-					});
-			},
-			.keywords = { u"sound"_q, u"audio"_q },
-		});
-		builder.addButton({
-			.id = u"extera/notify_sound_reset"_q,
-			.title = tr::lng_exd_notify_sound_reset(),
-			.st = &st::settingsButtonNoIcon,
-			.onClick = [=] {
-				Config().setString(u"notify_sound"_q, QString());
-				Core::App().notifications().resetSound();
-			},
-		});
-	});
-	AddAbout(builder, tr::lng_exd_notify_about());
-}
-
 void BuildNetwork(SectionBuilder &builder) {
 	AddCategorySearch(builder, { ExteraNetworkId() }, [&] {
 		PartGeneral1(builder);
 		PartGeneral4(builder);
 		PartGeneral5(builder);
-		AddNotificationsBlock(builder);
 	});
 }
 

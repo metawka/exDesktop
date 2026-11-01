@@ -8,6 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/unread_badge.h"
 
 #include "extera/extera_badges.h"
+#include "extera/extera_plugin_trust.h"
+#include "extera/extera_plugins_ui.h"
 
 #include "data/data_emoji_statuses.h"
 #include "data/data_peer.h"
@@ -240,16 +242,33 @@ PeerBadge::~PeerBadge() = default;
 int PeerBadge::drawGetWidth(Painter &p, Descriptor &&descriptor) {
 	Expects(descriptor.customEmojiRepaint != nullptr);
 
-	const auto extera = (descriptor.premium && descriptor.premiumFg)
+	const auto allowed = (descriptor.premium && descriptor.premiumFg);
+	const auto trusted = allowed
+		&& Extera::PluginTrust::IsTrustedChannel(descriptor.peer);
+	const auto extera = (allowed && !trusted)
 		? Extera::BadgeEmoji(descriptor.peer)
 		: DocumentId();
-	if (!extera) {
+	if (!extera && !trusted) {
 		return drawGetWidthInner(p, std::move(descriptor));
 	}
 	auto copy = descriptor;
 	const auto result = drawGetWidthInner(p, std::move(descriptor));
-	const auto gap = result ? style::ConvertScale(4) : 0;
+	const auto gap = (result ? style::ConvertScale(4) : 0)
+		+ st::normalFont->spacew;
 	copy.nameWidth += result + gap;
+	if (trusted) {
+		if (const auto emoji = Extera::PluginTrust::TrustedEmoji()) {
+			return result + gap + drawEmojiStatus(
+				p,
+				copy,
+				_exteraStatus,
+				EmojiStatusId{ .documentId = emoji });
+		}
+		if (_exteraStatus) {
+			_exteraStatus->painted = false;
+		}
+		return result + gap + drawTrustedPuzzle(p, copy);
+	}
 	return result + gap + drawEmojiStatus(
 		p,
 		copy,
@@ -412,6 +431,19 @@ int PeerBadge::drawEmojiStatus(
 		.paused = descriptor.paused || On(PowerSaving::kEmojiStatus),
 	});
 	return iconw - 4 * slot->skip;
+}
+
+int PeerBadge::drawTrustedPuzzle(Painter &p, const Descriptor &descriptor) {
+	const auto rectForName = descriptor.rectForName;
+	const auto size = Ui::Text::AdjustCustomEmojiSize(st::emojiSize);
+	const auto skip = (st::emojiSize - size) / 2;
+	const auto iconx = rectForName.x()
+		+ std::min(descriptor.nameWidth, rectForName.width() - size);
+	Extera::Plugins::PaintPuzzle(
+		p,
+		QRectF(iconx, rectForName.y() + skip, size, size),
+		(*descriptor.premiumFg)->c);
+	return size;
 }
 
 int PeerBadge::drawPremiumStar(Painter &p, const Descriptor &descriptor) {

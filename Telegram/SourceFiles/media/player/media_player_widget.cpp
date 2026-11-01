@@ -31,6 +31,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/player/media_player_instance.h"
 #include "media/player/media_player_dropdown.h"
 #include "media/player/media_player_volume_controller.h"
+#include "extera/extera_full_player.h"
 #include "history/history_item.h"
 #include "history/history_item_helpers.h"
 #include "storage/storage_account.h"
@@ -524,6 +525,11 @@ void Widget::mouseReleaseEvent(QMouseEvent *e) {
 		if (_labelsOver != downLabels) {
 			return;
 		}
+		if (_type == AudioMsgId::Type::Song
+				&& !_lastSongFromAnotherSession) {
+			Extera::FullPlayer::Show(_controller);
+			return;
+		}
 		if ((_type == AudioMsgId::Type::Voice)
 				|| _lastSongFromAnotherSession) {
 			const auto current = instance()->current(_type);
@@ -551,9 +557,7 @@ void Widget::updateOverLabelsState(QPoint pos) {
 
 void Widget::updateOverLabelsState(bool over) {
 	_labelsOver = over;
-	const auto pressShowsItem = _labelsOver
-		&& ((_type == AudioMsgId::Type::Voice)
-			|| _lastSongFromAnotherSession);
+	const auto pressShowsItem = _labelsOver;
 	setCursor(pressShowsItem ? style::cur_pointer : style::cur_default);
 	_togglePlaylistRequests.fire(over && (_type == AudioMsgId::Type::Song));
 }

@@ -13,5 +13,6 @@ namespace Extera {
 void ShowChannelFeed(not_null<Window::SessionController*> controller);
 void ShowFeedSettings(not_null<Window::SessionController*> controller);
 [[nodiscard]] int FeedUnreadCount(not_null<Main::Session*> session);
+[[nodiscard]] bool IsFeedList(const void *delegate);
 
 } // namespace Extera

@@ -138,12 +138,7 @@ void ShowWelcomeBox(not_null<Window::SessionController*> controller) {
 				Config::Instance().setBool(
 					u"app_icon_square"_q,
 					state->square);
-				AppIcon::ApplyToShortcuts();
-				controller->show(Ui::MakeConfirmBox({
-					.text = tr::lng_extera_restart_required(),
-					.confirmed = [] { Core::Restart(); },
-					.confirmText = tr::lng_extera_restart(),
-				}));
+				AppIcon::Apply();
 			}
 		};
 		const auto fillWelcome = [=] {

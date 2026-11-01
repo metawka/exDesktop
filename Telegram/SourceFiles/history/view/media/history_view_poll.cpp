@@ -3866,6 +3866,21 @@ void Poll::Options::paintAnswer(
 		}
 	} else if (!_owner->paintVotes()) {
 		paintRadio(p, answer, left, top, textPadding, context);
+	} else if (_owner->canVote()) {
+		paintRadio(p, answer, left, top, textPadding, context);
+		paintVotesCount();
+		paintFilling(
+			p,
+			answer.chosen,
+			answer.correct,
+			answer.filling,
+			left,
+			top,
+			textPadding,
+			width,
+			barContentWidth,
+			fillingContentHeight,
+			context);
 	} else {
 		paintPercent(
 			p,

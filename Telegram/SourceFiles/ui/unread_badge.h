@@ -102,6 +102,7 @@ private:
 		std::unique_ptr<EmojiStatus> &slot,
 		EmojiStatusId id);
 	int drawPremiumStar(Painter &p, const Descriptor &descriptor);
+	int drawTrustedPuzzle(Painter &p, const Descriptor &descriptor);
 
 	std::unique_ptr<EmojiStatus> _emojiStatus;
 	std::unique_ptr<EmojiStatus> _exteraStatus;

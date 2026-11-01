@@ -43,6 +43,7 @@ enum class BadgeType : uchar {
 	Scam = 0x08,
 	Fake = 0x10,
 	Direct = 0x20,
+	Trusted = 0x40,
 };
 inline constexpr bool is_flag_type(BadgeType) { return true; }
 

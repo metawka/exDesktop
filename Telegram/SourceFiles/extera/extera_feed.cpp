@@ -25,6 +25,17 @@
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
+#include "ui/widgets/fields/input_field.h"
+#include "core/ui_integration.h"
+#include "data/data_document.h"
+#include "data/stickers/data_custom_emoji.h"
+#include "boxes/peer_list_box.h"
+#include "chat_helpers/tabbed_panel.h"
+#include "chat_helpers/tabbed_selector.h"
+#include "settings/settings_common.h"
+#include "ui/emoji_config.h"
+#include "window/window_controller.h"
+#include "styles/style_chat_helpers.h"
 #include "ui/widgets/elastic_scroll.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/popup_menu.h"
@@ -37,6 +48,10 @@
 #include "styles/style_chat.h"
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
+
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
 #include "styles/style_window.h"
@@ -47,6 +62,11 @@ namespace {
 constexpr auto kMaxPosts = 150;
 constexpr auto kMaxChannels = 30;
 constexpr auto kPerChannel = 10;
+
+[[nodiscard]] base::flat_set<const void*> &FeedLists() {
+	static auto result = base::flat_set<const void*>();
+	return result;
+}
 
 std::vector<FullMsgId> &Fetched() {
 	static auto result = std::vector<FullMsgId>();
@@ -77,6 +97,86 @@ void SetChannelHidden(not_null<PeerData*> peer, bool hidden) {
 	Config::Instance().setString(u"feed_hidden"_q, parts.join(','));
 }
 
+struct Category {
+	QString name;
+	QString emoji;
+	std::vector<uint64> channels;
+};
+
+[[nodiscard]] std::vector<Category> Categories() {
+	auto result = std::vector<Category>();
+	const auto list = QJsonDocument::fromJson(
+		String(u"feed_categories"_q).toUtf8()).array();
+	for (const auto &value : list) {
+		const auto object = value.toObject();
+		auto category = Category{
+			.name = object.value(u"name"_q).toString(),
+			.emoji = object.value(u"emoji"_q).toString(),
+		};
+		for (const auto &id : object.value(u"channels"_q).toArray()) {
+			if (const auto value = id.toString().toULongLong()) {
+				category.channels.push_back(value);
+			}
+		}
+		if (!category.name.isEmpty()) {
+			result.push_back(std::move(category));
+		}
+	}
+	return result;
+}
+
+void SaveCategories(const std::vector<Category> &list) {
+	auto array = QJsonArray();
+	for (const auto &category : list) {
+		auto channels = QJsonArray();
+		for (const auto id : category.channels) {
+			channels.push_back(QString::number(id));
+		}
+		auto object = QJsonObject();
+		object.insert(u"name"_q, category.name);
+		object.insert(u"emoji"_q, category.emoji);
+		object.insert(u"channels"_q, channels);
+		array.push_back(object);
+	}
+	Config::Instance().setString(
+		u"feed_categories"_q,
+		QString::fromUtf8(
+			QJsonDocument(array).toJson(QJsonDocument::Compact)));
+}
+
+[[nodiscard]] DocumentId CategoryCustomEmoji(const Category &category) {
+	return category.emoji.startsWith(u"custom:"_q)
+		? DocumentId(category.emoji.mid(7).toULongLong())
+		: DocumentId();
+}
+
+[[nodiscard]] QString CategoryTitle(const Category &category) {
+	return (category.emoji.isEmpty() || CategoryCustomEmoji(category))
+		? category.name
+		: (category.emoji + ' ' + category.name);
+}
+
+[[nodiscard]] TextWithEntities CategoryMarked(const Category &category) {
+	if (const auto id = CategoryCustomEmoji(category)) {
+		auto result = TextWithEntities{
+			QString(QChar(0x2B50)) + ' ' + category.name,
+		};
+		result.entities.push_back(EntityInText(
+			EntityType::CustomEmoji,
+			0,
+			1,
+			Data::SerializeCustomEmojiId(id)));
+		return result;
+	}
+	return { CategoryTitle(category) };
+}
+
+[[nodiscard]] const Category *CurrentCategory(
+		const std::vector<Category> &list) {
+	const auto index = Int(u"feed_category"_q) - 1;
+	return (index >= 0 && index < int(list.size())) ? &list[index] : nullptr;
+}
+
 void CollectChannels(
 		not_null<Dialogs::IndexedList*> list,
 		std::vector<not_null<History*>> &result) {
@@ -104,9 +204,13 @@ void CollectChannels(
 [[nodiscard]] std::vector<not_null<History*>> FeedChannels(
 		not_null<Data::Session*> owner) {
 	const auto hidden = HiddenChannels();
+	const auto categories = Categories();
+	const auto category = CurrentCategory(categories);
 	auto result = AllChannels(owner);
 	result.erase(ranges::remove_if(result, [&](not_null<History*> history) {
-		return hidden.contains(history->peer->id.value);
+		const auto id = history->peer->id.value;
+		return hidden.contains(id)
+			|| (category && !ranges::contains(category->channels, id));
 	}), end(result));
 	return result;
 }
@@ -226,6 +330,11 @@ void Request(
 
 
 class FeedMemento;
+
+void ShowCategoryBox(
+	not_null<Window::SessionController*> controller,
+	int index,
+	Fn<void()> done);
 
 class FeedWidget final
 	: public Window::SectionWidget
@@ -421,6 +530,13 @@ private:
 	std::shared_ptr<Ui::ChatTheme> _theme;
 	object_ptr<Ui::RpWidget> _topBar;
 	object_ptr<Ui::PlainShadow> _topBarShadow;
+	object_ptr<Ui::RpWidget> _tabs;
+	std::vector<QRect> _tabRects;
+	std::vector<Ui::Text::String> _tabTexts;
+	Ui::Text::String _titleText;
+	void rebuildTexts();
+	void setupTabs();
+	[[nodiscard]] int tabsHeight() const;
 	std::unique_ptr<Ui::ElasticScroll> _scroll;
 	QPointer<HistoryView::ListWidget> _inner;
 	base::unique_qptr<Ui::PopupMenu> _menu;
@@ -463,17 +579,23 @@ FeedWidget::FeedWidget(
 , _theme(controller->defaultChatTheme())
 , _topBar(this)
 , _topBarShadow(this)
+, _tabs(this)
 , _scroll(std::make_unique<Ui::ElasticScroll>(
 	this,
 	controller->chatStyle()->value(lifetime(), st::historyScroll))) {
 	controller->setChatStyleTheme(_theme);
 	setupTopBar();
+	setupTabs();
 
 	_scroll->setHandleTouch(false);
 	_inner = _scroll->setOwnedWidget(object_ptr<HistoryView::ListWidget>(
 		this,
 		&controller->session(),
 		static_cast<HistoryView::ListDelegate*>(this)));
+	const auto delegate = static_cast<const HistoryView::ElementDelegate*>(
+		_inner.data());
+	FeedLists().emplace(delegate);
+	_inner->lifetime().add([=] { FeedLists().remove(delegate); });
 	_inner->lower();
 	_scroll->show();
 	_scroll->setOverscrollBg(QColor(0, 0, 0, 0));
@@ -511,11 +633,24 @@ void FeedWidget::setupTopBar() {
 		p.setPen(st::dialogsNameFg);
 		p.setFont(st::semiboldFont);
 		const auto left = st::historyTopBarBack.width;
-		p.drawText(
-			left,
-			(_topBar->height() - st::semiboldFont->height) / 2
-				+ st::semiboldFont->ascent,
-			tr::lng_extera_feed(tr::now));
+		const auto categories = Categories();
+		const auto category = CurrentCategory(categories);
+		if (category && !_titleText.isEmpty()) {
+			_titleText.draw(p, {
+				.position = QPoint(
+					left,
+					(_topBar->height() - st::semiboldFont->height) / 2),
+				.availableWidth = _topBar->width() - left * 2,
+				.now = crl::now(),
+				.elisionLines = 1,
+			});
+		} else {
+			p.drawText(
+				left,
+				(_topBar->height() - st::semiboldFont->height) / 2
+					+ st::semiboldFont->ascent,
+				tr::lng_extera_feed(tr::now));
+		}
 	}, _topBar->lifetime());
 	const auto back = Ui::CreateChild<Ui::IconButton>(
 		_topBar.data(),
@@ -531,12 +666,145 @@ void FeedWidget::setupTopBar() {
 	_topBarShadow->show();
 }
 
+void FeedWidget::rebuildTexts() {
+	const auto session = &controller()->session();
+	const auto context = [=](Fn<void()> repaint) {
+		return Core::TextContext({
+			.session = session,
+			.repaint = std::move(repaint),
+		});
+	};
+	const auto categories = Categories();
+	_tabTexts.clear();
+	_tabTexts.emplace_back(
+		st::semiboldTextStyle,
+		tr::lng_exd_feed_all(tr::now));
+	for (const auto &category : categories) {
+		auto text = Ui::Text::String();
+		text.setMarkedText(
+			st::semiboldTextStyle,
+			CategoryMarked(category),
+			kMarkupTextOptions,
+			context([=] { _tabs->update(); }));
+		_tabTexts.push_back(std::move(text));
+	}
+	_titleText = Ui::Text::String();
+	if (const auto category = CurrentCategory(categories)) {
+		_titleText.setMarkedText(
+			st::semiboldTextStyle,
+			CategoryMarked(*category),
+			kMarkupTextOptions,
+			context([=] { _topBar->update(); }));
+	}
+}
+
+int FeedWidget::tabsHeight() const {
+	return Categories().empty() ? 0 : st::topBarHeight;
+}
+
+void FeedWidget::setupTabs() {
+	_tabs->paintRequest() | rpl::on_next([=](QRect clip) {
+		auto p = QPainter(_tabs.data());
+		auto hq = PainterHighQualityEnabler(p);
+		p.fillRect(clip, st::topBarBg);
+		const auto current = Int(u"feed_category"_q);
+		const auto &font = st::semiboldFont;
+		const auto height = font->height + st::normalFont->height / 2 * 2;
+		const auto padding = font->height;
+		const auto top = (_tabs->height() - height) / 2;
+		auto left = st::historyTopBarBack.width / 3;
+		_tabRects.clear();
+		for (auto i = 0; i != int(_tabTexts.size()); ++i) {
+			const auto &text = _tabTexts[i];
+			const auto width = text.maxWidth() + padding * 2;
+			const auto rect = QRect(left, top, width, height);
+			_tabRects.push_back(rect);
+			const auto active = (i == current);
+			p.setPen(Qt::NoPen);
+			p.setBrush(active ? st::activeButtonBg : st::windowBgOver);
+			p.drawRoundedRect(rect, height / 2., height / 2.);
+			p.setPen(active ? st::activeButtonFg : st::windowFg);
+			text.draw(p, {
+				.position = QPoint(
+					rect.x() + padding,
+					rect.y() + (height - font->height) / 2),
+				.availableWidth = text.maxWidth(),
+				.now = crl::now(),
+			});
+			left += width + padding / 2;
+		}
+	}, _tabs->lifetime());
+	_tabs->setMouseTracking(true);
+	_tabs->events(
+	) | rpl::on_next([=](not_null<QEvent*> e) {
+		const auto type = e->type();
+		if (type != QEvent::MouseButtonRelease
+			&& type != QEvent::MouseMove) {
+			return;
+		}
+		const auto pos = static_cast<QMouseEvent*>(e.get())->pos();
+		auto index = -1;
+		for (auto i = 0; i != int(_tabRects.size()); ++i) {
+			if (_tabRects[i].contains(pos)) {
+				index = i;
+				break;
+			}
+		}
+		if (type == QEvent::MouseMove) {
+			_tabs->setCursor((index >= 0)
+				? style::cur_pointer
+				: style::cur_default);
+		} else if (index >= 0 && index != Int(u"feed_category"_q)) {
+			Config::Instance().setInt(u"feed_category"_q, index);
+			refresh();
+			_topBar->update();
+			_tabs->update();
+		}
+	}, _tabs->lifetime());
+	Config::Instance().changes(
+	) | rpl::filter([](const QString &key) {
+		return key == u"feed_categories"_q || key == u"feed_category"_q;
+	}) | rpl::on_next([=] {
+		rebuildTexts();
+		updateControlsGeometry();
+		_tabs->update();
+		_topBar->update();
+	}, _tabs->lifetime());
+	rebuildTexts();
+}
+
 void FeedWidget::showMenu() {
 	_menu = base::make_unique_q<Ui::PopupMenu>(
 		this,
 		st::popupMenuExpandedSeparator);
 	const auto window = controller();
 	const auto owner = _owner;
+	const auto categories = Categories();
+	const auto current = Int(u"feed_category"_q);
+	const auto select = [=](int value) {
+		Config::Instance().setInt(u"feed_category"_q, value);
+		refresh();
+		_topBar->update();
+	};
+	if (!categories.empty()) {
+		_menu->addAction(
+			tr::lng_exd_feed_all(tr::now),
+			[=] { select(0); },
+			(current == 0) ? &st::menuIconSelect : nullptr);
+		for (auto i = 0; i != int(categories.size()); ++i) {
+			_menu->addAction(
+				CategoryTitle(categories[i]),
+				[=] { select(i + 1); },
+				(current == i + 1) ? &st::menuIconSelect : nullptr);
+		}
+		_menu->addSeparator();
+	}
+	_menu->addAction(tr::lng_exd_feed_category_new(tr::now), [=] {
+		ShowCategoryBox(window, -1, crl::guard(this, [=] {
+			refresh();
+			_topBar->update();
+		}));
+	}, &st::menuIconAdd);
 	_menu->addAction(tr::lng_extera_feed_mark_read(tr::now), [=] {
 		window->show(Ui::MakeConfirmBox({
 			.text = tr::lng_extera_feed_mark_read_sure(),
@@ -658,9 +926,14 @@ void FeedWidget::updateControlsGeometry() {
 		_menuToggle->moveToRight(0, 0, contentWidth);
 		_menuToggle->raise();
 	}
+	const auto tabs = tabsHeight();
+	_tabs->setGeometry(0, _topBar->height(), contentWidth, tabs);
+	_tabs->setVisible(tabs > 0);
+	_tabs->raise();
 	_topBarShadow->resize(contentWidth, st::lineWidth);
-	_topBarShadow->moveToLeft(0, _topBar->height());
-	const auto top = _topBar->height();
+	_topBarShadow->moveToLeft(0, _topBar->height() + tabs);
+	_topBarShadow->raise();
+	const auto top = _topBar->height() + tabs;
 	const auto size = QSize(contentWidth, height() - top);
 	if (_scroll->size() != size) {
 		_skipScrollEvent = true;
@@ -690,6 +963,217 @@ void FeedWidget::paintEvent(QPaintEvent *e) {
 	SectionWidget::PaintBackground(controller(), _theme.get(), this, bg);
 }
 
+class ChannelsPicker final : public PeerListController {
+public:
+	ChannelsPicker(
+		not_null<Main::Session*> session,
+		std::vector<not_null<History*>> channels,
+		base::flat_set<uint64> selected)
+	: _session(session)
+	, _channels(std::move(channels))
+	, _selected(std::move(selected)) {
+	}
+
+	Main::Session &session() const override {
+		return *_session;
+	}
+
+	void prepare() override {
+		delegate()->peerListSetSearchMode(PeerListSearchMode::Enabled);
+		for (const auto history : _channels) {
+			delegate()->peerListAppendRow(
+				std::make_unique<PeerListRow>(history->peer));
+		}
+		delegate()->peerListRefreshRows();
+		for (const auto history : _channels) {
+			const auto peer = history->peer;
+			if (_selected.contains(peer->id.value)) {
+				if (const auto row = delegate()->peerListFindRow(
+						peer->id.value)) {
+					delegate()->peerListSetRowChecked(row, true);
+				}
+			}
+		}
+	}
+
+	void rowClicked(not_null<PeerListRow*> row) override {
+		delegate()->peerListSetRowChecked(row, !row->checked());
+	}
+
+private:
+	const not_null<Main::Session*> _session;
+	const std::vector<not_null<History*>> _channels;
+	const base::flat_set<uint64> _selected;
+
+};
+
+void ShowChannelsPicker(
+		not_null<Window::SessionController*> controller,
+		rpl::producer<QString> title,
+		base::flat_set<uint64> selected,
+		Fn<void(base::flat_set<uint64>)> done) {
+	const auto owner = &controller->session().data();
+	auto picker = std::make_unique<ChannelsPicker>(
+		&controller->session(),
+		AllChannels(owner),
+		std::move(selected));
+	auto init = [=, title = std::move(title)](
+			not_null<PeerListBox*> box) mutable {
+		box->setTitle(std::move(title));
+		box->addButton(tr::lng_settings_save(), [=] {
+			auto result = base::flat_set<uint64>();
+			for (const auto peer : box->collectSelectedRows()) {
+				result.emplace(peer->id.value);
+			}
+			done(std::move(result));
+			box->closeBox();
+		});
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+	};
+	controller->show(Box<PeerListBox>(std::move(picker), std::move(init)));
+}
+
+void ShowCategoryBox(
+		not_null<Window::SessionController*> controller,
+		int index,
+		Fn<void()> done) {
+	const auto owner = &controller->session().data();
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		const auto list = Categories();
+		const auto exists = (index >= 0 && index < int(list.size()));
+		const auto existing = exists ? list[index] : Category();
+		box->setTitle(exists
+			? tr::lng_exd_feed_category_edit()
+			: tr::lng_exd_feed_category_new());
+		box->setWidth(st::boxWideWidth);
+		const auto content = box->verticalLayout();
+		const auto emoji = box->lifetime().make_state<rpl::variable<QString>>(
+			existing.emoji);
+		const auto name = content->add(
+			object_ptr<Ui::InputField>(
+				content,
+				st::defaultInputField,
+				tr::lng_exd_feed_category_name(),
+				existing.name),
+			st::boxRowPadding);
+		name->setMaxLength(32);
+		Ui::AddSkip(content);
+		const auto emojiButton = Settings::AddButtonWithLabel(
+			content,
+			tr::lng_exd_feed_category_emoji(),
+			emoji->value() | rpl::map([](const QString &value) {
+				return value.startsWith(u"custom:"_q)
+					? tr::lng_exd_feed_category_premium(tr::now)
+					: value;
+			}),
+			st::settingsButtonNoIcon);
+		using Selector = ChatHelpers::TabbedSelector;
+		const auto panel = box->lifetime().make_state<
+			base::unique_qptr<ChatHelpers::TabbedPanel>>(
+				base::make_unique_q<ChatHelpers::TabbedPanel>(
+					box->getDelegate()->outerContainer(),
+					ChatHelpers::TabbedPanelDescriptor{
+						.ownedSelector = object_ptr<Selector>(
+							nullptr,
+							ChatHelpers::TabbedSelectorDescriptor{
+								.show = controller->uiShow(),
+								.st = st::defaultComposeControls.tabbed,
+								.level = Window::GifPauseReason::Layer,
+								.mode = Selector::Mode::EmojiOnly,
+							}),
+					}))->get();
+		panel->setDesiredHeightValues(
+			1.,
+			st::emojiPanMinHeight / 2,
+			st::emojiPanMinHeight);
+		panel->setDropDown(true);
+		panel->hide();
+		panel->selector()->emojiChosen(
+		) | rpl::on_next([=](ChatHelpers::EmojiChosen data) {
+			*emoji = data.emoji->text();
+			panel->hideAnimated();
+		}, emojiButton->lifetime());
+		panel->selector()->customEmojiChosen(
+		) | rpl::on_next([=](ChatHelpers::FileChosen data) {
+			*emoji = u"custom:"_q + QString::number(data.document->id);
+			panel->hideAnimated();
+		}, emojiButton->lifetime());
+		emojiButton->setClickedCallback([=] {
+			const auto parent = panel->parentWidget();
+			const auto global = emojiButton->mapToGlobal(
+				QPoint(emojiButton->width(), emojiButton->height()));
+			const auto local = parent->mapFromGlobal(global);
+			panel->moveTopRight(local.y(), local.x());
+			panel->toggleAnimated();
+		});
+		const auto selected = box->lifetime().make_state<
+			rpl::variable<base::flat_set<uint64>>>(
+				base::flat_set<uint64>(
+					existing.channels.begin(),
+					existing.channels.end()));
+		const auto channelsButton = Settings::AddButtonWithLabel(
+			content,
+			tr::lng_exd_feed_category_channels(),
+			selected->value(
+			) | rpl::map([](const base::flat_set<uint64> &list) {
+				return QString::number(list.size());
+			}),
+			st::settingsButtonNoIcon);
+		channelsButton->setClickedCallback([=] {
+			ShowChannelsPicker(
+				controller,
+				tr::lng_exd_feed_category_channels(),
+				selected->current(),
+				[=](base::flat_set<uint64> result) {
+					*selected = std::move(result);
+				});
+		});
+		Ui::AddSkip(content);
+		box->setFocusCallback([=] { name->setFocusFast(); });
+		box->addButton(tr::lng_settings_save(), [=] {
+			const auto title = name->getLastText().trimmed();
+			if (title.isEmpty()) {
+				name->showError();
+				return;
+			}
+			auto updated = Categories();
+			const auto &list = selected->current();
+			auto category = Category{
+				.name = title,
+				.emoji = emoji->current(),
+				.channels = { list.begin(), list.end() },
+			};
+			if (index >= 0 && index < int(updated.size())) {
+				updated[index] = std::move(category);
+			} else {
+				updated.push_back(std::move(category));
+			}
+			SaveCategories(updated);
+			box->closeBox();
+			if (done) {
+				done();
+			}
+		});
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+		if (exists) {
+			box->addLeftButton(tr::lng_box_delete(), [=] {
+				auto updated = Categories();
+				if (index < int(updated.size())) {
+					updated.erase(begin(updated) + index);
+				}
+				if (Int(u"feed_category"_q) - 1 >= index) {
+					Config::Instance().setInt(u"feed_category"_q, 0);
+				}
+				SaveCategories(updated);
+				box->closeBox();
+				if (done) {
+					done();
+				}
+			});
+		}
+	}));
+}
+
 void AddSettingsToggle(
 		not_null<Ui::VerticalLayout*> container,
 		const QString &key,
@@ -710,6 +1194,10 @@ void AddSettingsToggle(
 
 void ShowChannelFeed(not_null<Window::SessionController*> controller) {
 	controller->showSection(std::make_shared<FeedMemento>());
+}
+
+bool IsFeedList(const void *delegate) {
+	return FeedLists().contains(delegate);
 }
 
 int FeedUnreadCount(not_null<Main::Session*> session) {
@@ -739,22 +1227,73 @@ void ShowFeedSettings(not_null<Window::SessionController*> controller) {
 			u"feed_include_archived"_q,
 			tr::lng_extera_feed_archived());
 		Ui::AddDividerText(content, tr::lng_extera_feed_archived_about());
-		Ui::AddSubsectionTitle(content, tr::lng_extera_feed_shown());
-		const auto hidden = HiddenChannels();
-		for (const auto history : AllChannels(owner)) {
-			const auto peer = history->peer;
-			const auto checkbox = content->add(
-				object_ptr<Ui::Checkbox>(
+		Ui::AddSubsectionTitle(content, tr::lng_exd_feed_categories());
+		const auto reopen = [=] {
+			box->closeBox();
+			ShowFeedSettings(controller);
+		};
+		const auto categories = Categories();
+		for (auto i = 0; i != int(categories.size()); ++i) {
+			const auto button = content->add(
+				object_ptr<Ui::SettingsButton>(
 					content,
-					peer->name(),
-					!hidden.contains(peer->id.value),
-					st::defaultBoxCheckbox),
-				st::boxRowPadding + QMargins(0, 6, 0, 6));
-			checkbox->checkedChanges(
-			) | rpl::on_next([=](bool checked) {
-				SetChannelHidden(peer, !checked);
-			}, checkbox->lifetime());
+					rpl::single(CategoryTitle(categories[i])),
+					st::settingsButtonNoIcon));
+			button->setClickedCallback([=] {
+				ShowCategoryBox(controller, i, reopen);
+			});
 		}
+		const auto create = content->add(
+			object_ptr<Ui::SettingsButton>(
+				content,
+				tr::lng_exd_feed_category_new(),
+				st::settingsButtonActive));
+		create->setClickedCallback([=] {
+			ShowCategoryBox(controller, -1, reopen);
+		});
+		Ui::AddDividerText(content, tr::lng_exd_feed_categories_about());
+		const auto shownCount = [=] {
+			const auto hidden = HiddenChannels();
+			const auto all = AllChannels(owner);
+			const auto shown = ranges::count_if(all, [&](auto history) {
+				return !hidden.contains(history->peer->id.value);
+			});
+			return tr::lng_exd_feed_shown_count(
+				tr::now,
+				lt_shown,
+				QString::number(shown),
+				lt_total,
+				QString::number(all.size()));
+		};
+		const auto shownLabel = box->lifetime().make_state<
+			rpl::variable<QString>>(shownCount());
+		const auto shownButton = Settings::AddButtonWithLabel(
+			content,
+			tr::lng_extera_feed_shown(),
+			shownLabel->value(),
+			st::settingsButtonNoIcon);
+		shownButton->setClickedCallback([=] {
+			const auto hidden = HiddenChannels();
+			auto selected = base::flat_set<uint64>();
+			for (const auto history : AllChannels(owner)) {
+				const auto id = history->peer->id.value;
+				if (!hidden.contains(id)) {
+					selected.emplace(id);
+				}
+			}
+			ShowChannelsPicker(
+				controller,
+				tr::lng_extera_feed_shown(),
+				std::move(selected),
+				[=](base::flat_set<uint64> result) {
+					for (const auto history : AllChannels(owner)) {
+						SetChannelHidden(
+							history->peer,
+							!result.contains(history->peer->id.value));
+					}
+					*shownLabel = shownCount();
+				});
+		});
 		Ui::AddDividerText(content, tr::lng_extera_feed_channels_about());
 		box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 	}));

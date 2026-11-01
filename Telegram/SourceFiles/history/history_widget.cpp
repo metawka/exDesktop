@@ -226,6 +226,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtGui/QWindow>
 #include <QtCore/QMimeData>
+#include <QtGui/QClipboard>
+#include <QtGui/QGuiApplication>
 
 namespace {
 
@@ -616,6 +618,45 @@ HistoryWidget::HistoryWidget(
 		supportInitAutocomplete();
 	}
 	_field->rawTextEdit()->installEventFilter(this);
+	_field->addContextMenuHook([=](
+			Ui::InputField::ContextMenuRequest request) {
+		const auto edit = _field->rawTextEdit();
+		const auto cursor = edit->textCursor();
+		auto from = cursor.selectionStart();
+		auto till = cursor.selectionEnd();
+		if (from == till) {
+			const auto at = edit->cursorForPosition(
+				edit->viewport()->mapFromGlobal(
+					request.event->globalPos())).position();
+			from = std::max(at - 1, 0);
+			till = at + 1;
+		}
+		auto ids = QStringList();
+		const auto &start = Ui::InputField::kCustomEmojiTagStart;
+		const auto part = _field->getTextWithTagsPart(from, till);
+		for (const auto &tag : part.tags) {
+			for (const auto &single : TextUtilities::SplitTags(tag.id)) {
+				if (!single.startsWith(start)) {
+					continue;
+				}
+				const auto id = Data::ParseCustomEmojiData(
+					single.mid(start.size()));
+				const auto text = QString::number(id);
+				if (id && !ids.contains(text)) {
+					ids.push_back(text);
+				}
+			}
+		}
+		if (ids.isEmpty()) {
+			return;
+		}
+		const auto text = ids.join(QChar('\n'));
+		request.menu->addSeparator();
+		request.menu->addAction(tr::lng_exd_copy_emoji_id(tr::now), [=] {
+			QGuiApplication::clipboard()->setText(text);
+			controller->showToast(tr::lng_exd_emoji_id_copied(tr::now));
+		});
+	});
 	_field->setMimeDataHook(WrappedMessageFieldMimeHook([=](
 			not_null<const QMimeData*> data,
 			Ui::InputField::MimeAction action) {
@@ -7699,12 +7740,6 @@ void HistoryWidget::moveFieldControls() {
 			right += _ttlInfo->width();
 		}
 	}
-	if (_exdCharsCounter) {
-		_exdCharsCounter->move(
-			width() - right - _exdCharsCounter->width(),
-			buttonsBottom + (_tabbedSelectorToggle->height()
-				- _exdCharsCounter->height()) / 2);
-	}
 	updateAiButtonGeometry();
 	updateSendAsFileGeometry();
 	updateExpandButtonGeometry();
@@ -7713,6 +7748,18 @@ void HistoryWidget::moveFieldControls() {
 	_fieldBarCancel->moveToRight(
 		0,
 		_field->y() - st::historySendPadding - _fieldBarCancel->height());
+	if (_exdCharsCounter) {
+		const auto barTop = _fieldBarCancel->isHidden()
+			? (_field->y() - st::historySendPadding)
+			: _fieldBarCancel->y();
+		_exdCharsCounter->move(
+			std::max(
+				_attachToggle->x() + (_attachToggle->width()
+					- _exdCharsCounter->width()) / 2,
+				st::historySendPadding),
+			barTop - _exdCharsCounter->height() - st::historySendPadding);
+		_exdCharsCounter->raise();
+	}
 	if (_inlineResults) {
 		_inlineResults->moveBottom(_field->y() - st::historySendPadding);
 	}
@@ -7773,9 +7820,6 @@ void HistoryWidget::updateFieldSize() {
 	}
 	if (_ttlInfo && _ttlInfo->isVisible()) {
 		fieldWidth -= _ttlInfo->width();
-	}
-	if (_exdCharsCounter) {
-		fieldWidth -= _exdCharsCounter->width() + st::exteraCharsCounterSkip;
 	}
 
 	if (_fieldDisabled) {

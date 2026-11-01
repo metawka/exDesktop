@@ -1,4 +1,5 @@
 #include "extera/extera_plugins.h"
+#include "extera/extera_menu.h"
 
 #pragma push_macro("slots")
 #undef slots
@@ -6,6 +7,8 @@
 #pragma pop_macro("slots")
 
 #include "api/api_common.h"
+#include "api/api_editing.h"
+#include "api/api_text_entities.h"
 #include "apiwrap.h"
 #include "base/call_delayed.h"
 #include "core/application.h"
@@ -15,12 +18,17 @@
 #include "data/data_session.h"
 #include "data/data_user.h"
 #include "extera/extera_config.h"
+#include "extera/extera_views.h"
 #include "history/history.h"
+#include "history/history_item.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
+#include "storage/localimageloader.h"
+#include "storage/storage_media_prepare.h"
 #include "settings.h"
 #include "ui/basic_click_handlers.h"
 #include "ui/boxes/confirm_box.h"
+#include "ui/chat/attach/attach_prepare.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text_entity.h"
 #include "ui/vertical_list.h"
@@ -32,9 +40,17 @@
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 
+#include "extera/extera_plugin_trust.h"
+
+#include <atomic>
+#include <chrono>
+#include <deque>
+#include <thread>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QStandardPaths>
+#include <QtCore/QUrl>
+#include <QtCore/QUrlQuery>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -55,7 +71,16 @@ struct State {
 	PyObject *dispatch = nullptr;
 	rpl::event_stream<> listChanges;
 	rpl::event_stream<QString> settingsChanges;
+	bool eventInFlight = false;
+	bool intentInFlight = false;
+	std::deque<QJsonObject> recent;
+	rpl::lifetime lifetime;
 };
+
+constexpr auto kHangTimeout = crl::time(10000);
+std::atomic<crl::time> CallStarted = 0;
+std::atomic<bool> HangReported = false;
+std::atomic<bool> WatchdogRunning = false;
 
 State &Instance() {
 	static auto result = State();
@@ -120,15 +145,21 @@ private:
 	return DataPath() + u"starting.lock"_q;
 }
 
-void ShowAutoSafeModeBox() {
-	base::call_delayed(3000, [] {
+[[nodiscard]] QString HangMarkerPath() {
+	return DataPath() + u"plugin_hang.lock"_q;
+}
+
+void ShowAutoSafeModeBox(bool hang = false) {
+	base::call_delayed(3000, [=] {
 		const auto window = Core::App().activePrimaryWindow();
 		const auto controller = window ? window->sessionController() : nullptr;
 		if (!controller) {
 			return;
 		}
 		controller->show(Ui::MakeConfirmBox({
-			.text = tr::lng_extera_safe_mode_auto(),
+			.text = (hang
+				? tr::lng_exd_safe_mode_hang()
+				: tr::lng_extera_safe_mode_auto()),
 			.confirmed = [=](Fn<void()> close) {
 				close();
 				UrlClickHandler::Open(u"tg://settings/extera/plugins"_q);
@@ -137,6 +168,38 @@ void ShowAutoSafeModeBox() {
 			.title = tr::lng_extera_safe_mode_title(),
 		}));
 	});
+}
+
+void EnterAutoSafeMode(bool hang) {
+	if (Extera::Bool(u"plugins_safe_mode"_q)
+		|| Extera::Bool(u"plugins_no_auto_safe"_q)) {
+		return;
+	}
+	Extera::Config::Instance().setBool(u"plugins_safe_mode"_q, true);
+	Extera::Config::Instance().saveNow();
+	ShowAutoSafeModeBox(hang);
+}
+
+void StartWatchdog() {
+	if (WatchdogRunning.exchange(true)) {
+		return;
+	}
+	const auto path = HangMarkerPath();
+	std::thread([path] {
+		while (WatchdogRunning.load()) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(500));
+			const auto started = CallStarted.load();
+			if (started
+				&& !HangReported.load()
+				&& (crl::now() - started) > kHangTimeout) {
+				HangReported = true;
+				auto marker = QFile(path);
+				if (marker.open(QIODevice::WriteOnly)) {
+					marker.write("1");
+				}
+			}
+		}
+	}).detach();
 }
 
 [[nodiscard]] QString FromPy(PyObject *object) {
@@ -184,42 +247,88 @@ void ShowToast(const QString &text) {
 	return nullptr;
 }
 
-[[nodiscard]] EntitiesInText ParseEntities(const QString &json) {
+[[nodiscard]] EntityType TypeFromKind(
+		const QString &kind,
+		bool collapsed) {
+	if (kind == u"bold"_q) {
+		return EntityType::Bold;
+	} else if (kind == u"italic"_q) {
+		return EntityType::Italic;
+	} else if (kind == u"underline"_q) {
+		return EntityType::Underline;
+	} else if (kind == u"strike"_q || kind == u"strikethrough"_q) {
+		return EntityType::StrikeOut;
+	} else if (kind == u"code"_q) {
+		return EntityType::Code;
+	} else if (kind == u"pre"_q) {
+		return EntityType::Pre;
+	} else if (kind == u"blockquote"_q || kind == u"blockquote_collapsed"_q) {
+		return EntityType::Blockquote;
+	} else if (kind == u"spoiler"_q) {
+		return EntityType::Spoiler;
+	} else if (kind == u"url"_q || kind == u"text_link"_q) {
+		return EntityType::CustomUrl;
+	} else if (kind == u"custom_emoji"_q) {
+		return EntityType::CustomEmoji;
+	}
+	return EntityType::Invalid;
+}
+
+[[nodiscard]] EntitiesInText EntitiesFromJsonArray(const QJsonArray &array) {
 	auto result = EntitiesInText();
-	const auto array = QJsonDocument::fromJson(json.toUtf8()).array();
 	for (const auto &value : array) {
-		const auto entry = value.toArray();
-		if (entry.size() < 3) {
-			continue;
+		auto type = EntityType::Invalid;
+		auto offset = 0;
+		auto length = 0;
+		auto data = QString();
+		const auto entry = value.toObject();
+		if (!entry.isEmpty()) {
+			type = TypeFromKind(
+				entry.value(u"type"_q).toString(),
+				entry.value(u"collapsed"_q).toBool());
+			offset = entry.value(u"offset"_q).toInt();
+			length = entry.value(u"length"_q).toInt();
+			const auto document = entry.value(u"document_id"_q);
+			if (entry.contains(u"url"_q)) {
+				data = entry.value(u"url"_q).toString();
+			} else if (entry.contains(u"language"_q)) {
+				data = entry.value(u"language"_q).toString();
+			} else if (document.isString()) {
+				data = document.toString();
+			} else if (!document.isUndefined()) {
+				data = QString::number(double(document.toDouble()), 'f', 0);
+			}
+			if (type == EntityType::Blockquote
+				&& entry.value(u"collapsed"_q).toBool()) {
+				data = u"1"_q;
+			}
+		} else {
+			const auto legacy = value.toArray();
+			if (legacy.size() < 3) {
+				continue;
+			}
+			const auto legacyKind = legacy[0].toString();
+			type = TypeFromKind(
+				legacyKind,
+				legacyKind == u"blockquote_collapsed"_q);
+			offset = legacy[1].toInt();
+			length = legacy[2].toInt();
+			data = legacy.size() > 3 ? legacy[3].toString() : QString();
+			if (type == EntityType::Blockquote
+				&& legacyKind == u"blockquote_collapsed"_q) {
+				data = u"1"_q;
+			}
 		}
-		const auto kind = entry[0].toString();
-		const auto offset = entry[1].toInt();
-		const auto length = entry[2].toInt();
-		const auto data = (entry.size() > 3) ? entry[3].toString() : QString();
-		const auto type = (kind == u"bold"_q)
-			? EntityType::Bold
-			: (kind == u"italic"_q)
-			? EntityType::Italic
-			: (kind == u"underline"_q)
-			? EntityType::Underline
-			: (kind == u"strike"_q)
-			? EntityType::StrikeOut
-			: (kind == u"code"_q)
-			? EntityType::Code
-			: (kind == u"pre"_q)
-			? EntityType::Pre
-			: (kind == u"blockquote"_q || kind == u"blockquote_collapsed"_q)
-			? EntityType::Blockquote
-			: (kind == u"spoiler"_q)
-			? EntityType::Spoiler
-			: (kind == u"url"_q)
-			? EntityType::CustomUrl
-			: EntityType::Invalid;
 		if (type != EntityType::Invalid && length > 0) {
 			result.push_back({ type, offset, length, data });
 		}
 	}
 	return result;
+}
+
+[[nodiscard]] EntitiesInText ParseEntities(const QString &json) {
+	return EntitiesFromJsonArray(
+		QJsonDocument::fromJson(json.toUtf8()).array());
 }
 
 void SendFromPlugin(
@@ -426,6 +535,373 @@ PyObject *NativeCurrentPeer(PyObject *self, PyObject *args) {
 	return PyLong_FromLongLong(CurrentDialog.load());
 }
 
+PyObject *NativeSelfId(PyObject *self, PyObject *args) {
+	if (const auto controller = ActiveController()) {
+		return PyLong_FromLongLong(
+			int64(controller->session().userId().bare));
+	}
+	return PyLong_FromLongLong(0);
+}
+
+PyObject *NativeGetSelectedAccount(PyObject *self, PyObject *args) {
+	return PyLong_FromLongLong(0);
+}
+
+PyObject *NativePeerInfo(PyObject *self, PyObject *args) {
+	long long dialog = 0;
+	if (!PyArg_ParseTuple(args, "L", &dialog)) {
+		return nullptr;
+	}
+	const auto controller = ActiveController();
+	const auto peer = controller ? ResolveDialog(&controller->session(), dialog) : nullptr;
+	if (!peer) {
+		return Py_BuildValue("s", "{}");
+	}
+	auto info = QJsonObject{
+		{ u"id"_q, double(dialog) },
+		{ u"dialog_id"_q, double(dialog) },
+		{ u"type"_q, peer->isUser()
+			? u"user"_q
+			: peer->isChat() ? u"chat"_q : u"channel"_q },
+		{ u"name"_q, peer->name() },
+		{ u"username"_q, peer->username() },
+	};
+	if (const auto user = peer->asUser()) {
+		info.insert(u"phone"_q, user->phone());
+		info.insert(u"bot"_q, user->isBot());
+		info.insert(u"bare_id"_q, QString::number(peerToUser(peer->id).bare));
+		info.insert(u"access_hash"_q, QString::number(user->accessHash()));
+		info.insert(u"self"_q, user->isSelf());
+	} else if (const auto channel = peer->asChannel()) {
+		info.insert(u"bare_id"_q, QString::number(peerToChannel(peer->id).bare));
+		info.insert(u"access_hash"_q, QString::number(channel->accessHash()));
+		info.insert(u"megagroup"_q, channel->isMegagroup());
+	} else if (const auto chat = peer->asChat()) {
+		info.insert(u"bare_id"_q, QString::number(peerToChat(peer->id).bare));
+	}
+	return Py_BuildValue("s",
+		QJsonDocument(info).toJson(QJsonDocument::Compact).constData());
+}
+
+PyObject *NativeGetHistory(PyObject *self, PyObject *args) {
+	long long dialog = 0;
+	int limit = 20;
+	if (!PyArg_ParseTuple(args, "L|i", &dialog, &limit)) {
+		return nullptr;
+	}
+	limit = std::clamp(limit, 1, 500);
+	auto &state = Instance();
+	auto array = QJsonArray();
+	for (auto it = state.recent.rbegin()
+		; it != state.recent.rend() && array.size() < limit
+		; ++it) {
+		if (int64(it->value(u"dialog_id"_q).toDouble()) == dialog) {
+			array.append(*it);
+		}
+	}
+	return Py_BuildValue("s",
+		QJsonDocument(array).toJson(QJsonDocument::Compact).constData());
+}
+
+PyObject *NativeSendMedia(PyObject *self, PyObject *args) {
+	long long dialog = 0;
+	const char *kind = nullptr;
+	const char *path = nullptr;
+	const char *caption = nullptr;
+	const char *entities = nullptr;
+	long long reply = 0;
+	int highQuality = 0;
+	if (!PyArg_ParseTuple(args, "LssssLp",
+			&dialog, &kind, &path, &caption, &entities, &reply, &highQuality)) {
+		return nullptr;
+	}
+	const auto kindValue = QString::fromUtf8(kind);
+	const auto pathValue = QString::fromUtf8(path);
+	const auto captionValue = QString::fromUtf8(caption);
+	const auto entitiesValue = QString::fromUtf8(entities);
+	crl::on_main([=] {
+		const auto controller = ActiveController();
+		if (!controller) {
+			return;
+		}
+		const auto session = &controller->session();
+		const auto peer = ResolveDialog(session, dialog);
+		if (!peer) {
+			ShowToast(tr::lng_extera_plugins_no_chat(tr::now));
+			return;
+		}
+		auto file = Ui::PreparedFile(pathValue);
+		file.caption = TextWithTags{
+			captionValue,
+			TextUtilities::ConvertEntitiesToTextTags(ParseEntities(entitiesValue)),
+		};
+		crl::async([=, file = std::move(file)]() mutable {
+			Storage::PrepareDetails(file, 320, PhotoSideLimit());
+			crl::on_main([=, file = std::move(file)]() mutable {
+				const auto controller = ActiveController();
+				if (!controller) {
+					return;
+				}
+				const auto session = &controller->session();
+				const auto peer = ResolveDialog(session, dialog);
+				if (!peer) {
+					return;
+				}
+				auto list = Ui::PreparedList();
+				list.files.push_back(std::move(file));
+				auto action = Api::SendAction(session->data().history(peer));
+				if (reply > 0) {
+					action.replyTo.messageId = FullMsgId(peer->id, MsgId(reply));
+				}
+				const auto photo = kindValue == u"photo"_q && !highQuality;
+				BypassFlag = true;
+				session->api().sendFiles(
+					std::move(list),
+					photo ? SendMediaType::Photo : SendMediaType::File,
+					nullptr,
+					action);
+				BypassFlag = false;
+			});
+		});
+	});
+	return Py_BuildValue("");
+}
+
+PyObject *NativeEditMessage(PyObject *self, PyObject *args) {
+	long long dialog = 0;
+	long long msgId = 0;
+	const char *text = nullptr;
+	const char *entities = nullptr;
+	if (!PyArg_ParseTuple(args, "LLss", &dialog, &msgId, &text, &entities)) {
+		return nullptr;
+	}
+	const auto textValue = QString::fromUtf8(text);
+	const auto entitiesValue = QString::fromUtf8(entities);
+	crl::on_main([=] {
+		const auto controller = ActiveController();
+		if (!controller) {
+			return;
+		}
+		const auto session = &controller->session();
+		const auto peer = ResolveDialog(session, dialog);
+		if (!peer) {
+			return;
+		}
+		const auto item = session->data().message(FullMsgId(peer->id, MsgId(msgId)));
+		if (!item) {
+			ShowToast(u"Message not found"_q);
+			return;
+		}
+		Api::EditTextMessage(
+			item,
+			TextWithEntities{ textValue, ParseEntities(entitiesValue) },
+			{},
+			{},
+			nullptr,
+			nullptr,
+			false);
+	});
+	return Py_BuildValue("");
+}
+
+class RawRequestBare {
+public:
+	RawRequestBare() = default;
+	explicit RawRequestBare(QVector<mtpPrime> data) : _data(std::move(data)) {
+	}
+
+	[[nodiscard]] uint32 type() const {
+		return _data.isEmpty() ? 0 : uint32(_data[0]);
+	}
+
+	template <typename Accumulator>
+	void write(Accumulator &to) const {
+		for (auto i = 1; i < _data.size(); ++i) {
+			tl::Writer<Accumulator>::Put(to, uint32(_data[i]));
+		}
+	}
+
+	template <typename Prime>
+	[[nodiscard]] bool read(
+			const Prime *&from,
+			const Prime *end,
+			uint32 cons = 0) {
+		_data.clear();
+		_data.push_back(mtpPrime(cons));
+		while (from < end) {
+			_data.push_back(mtpPrime(*from++));
+		}
+		return true;
+	}
+
+	[[nodiscard]] QByteArray bytes() const {
+		return QByteArray(
+			reinterpret_cast<const char*>(_data.constData()),
+			_data.size() * sizeof(mtpPrime));
+	}
+
+	using ResponseType = tl::boxed<RawRequestBare>;
+
+private:
+	QVector<mtpPrime> _data;
+
+};
+
+using RawRequest = tl::boxed<RawRequestBare>;
+
+PyObject *NativeSendRawRequest(PyObject *self, PyObject *args) {
+	const char *encoded = nullptr;
+	const char *callbackId = nullptr;
+	if (!PyArg_ParseTuple(args, "ss", &encoded, &callbackId)) {
+		return nullptr;
+	}
+	const auto bytes = QByteArray::fromBase64(QByteArray(encoded));
+	const auto callback = QString::fromUtf8(callbackId);
+	const auto controller = ActiveController();
+	if (!controller || bytes.size() < 4 || (bytes.size() % 4) != 0) {
+		return PyLong_FromLongLong(0);
+	}
+	auto primes = QVector<mtpPrime>(bytes.size() / 4);
+	memcpy(primes.data(), bytes.constData(), bytes.size());
+	const auto session = &controller->session();
+	const auto id = session->api().request(
+		RawRequest(RawRequestBare(std::move(primes)))
+	).done([=](const RawRequest &result) {
+		Call(u"request_callback"_q, QJsonObject{
+			{ u"id"_q, callback },
+			{ u"raw"_q, QString::fromLatin1(result.bytes().toBase64()) },
+		});
+	}).fail([=](const MTP::Error &error) {
+		Call(u"request_callback"_q, QJsonObject{
+			{ u"id"_q, callback },
+			{ u"error"_q, error.type() },
+			{ u"code"_q, error.code() },
+		});
+	}).send();
+	return PyLong_FromLongLong(id);
+}
+
+PyObject *NativeSendRequest(PyObject *self, PyObject *args) {
+	const char *requestJson = nullptr;
+	const char *callbackId = nullptr;
+	if (!PyArg_ParseTuple(args, "ss", &requestJson, &callbackId)) {
+		return nullptr;
+	}
+	const auto payload = QJsonDocument::fromJson(
+		QString::fromUtf8(requestJson).toUtf8()).object();
+	const auto name = payload.value(u"request"_q).toString();
+	const auto params = payload.value(u"params"_q).toObject();
+	const auto callback = QString::fromUtf8(callbackId);
+	const auto finish = [=](const QJsonObject &response, const QString &error) {
+		Call(u"request_callback"_q, QJsonObject{
+			{ u"id"_q, callback },
+			{ u"response"_q, response },
+			{ u"error"_q, error },
+		});
+	};
+	const auto controller = ActiveController();
+	if (!controller || name.isEmpty()) {
+		return PyLong_FromLongLong(0);
+	}
+	const auto session = &controller->session();
+	if (name == u"messages_setTyping"_q || name == u"setTyping"_q) {
+		const auto peer = ResolveDialog(
+			session,
+			int64(params.value(u"peer"_q).toDouble()));
+		if (!peer) {
+			finish({}, u"peer not found"_q);
+			return PyLong_FromLongLong(0);
+		}
+		const auto id = session->api().request(MTPmessages_SetTyping(
+			MTP_flags(MTPmessages_SetTyping::Flag(0)),
+			peer->input(),
+			MTP_int(0),
+			MTP_sendMessageTypingAction()
+		)).done([=](const MTPBool &result) {
+			finish({}, QString());
+		}).fail([=](const MTP::Error &error) {
+			finish({}, error.type());
+		}).send();
+		return PyLong_FromLongLong(id);
+	}
+	if (name == u"account_updateStatus"_q || name == u"updateStatus"_q) {
+		const auto offline = params.value(u"offline"_q).toBool();
+		const auto id = session->api().request(MTPaccount_UpdateStatus(
+			MTP_bool(offline)
+		)).done([=](const MTPBool &result) {
+			finish({}, QString());
+		}).fail([=](const MTP::Error &error) {
+			finish({}, error.type());
+		}).send();
+		return PyLong_FromLongLong(id);
+	}
+	LOG(("Plugins: send_request: unknown request %1").arg(name));
+	return PyLong_FromLongLong(0);
+}
+
+PyObject *NativeViewsShowSheet(PyObject *self, PyObject *args) {
+	const char *payload = nullptr;
+	if (!PyArg_ParseTuple(args, "s", &payload)) {
+		return nullptr;
+	}
+	Extera::Views::ShowSheet(QString::fromUtf8(payload));
+	return Py_BuildValue("");
+}
+
+PyObject *NativeViewsUpdate(PyObject *self, PyObject *args) {
+	const char *payload = nullptr;
+	if (!PyArg_ParseTuple(args, "s", &payload)) {
+		return nullptr;
+	}
+	Extera::Views::Update(QString::fromUtf8(payload));
+	return Py_BuildValue("");
+}
+
+PyObject *NativeViewsDismissSheet(PyObject *self, PyObject *args) {
+	long long sheetId = 0;
+	if (!PyArg_ParseTuple(args, "L", &sheetId)) {
+		return nullptr;
+	}
+	Extera::Views::DismissSheet(sheetId);
+	return Py_BuildValue("");
+}
+
+PyObject *NativeViewsRenderCanvas(PyObject *self, PyObject *args) {
+	long long canvasId = 0;
+	int width = 0;
+	int height = 0;
+	const char *ops = nullptr;
+	if (!PyArg_ParseTuple(args, "Liis", &canvasId, &width, &height, &ops)) {
+		return nullptr;
+	}
+	Extera::Views::RenderCanvas(
+		canvasId, width, height, QString::fromUtf8(ops));
+	return Py_BuildValue("");
+}
+
+PyObject *NativeMeasureText(PyObject *self, PyObject *args) {
+	const char *text = nullptr;
+	int size = 16;
+	int bold = 0;
+	if (!PyArg_ParseTuple(args, "sii", &text, &size, &bold)) {
+		return nullptr;
+	}
+	return PyFloat_FromDouble(Extera::Views::MeasureText(
+		QString::fromUtf8(text), size, bool(bold)));
+}
+
+PyObject *NativeUiMetrics(PyObject *self, PyObject *args) {
+	return Py_BuildValue("s", Extera::Views::UiMetrics().toUtf8().constData());
+}
+
+PyObject *NativeThemeColor(PyObject *self, PyObject *args) {
+	const char *name = nullptr;
+	if (!PyArg_ParseTuple(args, "s", &name)) {
+		return nullptr;
+	}
+	return PyLong_FromLongLong(Extera::Views::ThemeColor(QString::fromUtf8(name)));
+}
+
 PyMethodDef NativeMethods[] = {
 	{ "log", NativeLog, METH_VARARGS, nullptr },
 	{ "toast", NativeToast, METH_VARARGS, nullptr },
@@ -436,6 +912,21 @@ PyMethodDef NativeMethods[] = {
 	{ "show_alert", NativeShowAlert, METH_VARARGS, nullptr },
 	{ "settings_changed", NativeSettingsChanged, METH_VARARGS, nullptr },
 	{ "current_peer", NativeCurrentPeer, METH_VARARGS, nullptr },
+	{ "get_selected_account", NativeGetSelectedAccount, METH_VARARGS, nullptr },
+	{ "self_id", NativeSelfId, METH_VARARGS, nullptr },
+	{ "peer_info", NativePeerInfo, METH_VARARGS, nullptr },
+	{ "get_history", NativeGetHistory, METH_VARARGS, nullptr },
+	{ "send_media", NativeSendMedia, METH_VARARGS, nullptr },
+	{ "edit_message", NativeEditMessage, METH_VARARGS, nullptr },
+	{ "send_request", NativeSendRequest, METH_VARARGS, nullptr },
+	{ "send_raw_request", NativeSendRawRequest, METH_VARARGS, nullptr },
+	{ "views_show_sheet", NativeViewsShowSheet, METH_VARARGS, nullptr },
+	{ "views_update", NativeViewsUpdate, METH_VARARGS, nullptr },
+	{ "views_dismiss_sheet", NativeViewsDismissSheet, METH_VARARGS, nullptr },
+	{ "views_render_canvas", NativeViewsRenderCanvas, METH_VARARGS, nullptr },
+	{ "measure_text", NativeMeasureText, METH_VARARGS, nullptr },
+	{ "ui_metrics", NativeUiMetrics, METH_VARARGS, nullptr },
+	{ "theme_color", NativeThemeColor, METH_VARARGS, nullptr },
 	{ nullptr, nullptr, 0, nullptr },
 };
 
@@ -556,6 +1047,31 @@ QString RuntimeError() {
 	return Instance().error;
 }
 
+void VerifyInstalledPlugins() {
+	const auto controller = ActiveController();
+	if (!controller) {
+		return;
+	}
+	const auto session = &controller->session();
+	for (const auto &entry : Call(u"list"_q, QJsonObject()).toArray()) {
+		const auto info = entry.toObject();
+		if (info.value(u"trusted"_q).toBool()) {
+			continue;
+		}
+		const auto path = info.value(u"path"_q).toString();
+		Extera::PluginTrust::Verify(session, path, [=](bool ok) {
+			if (!ok) {
+				return;
+			}
+			Call(u"trust"_q, QJsonObject{ { u"path"_q, path } });
+			Call(u"unknown_sources"_q, QJsonObject{
+				{ u"enabled"_q, Extera::Bool(u"plugins_unknown_sources"_q) },
+			});
+			Instance().listChanges.fire({});
+		});
+	}
+}
+
 void Start() {
 	auto &state = Instance();
 	if (state.started || !Extera::Bool(u"plugins_enabled"_q)) {
@@ -596,6 +1112,10 @@ void Start() {
 		return;
 	}
 	QDir().mkpath(DataPath() + u"plugins"_q);
+	if (QFile::exists(HangMarkerPath())) {
+		QFile::remove(HangMarkerPath());
+		EnterAutoSafeMode(true);
+	}
 	if (QFile::exists(StartMarkerPath())
 		&& !Extera::Bool(u"plugins_safe_mode"_q)
 		&& !Extera::Bool(u"plugins_no_auto_safe"_q)) {
@@ -616,6 +1136,27 @@ void Start() {
 		{ u"plugins"_q, DataPath() + u"plugins"_q },
 		{ u"settings"_q, DataPath() + u"settings"_q },
 		{ u"safe_mode"_q, Extera::Bool(u"plugins_safe_mode"_q) },
+		{ u"unknown_sources"_q, Extera::Bool(u"plugins_unknown_sources"_q) },
+	});
+	Call(u"event"_q, QJsonObject{
+		{ u"type"_q, u"app"_q },
+		{ u"name"_q, u"app_start"_q },
+	});
+	Extera::Config::Instance().boolChanges(
+		u"plugins_safe_mode"_q
+	) | rpl::on_next([](bool enabled) {
+		Call(u"safe_mode"_q, QJsonObject{ { u"enabled"_q, enabled } });
+		Instance().listChanges.fire({});
+	}, state.lifetime);
+	Extera::Config::Instance().boolChanges(
+		u"plugins_unknown_sources"_q
+	) | rpl::on_next([](bool enabled) {
+		Call(u"unknown_sources"_q, QJsonObject{ { u"enabled"_q, enabled } });
+		Instance().listChanges.fire({});
+	}, state.lifetime);
+	StartWatchdog();
+	base::call_delayed(15000, [] {
+		VerifyInstalledPlugins();
 	});
 	state.listChanges.fire({});
 }
@@ -625,7 +1166,12 @@ void Shutdown() {
 	if (!state.started) {
 		return;
 	}
+	Call(u"event"_q, QJsonObject{
+		{ u"type"_q, u"app"_q },
+		{ u"name"_q, u"app_stop"_q },
+	});
 	Call(u"shutdown"_q);
+	WatchdogRunning = false;
 	state.started = false;
 	QFile::remove(StartMarkerPath());
 }
@@ -637,6 +1183,10 @@ QJsonValue Call(const QString &method, const QJsonObject &args) {
 	}
 	const auto payload = QJsonDocument(args).toJson(QJsonDocument::Compact);
 	auto response = QString();
+	const auto outer = (CallStarted.load() == 0);
+	if (outer) {
+		CallStarted = crl::now();
+	}
 	{
 		auto gil = Gil();
 		const auto result = PyObject_CallFunction(
@@ -644,12 +1194,23 @@ QJsonValue Call(const QString &method, const QJsonObject &args) {
 			"ss",
 			method.toUtf8().constData(),
 			payload.constData());
-		if (!result) {
+		if (result) {
+			response = FromPy(result);
+			Py_DECREF(result);
+		} else {
 			PyErr_Print();
-			return QJsonValue();
 		}
-		response = FromPy(result);
-		Py_DECREF(result);
+	}
+	if (outer) {
+		CallStarted = 0;
+		if (HangReported.exchange(false)) {
+			QFile::remove(HangMarkerPath());
+			LOG(("Plugins Error: %1 blocked the interface").arg(method));
+			EnterAutoSafeMode(true);
+		}
+	}
+	if (response.isEmpty()) {
+		return QJsonValue();
 	}
 	const auto object = QJsonDocument::fromJson(response.toUtf8()).object();
 	if (!object.value(u"ok"_q).toBool()) {
@@ -682,13 +1243,7 @@ bool IsTrustedSource(not_null<PeerData*> peer) {
 		return false;
 	}
 	const auto bare = uint64(peerToChannel(channel->id).bare);
-	static const auto trusted = std::array<uint64, 4>{
-		2562664432ULL,
-		2661845134ULL,
-		4433892778ULL,
-		4478798161ULL,
-	};
-	return ranges::contains(trusted, bare);
+	return ranges::contains(Extera::PluginTrust::TrustedChannels(), bare);
 }
 
 SendResult OnSendMessage(
@@ -712,6 +1267,8 @@ SendResult OnSendMessage(
 		return {
 			SendStrategy::Modify,
 			result.value(u"text"_q).toString(),
+			EntitiesFromJsonArray(result.value(u"entities"_q).toArray()),
+			result.value(u"quote"_q).toBool(),
 		};
 	}
 	return {};
@@ -769,6 +1326,79 @@ int ExportAll(const QString &folder) {
 		}
 	}
 	return count;
+}
+
+[[nodiscard]] QJsonObject MessageToJson(not_null<HistoryItem*> item) {
+	const auto peer = item->history()->peer;
+	const auto from = item->from();
+	return QJsonObject{
+		{ u"id"_q, double(item->id.bare) },
+		{ u"dialog_id"_q, double(DialogId(peer)) },
+		{ u"out"_q, item->out() },
+		{ u"date"_q, double(item->date()) },
+		{ u"sender_id"_q, double(from ? DialogId(from) : 0) },
+		{ u"text"_q, item->originalText().text },
+	};
+}
+
+void NotifyNewMessage(not_null<HistoryItem*> item) {
+	auto &state = Instance();
+	if (!state.started || state.eventInFlight) {
+		return;
+	}
+	const auto json = MessageToJson(item);
+	state.recent.push_back(json);
+	while (state.recent.size() > 500) {
+		state.recent.pop_front();
+	}
+	state.eventInFlight = true;
+	Call(u"event"_q, QJsonObject{
+		{ u"type"_q, u"update"_q },
+		{ u"name"_q, u"updateNewMessage"_q },
+		{ u"account"_q, 0 },
+		{ u"update"_q, json },
+	});
+	state.eventInFlight = false;
+}
+
+void NotifyAppEvent(const QString &name) {
+	auto &state = Instance();
+	if (!state.started || state.eventInFlight) {
+		return;
+	}
+	state.eventInFlight = true;
+	Call(u"event"_q, QJsonObject{
+		{ u"type"_q, u"app"_q },
+		{ u"name"_q, name },
+	});
+	state.eventInFlight = false;
+}
+
+bool InterceptLocalUrl(const QString &url) {
+	auto &state = Instance();
+	if (!state.started || state.intentInFlight) {
+		return false;
+	}
+	const auto parsed = QUrl(url);
+	auto query = QJsonObject();
+	const auto items = QUrlQuery(parsed).queryItems();
+	for (const auto &[key, value] : items) {
+		query.insert(key, value);
+	}
+	state.intentInFlight = true;
+	const auto blocked = Call(u"event"_q, QJsonObject{
+		{ u"type"_q, u"intent"_q },
+		{ u"before"_q, true },
+		{ u"context"_q, QJsonObject{
+			{ u"url"_q, url },
+			{ u"scheme"_q, parsed.scheme() },
+			{ u"host"_q, parsed.host() },
+			{ u"path"_q, parsed.path() },
+			{ u"query_args"_q, query },
+		} },
+	}).toBool();
+	state.intentInFlight = false;
+	return blocked;
 }
 
 } // namespace Extera::Plugins

@@ -22,6 +22,13 @@ void ShowPluginSettings(
 	not_null<Window::SessionController*> controller,
 	const QString &id);
 
+void PaintPuzzle(QPainter &p, QRectF rect, QColor color);
+void ShowSourceBox(
+	not_null<Window::SessionController*> controller,
+	const QString &path);
+void ShowUnknownSourcesWarning(
+	not_null<Window::SessionController*> controller,
+	Fn<void(bool)> done);
 void ShowInstallBox(
 	not_null<Window::SessionController*> controller,
 	const QString &path,

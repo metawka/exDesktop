@@ -29,6 +29,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
+constexpr auto kResolverBotId = 7424190611ULL;
+const auto kResolverBot = u"tgdb_search_bot"_q;
+
 [[nodiscard]] QString Trim(QString text) {
 	return text
 		.replace('+', QString())
@@ -42,7 +45,8 @@ public:
 		not_null<Ui::Menu::Menu*> parent,
 		const style::PopupMenu &st,
 		const QString &phone,
-		not_null<Window::SessionController*> controller);
+		not_null<Window::SessionController*> controller,
+		bool byId = false);
 
 	bool isEnabled() const override;
 	not_null<QAction*> action() const override;
@@ -61,9 +65,15 @@ protected:
 private:
 	void prepare();
 	void paint(Painter &p);
+	void resolveById(const QString &id);
+	void queryBot(not_null<UserData*> bot, const QString &id);
+	void resolveUsername(const QString &username, uint64 bare);
+	void finish(PeerData *peer);
 
 	const not_null<QAction*> _dummyAction;
 	const style::Menu &_st;
+	const not_null<Data::Session*> _owner;
+	const bool _byId = false;
 	rpl::variable<PeerData*> _peer;
 	rpl::variable<bool> _loaded;
 	Ui::PeerUserpicView _userpicView;
@@ -82,10 +92,13 @@ ResolvePhoneAction::ResolvePhoneAction(
 	not_null<Ui::Menu::Menu*> parent,
 	const style::PopupMenu &st,
 	const QString &phone,
-	not_null<Window::SessionController*> controller)
+	not_null<Window::SessionController*> controller,
+	bool byId)
 : ItemBase(parent, st.menu)
 , _dummyAction(Ui::CreateChild<QAction>(parent))
 , _st(st.menu)
+, _owner(&controller->session().data())
+, _byId(byId)
 , _api(&controller->session().mtp())
 , _height(rect::m::sum::v(st::groupCallJoinAsPadding)
 	+ st::groupCallJoinAsPhotoSize) {
@@ -101,7 +114,9 @@ ResolvePhoneAction::ResolvePhoneAction(
 
 	const auto owner = &controller->session().data();
 
-	if (const auto peer = owner->userByPhone(formattedPhone)) {
+	if (_byId) {
+		resolveById(phone.trimmed());
+	} else if (const auto peer = owner->userByPhone(formattedPhone)) {
 		_peer = peer;
 		_loaded.force_assign(true);
 	} else {
@@ -132,6 +147,119 @@ ResolvePhoneAction::ResolvePhoneAction(
 
 	enableMouseSelecting();
 	prepare();
+}
+
+void ResolvePhoneAction::finish(PeerData *peer) {
+	_peer.force_assign(peer);
+	_loaded.force_assign(true);
+}
+
+void ResolvePhoneAction::resolveById(const QString &id) {
+	const auto bare = id.toULongLong();
+	const auto ids = {
+		peerFromUser(UserId(bare)),
+		peerFromChannel(ChannelId(bare)),
+		peerFromChat(ChatId(bare)),
+	};
+	for (const auto peerId : ids) {
+		if (const auto peer = _owner->peerLoaded(peerId)) {
+			finish(peer);
+			return;
+		}
+	}
+	if (const auto bot = _owner->userLoaded(UserId(kResolverBotId))) {
+		queryBot(bot, id);
+		return;
+	}
+	_api.request(MTPcontacts_ResolveUsername(
+		MTP_flags(0),
+		MTP_string(kResolverBot),
+		MTP_string()
+	)).done([=](const MTPcontacts_ResolvedPeer &result) {
+		result.match([&](const MTPDcontacts_resolvedPeer &data) {
+			_owner->processUsers(data.vusers());
+			_owner->processChats(data.vchats());
+		});
+		if (const auto bot = _owner->userLoaded(UserId(kResolverBotId))) {
+			queryBot(bot, id);
+		} else {
+			finish(nullptr);
+		}
+	}).fail([=] {
+		finish(nullptr);
+	}).send();
+}
+
+void ResolvePhoneAction::queryBot(
+		not_null<UserData*> bot,
+		const QString &id) {
+	const auto bare = id.toULongLong();
+	_api.request(MTPmessages_GetInlineBotResults(
+		MTP_flags(0),
+		bot->inputUser(),
+		MTP_inputPeerEmpty(),
+		MTPInputGeoPoint(),
+		MTP_string(id),
+		MTP_string()
+	)).done([=](const MTPmessages_BotResults &result) {
+		const auto &data = result.data();
+		_owner->processUsers(data.vusers());
+		const auto idMark = QString::fromUtf8("\xF0\x9F\x86\x94");
+		const auto userMark = QString::fromUtf8("\xF0\x9F\x93\xA7");
+		for (const auto &entry : data.vresults().v) {
+			const auto &message = entry.match([](const auto &data)
+					-> const MTPBotInlineMessage& {
+				return data.vsend_message();
+			});
+			const auto text = message.match([](
+					const MTPDbotInlineMessageText &data) {
+				return qs(data.vmessage());
+			}, [](const auto &) {
+				return QString();
+			});
+			auto found = QString();
+			auto username = QString();
+			for (const auto &line : text.split('\n')) {
+				const auto value = line.mid(line.indexOf(':') + 1).trimmed();
+				if (line.startsWith(idMark)) {
+					found = value.startsWith(u"-100"_q)
+						? value.mid(4)
+						: value.startsWith('-')
+						? value.mid(1)
+						: value;
+				} else if (line.startsWith(userMark)) {
+					username = value.startsWith('@') ? value.mid(1) : value;
+				}
+			}
+			if (found.toULongLong() == bare && !username.isEmpty()) {
+				resolveUsername(username, bare);
+				return;
+			}
+		}
+		finish(nullptr);
+	}).fail([=] {
+		finish(nullptr);
+	}).send();
+}
+
+void ResolvePhoneAction::resolveUsername(
+		const QString &username,
+		uint64 bare) {
+	_api.request(MTPcontacts_ResolveUsername(
+		MTP_flags(0),
+		MTP_string(username),
+		MTP_string()
+	)).done([=](const MTPcontacts_ResolvedPeer &result) {
+		auto peer = (PeerData*)nullptr;
+		result.match([&](const MTPDcontacts_resolvedPeer &data) {
+			_owner->processUsers(data.vusers());
+			_owner->processChats(data.vchats());
+			peer = _owner->peerLoaded(peerFromMTP(data.vpeer()));
+		});
+		finish((peer && (peer->id.value & PeerId::kChatTypeMask) == bare) ? peer : nullptr);
+	}).fail([=] {
+		finish(nullptr);
+	}).send();
 }
 
 QString ResolvePhoneAction::firstName() const {
@@ -199,14 +327,18 @@ void ResolvePhoneAction::paint(Painter &p) {
 
 void ResolvePhoneAction::prepare() {
 	rpl::combine(
-		tr::lng_context_view_profile(),
+		(_byId
+			? tr::lng_exd_open_profile_id()
+			: tr::lng_context_view_profile()),
 		_peer.value(
 		) | rpl::map([](PeerData *peer) {
 			return peer
 				? Info::Profile::NameValue(peer)
 				: rpl::single(QString());
 		}) | rpl::flatten_latest(),
-		tr::lng_menu_not_contact(),
+		(_byId
+			? tr::lng_exd_profile_id_not_found()
+			: tr::lng_menu_not_contact()),
 		_loaded.value(
 		) | rpl::map([](bool loaded) {
 			return loaded
@@ -326,6 +458,14 @@ void PhoneClickHandler::onClick(ClickContext context) const {
 	}();
 #endif
 
+	const auto idText = phone.trimmed();
+	auto idOk = false;
+	const auto bareId = idText.toULongLong(&idOk);
+	const auto byId = idOk
+		&& bareId
+		&& idText.size() >= 5
+		&& idText.size() <= 16;
+
 	menu->addAction(tr::lng_profile_copy_phone(tr::now), [=] {
 		TextUtilities::SetClipboardText(
 			TextForMimeData::Simple(phone.trimmed()));
@@ -353,6 +493,14 @@ void PhoneClickHandler::onClick(ClickContext context) const {
 
 	menu->addSeparator(&st::popupMenuExpandedSeparator.menu.separator);
 
+	if (byId) {
+		menu->addAction(base::make_unique_q<ResolvePhoneAction>(
+			menu->menu(),
+			menu->st(),
+			phone,
+			controller,
+			true));
+	}
 	menu->addAction(std::move(resolvePhoneAction));
 
 	menu->popup(pos);

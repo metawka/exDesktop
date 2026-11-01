@@ -1922,6 +1922,12 @@ PRIVATE
     settings/sections/settings_active_sessions.h
     extera/extera_app_icon.cpp
     extera/extera_app_icon.h
+    extera/extera_full_player.cpp
+    extera/extera_full_player.h
+    extera/extera_pdf_viewer.cpp
+    extera/extera_pdf_viewer.h
+    extera/extera_plugin_trust.cpp
+    extera/extera_plugin_trust.h
     extera/extera_round_video.cpp
     extera/extera_round_video.h
     extera/extera_ws_proxy.cpp
@@ -1937,6 +1943,8 @@ PRIVATE
     extera/extera_navigation.h
     extera/extera_streamer.cpp
     extera/extera_update.cpp
+    extera/extera_changelog.cpp
+    extera/extera_changelog.h
     extera/extera_cross_send.cpp
     extera/extera_cross_send.h
     extera/extera_update.h
@@ -1948,6 +1956,8 @@ PRIVATE
     extera/extera_plugins.h
     extera/extera_plugins_ui.cpp
     extera/extera_plugins_ui.h
+    extera/extera_views.cpp
+    extera/extera_views.h
     extera/extera_welcome.cpp
     extera/extera_welcome.h
     settings/sections/settings_extera.cpp

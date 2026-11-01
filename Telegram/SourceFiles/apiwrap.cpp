@@ -4773,7 +4773,18 @@ void ApiWrap::sendMessage(
 		if (hook.strategy == Extera::Plugins::SendStrategy::Cancel) {
 			return;
 		} else if (hook.strategy == Extera::Plugins::SendStrategy::Modify) {
-			message.textWithTags = TextWithTags{ hook.text };
+			message.textWithTags = TextWithTags{
+				hook.text,
+				TextUtilities::ConvertEntitiesToTextTags(hook.entities),
+			};
+			if (hook.quote
+				&& message.action.replyTo.messageId) {
+				const auto replied = message.action.history->owner().message(
+					message.action.replyTo.messageId);
+				if (replied) {
+					message.action.replyTo.quote = replied->originalText();
+				}
+			}
 		}
 	}
 	const auto history = message.action.history;

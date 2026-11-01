@@ -60,16 +60,8 @@ Changelogs::Changelogs(not_null<Main::Session*> session, int oldVersion)
 
 std::unique_ptr<Changelogs> Changelogs::Create(
 		not_null<Main::Session*> session) {
-	if (BuildIsCanary) {
-		// Canary changelogs live in the canary channels themselves.
-		return nullptr;
-	}
-	auto &local = Core::App().domain().local();
-	const auto oldVersion = local.oldVersion();
-	local.clearOldVersion();
-	return (oldVersion > 0 && oldVersion < AppVersion)
-		? std::make_unique<Changelogs>(session, oldVersion)
-		: nullptr;
+	Core::App().domain().local().clearOldVersion();
+	return nullptr;
 }
 
 void Changelogs::requestCloudLogs() {

@@ -13,6 +13,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_premium.h"
 #include "api/api_sending.h"
 #include "apiwrap.h"
+#include "api/api_common.h"
+#include "chat_helpers/stickers_emoji_pack.h"
+#include "ui/emoji_config.h"
 #include "base/random.h"
 #include "base/unixtime.h"
 #include "ui/effects/premium_stars.h"
@@ -281,11 +284,42 @@ auto GenerateChatIntro(
 		pushText({ description }, title.isEmpty()
 			? st::chatIntroTitleMargin
 			: st::chatIntroMargin);
-		if (!data.sticker && Extera::Bool(u"disable_greeting_sticker"_q)) {
-			return;
-		}
+		const auto wave = !data.sticker
+			&& Extera::Bool(u"disable_greeting_sticker"_q);
+		const auto waveText = QString::fromUtf8("\xF0\x9F\x91\x8B");
+		const auto session = &parent->history()->session();
+		const auto waveSticker = [=]() -> DocumentData* {
+			if (!wave) {
+				return nullptr;
+			}
+			const auto emoji = Ui::Emoji::Find(waveText);
+			return emoji
+				? session->emojiStickersPack().stickerForEmoji(
+					emoji).document
+				: nullptr;
+		};
 		const auto sticker = [=] {
 			using Tag = ChatHelpers::StickerLottieSize;
+			if (wave) {
+				const auto document = waveSticker();
+				if (!document) {
+					return StickerInBubblePart::Data();
+				}
+				const auto history = parent->history();
+				const auto send = [=] {
+					auto message = Api::MessageToSend(
+						Api::SendAction(history));
+					message.textWithTags = { waveText };
+					history->session().api().sendMessage(
+						std::move(message));
+				};
+				return StickerInBubblePart::Data{
+					.sticker = document,
+					.size = st::chatIntroStickerSize,
+					.cacheTag = Tag::ChatIntroHelloSticker,
+					.link = std::make_shared<LambdaClickHandler>(send),
+				};
+			}
 			auto sticker = data.sticker;
 			if (!sticker) {
 				const auto api = &parent->history()->session().api();

@@ -6,6 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/dialogs_widget.h"
+
+#include "ui/widgets/popup_menu.h"
+#include "styles/style_menu_icons.h"
 #include "extera/extera_update.h"
 
 #include "extera/extera_config.h"
@@ -113,6 +116,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Dialogs {
 namespace {
+
+[[nodiscard]] MTPMessagesFilter ExdMediaFilter(int value) {
+	switch (value) {
+	case 1: return MTP_inputMessagesFilterPhotos();
+	case 2: return MTP_inputMessagesFilterVideo();
+	case 3: return MTP_inputMessagesFilterDocument();
+	case 4: return MTP_inputMessagesFilterUrl();
+	case 5: return MTP_inputMessagesFilterMusic();
+	case 6: return MTP_inputMessagesFilterVoice();
+	case 7: return MTP_inputMessagesFilterGif();
+	}
+	return MTP_inputMessagesFilterEmpty();
+}
 
 constexpr auto kSearchPerPage = 50;
 constexpr auto kStoriesExpandDuration = crl::time(200);
@@ -416,6 +432,9 @@ Widget::Widget(
 , _chooseFromUser(
 	_searchControls,
 	object_ptr<Ui::IconButton>(this, st::dialogsSearchFrom))
+, _exdMediaFilter(
+	_searchControls,
+	object_ptr<Ui::IconButton>(this, st::exdDialogsSearchMedia))
 , _jumpToDate(
 	_searchControls,
 	object_ptr<Ui::IconButton>(this, st::dialogsCalendar))
@@ -702,6 +721,10 @@ Widget::Widget(
 	_jumpToDate->entity()->setAccessibleName(
 		tr::lng_sr_search_date(tr::now));
 	_chooseFromUser->entity()->setClickedCallback([=] { showSearchFrom(); });
+	_exdMediaFilter->entity()->setClickedCallback([=] {
+		exdShowMediaFilterMenu();
+	});
+	_exdMediaFilter->toggle(false, anim::type::instant);
 	_chooseFromUser->entity()->setAccessibleName(
 		tr::lng_search_messages_from(tr::now));
 	rpl::single(rpl::empty) | rpl::then(
@@ -3172,7 +3195,10 @@ bool Widget::search(bool inCache, SearchRequestDelay delay) {
 		.start = true,
 		.peer = (inPeer != nullptr),
 	};
-	if (trimmed.isEmpty() && !fromPeer && inTags.empty()) {
+	if (trimmed.isEmpty()
+		&& !fromPeer
+		&& inTags.empty()
+		&& !(inPeer && _exdMediaFilterValue)) {
 		cancelSearchRequest();
 
 		// Otherwise inside first searchApplyEmpty we call searchMode(),
@@ -3226,8 +3252,10 @@ bool Widget::search(bool inCache, SearchRequestDelay delay) {
 		|| _searchQueryTab != tab
 		|| _searchQueryCommunity != community
 		|| _searchQueryFilter != filter
-		|| _searchQueryFromArchive != fromArchive) {
+		|| _searchQueryFromArchive != fromArchive
+		|| _exdSearchQueryMediaFilter != _exdMediaFilterValue) {
 		const auto process = currentSearchProcess();
+		_exdSearchQueryMediaFilter = _exdMediaFilterValue;
 		_searchQuery = query;
 		_searchQueryFrom = fromPeer;
 		_searchQueryTags = inTags;
@@ -3275,7 +3303,7 @@ bool Widget::search(bool inCache, SearchRequestDelay delay) {
 								Data::ReactionToMTP
 							)),
 						MTP_int(topic ? topic->rootId() : 0),
-						MTP_inputMessagesFilterEmpty(),
+						ExdMediaFilter(_exdSearchQueryMediaFilter),
 						MTP_int(0), // min_date
 						MTP_int(0), // max_date
 						MTP_int(0), // offset_id
@@ -3489,7 +3517,7 @@ void Widget::searchMore() {
 								Data::ReactionToMTP
 							)),
 						MTP_int(topic ? topic->rootId() : 0),
-						MTP_inputMessagesFilterEmpty(),
+						ExdMediaFilter(_exdSearchQueryMediaFilter),
 						MTP_int(0), // min_date
 						MTP_int(0), // max_date
 						MTP_int(process->lastId),
@@ -3543,7 +3571,7 @@ void Widget::searchMore() {
 					MTPInputPeer(), // saved_peer_id
 					MTPVector<MTPReaction>(), // saved_reaction
 					MTPint(), // top_msg_id
-					MTP_inputMessagesFilterEmpty(),
+					ExdMediaFilter(_exdSearchQueryMediaFilter),
 					MTP_int(0), // min_date
 					MTP_int(0), // max_date
 					MTP_int(_migratedProcess.lastId),
@@ -4573,6 +4601,59 @@ void Widget::updateSearchFromVisibility(bool fast) {
 		}
 		_search->setAdditionalMargins(additional);
 	}
+	exdUpdateMediaFilterVisibility(fast);
+}
+
+void Widget::exdUpdateMediaFilterVisibility(bool fast) {
+	const auto visible = searchInPeer() && !_subsectionTopBar;
+	if (!visible && _exdMediaFilterValue) {
+		_exdMediaFilterValue = 0;
+	}
+	if (visible != _exdMediaFilter->toggled()) {
+		_exdMediaFilter->toggle(
+			visible,
+			fast ? anim::type::instant : anim::type::normal);
+	}
+	if (!_subsectionTopBar) {
+		auto additional = QMargins();
+		auto right = 0;
+		if (_chooseFromUser->toggled()) {
+			right += _chooseFromUser->width();
+		}
+		if (visible) {
+			right += _exdMediaFilter->width();
+		}
+		additional.setRight(right);
+		_search->setAdditionalMargins(additional);
+	}
+	updateControlsGeometry();
+}
+
+void Widget::exdShowMediaFilterMenu() {
+	_exdMediaMenu = base::make_unique_q<Ui::PopupMenu>(
+		this,
+		st::popupMenuWithIcons);
+	const auto phrases = std::vector<tr::phrase<>>{
+		tr::lng_exd_search_media_all,
+		tr::lng_exd_search_media_photos,
+		tr::lng_exd_search_media_videos,
+		tr::lng_exd_search_media_files,
+		tr::lng_exd_search_media_links,
+		tr::lng_exd_search_media_music,
+		tr::lng_exd_search_media_voice,
+		tr::lng_exd_search_media_gifs,
+	};
+	for (auto i = 0; i != int(phrases.size()); ++i) {
+		_exdMediaMenu->addAction(phrases[i](tr::now), [=] {
+			if (_exdMediaFilterValue == i) {
+				return;
+			}
+			_exdMediaFilterValue = i;
+			_searchProcess.cache.clear();
+			searchRequested(SearchRequestDelay::Instant);
+		}, (_exdMediaFilterValue == i) ? &st::menuIconSelect : nullptr);
+	}
+	_exdMediaMenu->popup(QCursor::pos());
 }
 
 void Widget::updateControlsGeometry() {
@@ -4642,6 +4723,12 @@ void Widget::updateControlsGeometry() {
 	_jumpToDate->moveToLeft(right, _search->y());
 	right -= _chooseFromUser->width();
 	_chooseFromUser->moveToLeft(right, _search->y());
+	const auto mediaRight = _chooseFromUser->toggled()
+		? right
+		: (right + _chooseFromUser->width());
+	_exdMediaFilter->moveToLeft(
+		mediaRight - _exdMediaFilter->width(),
+		_search->y());
 
 	const auto barw = width();
 	const auto expandedStoriesTop = filterAreaTop + filterAreaHeight;

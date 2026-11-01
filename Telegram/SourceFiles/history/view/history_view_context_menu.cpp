@@ -2629,6 +2629,12 @@ void AddTagPackAction(
 					{ set->set },
 					EmojiPacksSource::Tag,
 					controller);
+				const auto text = QString::number(custom);
+				menu->addAction(tr::lng_exd_copy_emoji_id(tr::now), [=] {
+					QGuiApplication::clipboard()->setText(text);
+					controller->showToast(
+						tr::lng_exd_emoji_id_copied(tr::now));
+				}, &st::menuIconCopy);
 			}
 		}
 	}
@@ -2789,12 +2795,21 @@ void ShowWhoReactedMenu(
 			if (const auto custom = id.custom()) {
 				if (const auto set = owner->document(custom)->sticker()) {
 					if (set->set.id) {
-						state->addedToBottom = 2;
+						state->addedToBottom = 3;
 						AddEmojiPacksAction(
 							menu->get(),
 							{ set->set },
 							EmojiPacksSource::Reaction,
 							controller);
+						const auto text = QString::number(custom);
+						menu->get()->addAction(
+							tr::lng_exd_copy_emoji_id(tr::now),
+							[=] {
+								QGuiApplication::clipboard()->setText(text);
+								controller->showToast(
+									tr::lng_exd_emoji_id_copied(tr::now));
+							},
+							&st::menuIconCopy);
 					}
 				}
 			}

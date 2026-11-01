@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_extera.h"
 
 #include "extera/extera_badges.h"
+#include "extera/extera_plugin_trust.h"
 
 #include "api/api_peer_colors.h"
 #include "api/api_peer_photo.h"
@@ -550,6 +551,16 @@ TopBar::TopBar(
 					.duration = crl::time(4000),
 				});
 			};
+			if (Extera::PluginTrust::IsTrustedChannel(peer)) {
+				controller->showToast({
+					.text = { tr::lng_exd_badge_trusted(
+						tr::now,
+						lt_name,
+						name) },
+					.duration = crl::time(4000),
+				});
+				return;
+			}
 			if (!custom.isEmpty()
 				&& kind != Kind::Developer
 				&& kind != Kind::OfficialChannel

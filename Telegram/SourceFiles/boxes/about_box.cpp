@@ -48,18 +48,24 @@ rpl::producer<TextWithEntities> Text2() {
 		lt_gpl_link,
 		rpl::single(tr::link(
 			"GNU GPL",
-			"https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE")),
+			"https://github.com/metawka/exDesktop/blob/main/LICENSE")),
 		lt_github_link,
 		rpl::single(tr::link(
 			"GitHub",
-			"https://github.com/telegramdesktop/tdesktop")),
+			"https://github.com/metawka/exDesktop")),
 		tr::marked);
 }
 
 rpl::producer<TextWithEntities> Text3() {
-	return tr::lng_about_text3(
-		lt_faq_link,
-		tr::lng_about_text3_faq(tr::url(telegramFaqLink())),
+	return tr::lng_exd_about_links(
+		lt_site_link,
+		rpl::single(tr::link(
+			"exteradesktop.xyz",
+			"https://exteradesktop.xyz")),
+		lt_channel_link,
+		rpl::single(tr::link("@exDesktop", "https://t.me/exDesktop")),
+		lt_chat_link,
+		rpl::single(tr::link("@exDesktopChat", "https://t.me/exDesktopChat")),
 		tr::marked);
 }
 

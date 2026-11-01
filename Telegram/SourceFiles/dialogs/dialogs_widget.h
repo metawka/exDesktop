@@ -187,6 +187,7 @@ private:
 	[[nodiscard]] int currentSearchQueryCursorPosition() const;
 	void clearSearchField();
 	void searchRequested(SearchRequestDelay delay);
+	void exdUpdateMediaFilterVisibility(bool fast);
 	bool search(bool inCache = false, SearchRequestDelay after = {});
 	void searchTopics();
 	void searchMore();
@@ -341,6 +342,11 @@ private:
 	object_ptr<Ui::IconButton> _searchForNarrowLayout;
 	object_ptr<Ui::InputField> _search;
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _chooseFromUser;
+	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _exdMediaFilter;
+	base::unique_qptr<Ui::PopupMenu> _exdMediaMenu;
+	int _exdMediaFilterValue = 0;
+	int _exdSearchQueryMediaFilter = 0;
+	void exdShowMediaFilterMenu();
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _jumpToDate;
 	object_ptr<Ui::CrossButton> _cancelSearch;
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _lockUnlock;

@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_document_resolver.h"
 
+#include "extera/extera_pdf_viewer.h"
+
 #include "extera/extera_plugins.h"
 #include "extera/extera_plugins_ui.h"
 
@@ -306,6 +308,15 @@ void ResolveDocument(
 					path,
 					item && Extera::Plugins::IsTrustedSource(
 						item->history()->peer));
+				return;
+			}
+			if (controller
+				&& path.endsWith(u".pdf"_q, Qt::CaseInsensitive)
+				&& Extera::PdfViewer::Supported()) {
+				Extera::PdfViewer::Show(
+					controller,
+					path,
+					document->filename());
 				return;
 			}
 			if (!Core::App().iv().showMarkdown(path, context)) {

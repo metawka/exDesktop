@@ -17,11 +17,18 @@ enum class BadgeKind {
 	Donor,
 };
 
+struct TrustedSource {
+	uint64 id = 0;
+	QString username;
+};
+
 void StartBadges();
 
 [[nodiscard]] BadgeKind BadgeKindFor(not_null<PeerData*> peer);
 [[nodiscard]] DocumentId BadgeEmoji(not_null<PeerData*> peer);
 [[nodiscard]] QString BadgeCustomText(not_null<PeerData*> peer);
 [[nodiscard]] DocumentId BadgeTypeEmoji(const QString &type);
+[[nodiscard]] std::optional<std::vector<TrustedSource>> TrustedSources();
+[[nodiscard]] bool IsTrustedHash(const QString &sha256);
 
 } // namespace Extera

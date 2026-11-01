@@ -3,6 +3,7 @@ import importlib.abc
 import importlib.machinery
 import json
 import re
+import os
 import sys
 from html.parser import HTMLParser
 
@@ -11,20 +12,7 @@ import _extera
 
 # Stub
 
-class StubMeta(type):
-    def __getattr__(cls, item):
-        if item.startswith("__") and item.endswith("__"):
-            raise AttributeError(item)
-        return Stub(cls.__name__ + "." + item)
-
-    def __instancecheck__(cls, instance):
-        return True
-
-    def __subclasscheck__(cls, subclass):
-        return True
-
-
-class Stub(metaclass=StubMeta):
+class Stub:
     def __init__(self, name="stub"):
         object.__setattr__(self, "_name", name)
 
@@ -63,6 +51,24 @@ class Stub(metaclass=StubMeta):
     __add__ = __radd__ = __sub__ = __rsub__ = _zero
     __mul__ = __rmul__ = __truediv__ = __rtruediv__ = _zero
     __floordiv__ = __rfloordiv__ = __mod__ = __rmod__ = _zero
+    __or__ = __ror__ = __and__ = __rand__ = __xor__ = __rxor__ = _zero
+    __lshift__ = __rlshift__ = __rshift__ = __rrshift__ = _zero
+    __neg__ = __pos__ = __invert__ = __abs__ = _zero
+
+    def __getitem__(self, item):
+        return Stub(self._name + "[]")
+
+    def __setitem__(self, item, value):
+        return None
+
+    def __contains__(self, item):
+        return False
+
+    def __fspath__(self):
+        import tempfile
+        path = os.path.join(tempfile.gettempdir(), "exdesktop_plugins")
+        os.makedirs(path, exist_ok=True)
+        return path
     __lt__ = __le__ = __gt__ = __ge__ = lambda self, other: False
 
     def __str__(self):
@@ -70,36 +76,6 @@ class Stub(metaclass=StubMeta):
 
     def __repr__(self):
         return f"<stub {self._name}>"
-
-
-class ArrayList(list):
-    def add(self, *args):
-        if len(args) == 1:
-            self.append(args[0])
-        elif len(args) == 2:
-            self.insert(args[0], args[1])
-        return True
-
-    def size(self):
-        return len(self)
-
-    def get(self, index):
-        try:
-            return self[index]
-        except IndexError:
-            return None
-
-    def remove(self, val):
-        if isinstance(val, int) and val < len(self):
-            return self.pop(val)
-        try:
-            super().remove(val)
-            return True
-        except ValueError:
-            return False
-
-    def clear(self):
-        super().clear()
 
     def __eq__(self, other):
         return isinstance(other, Stub)
@@ -182,7 +158,19 @@ class _Browser:
         return _open_url(url)
 
 
-class _ApplicationLoader:
+class LenientMeta(type):
+    def __getattr__(cls, item):
+        if item.startswith("__") and item.endswith("__"):
+            raise AttributeError(item)
+        return Stub(cls.__name__ + "." + item)
+
+
+class Missing(Stub):
+    def __bool__(self):
+        return False
+
+
+class _ApplicationLoader(metaclass=LenientMeta):
     applicationContext = _Context("applicationContext")
 
 
@@ -203,7 +191,13 @@ class _AndroidUtilities(Stub):
 
     @staticmethod
     def dp(value):
-        return int(value)
+        import android_views
+        return android_views.dp(value)
+
+    @staticmethod
+    def displaySize():
+        import android_views
+        return android_views.displaySize
 
 
 class _LocaleController(Stub):
@@ -223,6 +217,51 @@ def _dynamic_proxy(*interfaces):
     return object
 
 
+def _widget_shims():
+    import android_views
+    return {
+        "android.widget": {
+            "LinearLayout": android_views.LinearLayout,
+            "FrameLayout": android_views.FrameLayout,
+            "ScrollView": android_views.ScrollView,
+            "TextView": android_views.TextView,
+            "EditText": android_views.EditText,
+            "ImageView": android_views.ImageView,
+            "Toast": _Toast,
+        },
+        "android.view": {
+            "View": android_views.View,
+            "Gravity": android_views.Gravity,
+        },
+        "android.graphics": {
+            "Bitmap": android_views.Bitmap,
+            "Canvas": android_views.Canvas,
+            "Paint": android_views.Paint,
+            "RectF": android_views.RectF,
+            "Typeface": android_views.Typeface,
+        },
+        "android.graphics.drawable": {
+            "GradientDrawable": android_views.GradientDrawable,
+            "ColorDrawable": android_views.ColorDrawable,
+            "BitmapDrawable": android_views.BitmapDrawable,
+            "Drawable": android_views.Drawable,
+            "LayerDrawable": android_views.LayerDrawable,
+        },
+        "android.text": {
+            "TextWatcher": android_views.TextWatcher,
+        },
+        "android.view.animation": {
+            "DecelerateInterpolator": android_views.DecelerateInterpolator,
+            "OvershootInterpolator": android_views.OvershootInterpolator,
+        },
+        "org.telegram.ui.ActionBar": {
+            "BottomSheet": android_views.BottomSheet,
+            "AlertDialog": android_views.AlertDialog,
+            "Theme": android_views.Theme,
+        },
+    }
+
+
 SHIMS = {
     "android.widget": {"Toast": _Toast},
     "android.net": {"Uri": _Uri},
@@ -234,6 +273,8 @@ SHIMS = {
         "LocaleController": _LocaleController("LocaleController"),
     },
     "org.telegram.ui": {"LaunchActivity": _LaunchActivity},
+    "org.telegram.tgnet": {},
+    "org.telegram.tgnet.tl": {},
     "java": {
         "jclass": lambda name: Stub(str(name)),
         "dynamic_proxy": _dynamic_proxy,
@@ -245,24 +286,6 @@ SHIMS = {
         "jfloat": float,
         "jdouble": float,
     },
-    "java.util": {
-        "ArrayList": ArrayList,
-        "List": list,
-        "Map": dict,
-        "HashMap": dict,
-        "Set": set,
-        "HashSet": set,
-    },
-    "java.lang": {
-        "Boolean": bool,
-        "Integer": int,
-        "Long": int,
-        "String": str,
-        "Float": float,
-        "Double": float,
-        "Exception": Exception,
-        "Object": object,
-    },
 }
 
 ROOTS = ("java", "android", "androidx", "org", "com", "kotlin", "dalvik",
@@ -273,11 +296,9 @@ class _StubModule(type(sys)):
     def __getattr__(self, item):
         if item.startswith("__") and item.endswith("__"):
             raise AttributeError(item)
-        class DynamicStub(Stub):
-            pass
-        DynamicStub.__name__ = item
-        setattr(self, item, DynamicStub)
-        return DynamicStub
+        value = Stub(self.__name__ + "." + item)
+        setattr(self, item, value)
+        return value
 
 
 class _Finder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
@@ -285,9 +306,10 @@ class _Finder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
         root = fullname.split(".")[0]
         if root not in ROOTS:
             return None
-        if root in ("com", "io", "me", "de") and not fullname.startswith(
-                ("com.exteragram", "com.google.android", "com.chaquo",
-                 "de.robv", "me.", "io.")):
+        if fullname != root and root in ("com", "io", "me", "de") \
+                and not fullname.startswith(
+                    ("com.exteragram", "com.google.android", "com.chaquo",
+                     "de.robv", "me.", "io.")):
             return None
         return importlib.machinery.ModuleSpec(fullname, self, is_package=True)
 
@@ -304,7 +326,30 @@ class _Finder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
 
 def install():
     if not any(isinstance(f, _Finder) for f in sys.meta_path):
+        import android_views
+        for module, shims in _widget_shims().items():
+            SHIMS.setdefault(module, {}).update(shims)
+        import tgnet_bridge
+        tgnet_bridge.install(SHIMS)
+        android = SHIMS.setdefault("org.telegram.messenger", {})["AndroidUtilities"]
+        android.displaySize = android_views.displaySize
+        android.density = android_views.density()
         sys.meta_path.append(_Finder())
+    if sys.platform == "win32" and "fcntl" not in sys.modules:
+        sys.modules["fcntl"] = _fcntl_module()
+
+
+def _fcntl_module():
+    module = type(sys)("fcntl")
+    for index, name in enumerate(
+            ("LOCK_SH", "LOCK_EX", "LOCK_NB", "LOCK_UN", "F_GETFL", "F_SETFL",
+             "F_GETFD", "F_SETFD", "FD_CLOEXEC")):
+        setattr(module, name, 1 << index)
+    module.flock = lambda *args, **kwargs: None
+    module.lockf = lambda *args, **kwargs: None
+    module.fcntl = lambda *args, **kwargs: 0
+    module.ioctl = lambda *args, **kwargs: 0
+    return module
 
 
 # Send params
@@ -317,6 +362,9 @@ class SendMessageParams:
         self.entities = []
         self.replyToMsg = _ReplyStub(reply_to) if reply_to else None
         self.replyToTopMsg = None
+        self.replyQuote = None
+        self.replyQuoteOffset = None
+        self.replyQuoteLength = None
         self.replyMarkup = None
         self.params = None
         self.notify = True
@@ -332,155 +380,33 @@ class _ReplyStub(Stub):
         Stub.__init__(self, "replyToMsg")
         object.__setattr__(self, "id", msg_id)
         object.__setattr__(self, "messageText", "")
+        object.__setattr__(self, "messageOwner", None)
 
 
 # Formatting
 
-def _utf16_len(text):
-    return len(text.encode("utf-16-le")) // 2
-
-
-class _HtmlToEntities(HTMLParser):
-    TAGS = {
-        "b": "bold", "strong": "bold", "i": "italic", "em": "italic",
-        "u": "underline", "ins": "underline", "s": "strike",
-        "strike": "strike", "del": "strike", "code": "code", "pre": "pre",
-        "blockquote": "blockquote", "tg-spoiler": "spoiler", "a": "url",
-        "span": "span",
-    }
-
-    def __init__(self):
-        HTMLParser.__init__(self, convert_charrefs=True)
-        self.text = ""
-        self.stack = []
-        self.entities = []
-
-    def handle_starttag(self, tag, attrs):
-        attrs = dict(attrs)
-        if tag == "br":
-            self.text += "\n"
-            return
-        kind = self.TAGS.get(tag)
-        if kind == "span" and "tg-spoiler" not in (attrs.get("class") or ""):
-            kind = None
-        if kind == "span":
-            kind = "spoiler"
-        if kind == "blockquote" and "expandable" in attrs:
-            kind = "blockquote_collapsed"
-        self.stack.append((tag, kind, _utf16_len(self.text), attrs))
-
-    def handle_endtag(self, tag):
-        for index in range(len(self.stack) - 1, -1, -1):
-            if self.stack[index][0] == tag:
-                _, kind, start, attrs = self.stack.pop(index)
-                length = _utf16_len(self.text) - start
-                if kind and length > 0:
-                    data = attrs.get("href", "") if kind == "url" else ""
-                    if kind == "pre":
-                        data = attrs.get("language", "")
-                    self.entities.append([kind, start, length, data])
-                return
-
-    def handle_data(self, data):
-        self.text += data
-
-
-def parse_html(text):
-    parser = _HtmlToEntities()
-    parser.feed(text)
-    parser.close()
-    return parser.text, parser.entities
-
-
-_MD = [
-    (re.compile(r"\*\*(.+?)\*\*", re.S), "bold"),
-    (re.compile(r"__(.+?)__", re.S), "italic"),
-    (re.compile(r"~~(.+?)~~", re.S), "strike"),
-    (re.compile(r"\|\|(.+?)\|\|", re.S), "spoiler"),
-    (re.compile(r"`([^`]+?)`", re.S), "code"),
-]
-
-
-def parse_markdown(text):
-    entities = []
-    changed = True
-    while changed:
-        changed = False
-        best = None
-        for pattern, kind in _MD:
-            match = pattern.search(text)
-            if match and (best is None or match.start() < best[0].start()):
-                best = (match, kind)
-        if best:
-            match, kind = best
-            inner = match.group(1)
-            start = _utf16_len(text[:match.start()])
-            shift = _utf16_len(match.group(0)) - _utf16_len(inner)
-            for entity in entities:
-                if entity[1] > start:
-                    entity[1] -= shift
-            entities.append([kind, start, _utf16_len(inner), ""])
-            text = text[:match.start()] + inner + text[match.end():]
-            changed = True
-    link = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
-    while True:
-        match = link.search(text)
-        if not match:
-            break
-        start = _utf16_len(text[:match.start()])
-        entities.append(["url", start, _utf16_len(match.group(1)), match.group(2)])
-        text = text[:match.start()] + match.group(1) + text[match.end():]
-    return text, entities
-
-
 def format_text(text, parse_mode):
+    from text_formatting import parse_text
     mode = (parse_mode or "").lower()
-    if mode == "html":
-        return parse_html(text)
-    if mode == "markdown":
-        return parse_markdown(text)
-    return text, []
+    if mode not in ("html", "markdown"):
+        return text, []
+    key = "message"
+    parsed = parse_text(str(text or ""), mode, is_caption=False)
+    return parsed.get(key, str(text)), parsed.get("entities") or []
 
 
 def to_dialog_id(peer):
-    if peer is None or peer == 0 or isinstance(peer, Stub):
-        return int(_extera.current_peer() or 0)
+    if isinstance(peer, Stub):
+        return 0
     try:
-        dialog_id = int(peer)
-        return dialog_id if dialog_id != 0 else int(_extera.current_peer() or 0)
+        return int(peer)
     except Exception:
         value = getattr(peer, "user_id", None) or getattr(peer, "channel_id", None) \
-            or getattr(peer, "chat_id", None) or getattr(peer, "dialog_id", None) \
-            or getattr(peer, "id", None)
-        return int(value or _extera.current_peer() or 0)
+            or getattr(peer, "chat_id", None)
+        return int(value or 0)
 
 
-def send(peer, text, parse_mode=None, reply_to=0, entities=None):
-    plain, parsed_entities = format_text(str(text or ""), parse_mode)
-    if entities:
-        for e in entities:
-            offset = getattr(e, "offset", 0)
-            length = getattr(e, "length", 0)
-            url = getattr(e, "url", "")
-            cls_name = type(e).__name__
-            kind = "custom"
-            if "Blockquote" in cls_name:
-                kind = "blockquote"
-            elif "TextUrl" in cls_name or "Url" in cls_name:
-                kind = "url"
-            elif "Bold" in cls_name:
-                kind = "bold"
-            elif "Italic" in cls_name:
-                kind = "italic"
-            elif "Code" in cls_name:
-                kind = "code"
-            elif "Pre" in cls_name:
-                kind = "pre"
-            elif "Spoiler" in cls_name:
-                kind = "spoiler"
-            elif "Strike" in cls_name:
-                kind = "strike"
-            if length > 0:
-                parsed_entities.append([kind, offset, length, str(url or "")])
+def send(peer, text, parse_mode=None, reply_to=0):
+    plain, entities = format_text(str(text or ""), parse_mode)
     _extera.send_message(
-        to_dialog_id(peer), plain, json.dumps(parsed_entities), int(reply_to or 0))
+        to_dialog_id(peer), plain, json.dumps(entities), int(reply_to or 0))

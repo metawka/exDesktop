@@ -1,12 +1,17 @@
 #pragma once
 
+#include "ui/text/text_entity.h"
+
 #include <QtCore/QJsonValue>
 #include <QtCore/QJsonObject>
 
 class History;
+class HistoryItem;
 class PeerData;
 
 namespace Extera::Plugins {
+
+inline constexpr auto kSdkVersion = "1.4.6.2";
 
 enum class SendStrategy {
 	Default,
@@ -17,6 +22,8 @@ enum class SendStrategy {
 struct SendResult {
 	SendStrategy strategy = SendStrategy::Default;
 	QString text;
+	EntitiesInText entities;
+	bool quote = false;
 };
 
 struct MenuItem {
@@ -44,6 +51,10 @@ int ExportAll(const QString &folder);
 
 [[nodiscard]] std::vector<MenuItem> MenuItems(const QString &type);
 void ClickMenuItem(const QString &id, QJsonObject context);
+
+void NotifyNewMessage(not_null<HistoryItem*> item);
+void NotifyAppEvent(const QString &name);
+[[nodiscard]] bool InterceptLocalUrl(const QString &url);
 
 [[nodiscard]] int64 DialogId(not_null<PeerData*> peer);
 [[nodiscard]] bool IsTrustedSource(not_null<PeerData*> peer);

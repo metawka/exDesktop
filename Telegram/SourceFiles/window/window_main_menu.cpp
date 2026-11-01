@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_main_menu.h"
 
+#include "extera/extera_changelog.h"
 #include "extera/extera_config.h"
 #include "extera/extera_feed.h"
 #include "extera/extera_navigation.h"
@@ -410,7 +411,7 @@ MainMenu::MainMenu(
 
 	_telegram->setMarkedText(tr::link(
 		AppName.utf16(),
-		u"https://desktop.telegram.org"_q));
+		u"https://exteradesktop.xyz"_q));
 	_telegram->setLinksTrusted();
 	// The canary version is too long for the "Version {version}" form.
 	_version->setMarkedText(
@@ -428,7 +429,9 @@ MainMenu::MainMenu(
 		.append(tr::link(tr::lng_menu_about(tr::now), 2))); // Link 2.
 	_version->setLink(
 		1,
-		std::make_shared<UrlClickHandler>(Core::App().changelogLink()));
+		std::make_shared<LambdaClickHandler>([=] {
+			Extera::Changelog::Show(controller);
+		}));
 	_version->setLink(
 		2,
 		std::make_shared<LambdaClickHandler>([=] {

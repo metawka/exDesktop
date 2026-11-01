@@ -1,3 +1,4 @@
+#include <QtWidgets/QApplication>
 #include "extera/extera_menu.h"
 
 #include "api/api_common.h"
@@ -178,7 +179,8 @@ public:
 	QuickRow(
 		not_null<Ui::Menu::Menu*> parent,
 		const style::Menu &st,
-		Fn<void()> hide);
+		Fn<void()> hide,
+		Fn<void()> hideSubmenus);
 
 	void addButton(
 		not_null<QAction*> action,
@@ -200,19 +202,24 @@ private:
 	const not_null<QAction*> _dummyAction;
 	const style::Menu &_st;
 	const Fn<void()> _hide;
+	const Fn<void()> _hideSubmenus;
 	std::vector<not_null<Ui::AbstractButton*>> _buttons;
+	std::vector<not_null<QAction*>> _actions;
 	int _hovered = -1;
+	int _pressed = -1;
 
 };
 
 QuickRow::QuickRow(
 	not_null<Ui::Menu::Menu*> parent,
 	const style::Menu &st,
-	Fn<void()> hide)
+	Fn<void()> hide,
+	Fn<void()> hideSubmenus)
 : ItemBase(parent, st)
 , _dummyAction(Ui::CreateChild<QAction>(parent.get()))
 , _st(st)
-, _hide(std::move(hide)) {
+, _hide(std::move(hide))
+, _hideSubmenus(std::move(hideSubmenus)) {
 	fitToMenuWidth();
 	widthValue() | rpl::on_next([=] {
 		layout();
@@ -223,6 +230,26 @@ QuickRow::QuickRow(
 			|| type == QEvent::Leave
 			|| type == QEvent::Enter) {
 			updateHovered();
+		} else if (type == QEvent::MouseButtonPress) {
+			updateHovered();
+			if (_hovered >= 0) {
+				_pressed = _hovered;
+				_buttons[_pressed]->update();
+				return base::EventFilterResult::Cancel;
+			}
+		} else if (type == QEvent::MouseButtonRelease && _pressed >= 0) {
+			updateHovered();
+			const auto pressed = std::exchange(_pressed, -1);
+			_buttons[pressed]->update();
+			if (pressed == _hovered) {
+				const auto action = _actions[pressed];
+				const auto weak = base::make_weak(this);
+				action->trigger();
+				if (weak) {
+					_hide();
+				}
+			}
+			return base::EventFilterResult::Cancel;
 		}
 		return base::EventFilterResult::Continue;
 	});
@@ -241,6 +268,9 @@ void QuickRow::updateHovered() {
 	}
 	if (_hovered != hovered) {
 		_hovered = hovered;
+		if (hovered >= 0 && _hideSubmenus) {
+			_hideSubmenus();
+		}
 		for (const auto button : _buttons) {
 			button->update();
 		}
@@ -256,9 +286,10 @@ void QuickRow::addButton(
 	const auto index = int(_buttons.size());
 	button->setAccessibleName(label);
 	button->setPointerCursor(true);
+	button->setAttribute(Qt::WA_TransparentForMouseEvents);
 	button->paintRequest() | rpl::on_next([=] {
 		auto p = QPainter(button);
-		if (_hovered == index || button->isDown()) {
+		if (_hovered == index || _pressed == index) {
 			auto hq = PainterHighQualityEnabler(p);
 			p.setPen(Qt::NoPen);
 			p.setBrush(_st.itemBgOver);
@@ -267,14 +298,8 @@ void QuickRow::addButton(
 		}
 		icon->paintInCenter(p, button->rect());
 	}, button->lifetime());
-	button->setClickedCallback([=] {
-		const auto weak = base::make_weak(this);
-		action->trigger();
-		if (weak) {
-			_hide();
-		}
-	});
 	_buttons.push_back(button);
+	_actions.push_back(action);
 	setMinWidth(int(_buttons.size()) * st::exteraQuickButtonWidth
 		+ 2 * st::exteraQuickPadding);
 	layout();
@@ -517,6 +542,18 @@ void ApplyQuickActions(not_null<Ui::PopupMenu*> menu) {
 		[=] {
 			if (const auto strong = weak.get()) {
 				strong->hideMenu();
+			}
+		},
+		[=] {
+			const auto strong = weak.get();
+			if (!strong) {
+				return;
+			}
+			for (const auto widget : QApplication::topLevelWidgets()) {
+				const auto popup = dynamic_cast<Ui::PopupMenu*>(widget);
+				if (popup && popup != strong && popup->isVisible()) {
+					popup->hideMenu(true);
+				}
 			}
 		});
 	for (const auto &entry : found) {

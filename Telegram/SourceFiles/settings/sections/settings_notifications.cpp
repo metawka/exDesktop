@@ -47,6 +47,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
 #include "window/notifications_manager.h"
+#include "extera/extera_config.h"
+#include "core/file_utilities.h"
 #include "window/section_widget.h"
 #include "window/themes/window_theme.h"
 #include "window/window_session_controller.h"
@@ -1019,6 +1021,64 @@ void BuildGlobalNotificationsSection(SectionBuilder &builder) {
 				}});
 		return SectionBuilder::WidgetToAdd{};
 	});
+
+	const auto customSound = rpl::merge(
+		rpl::single(Extera::String(u"notify_sound"_q)),
+		Extera::Config::Instance().stringChanges(u"notify_sound"_q));
+	builder.addButton({
+		.id = u"notifications/exd_sound"_q,
+		.title = tr::lng_exd_notify_sound(),
+		.icon = { &st::menuIconFile },
+		.label = rpl::duplicate(customSound) | rpl::map([](QString path) {
+			return path.isEmpty()
+				? tr::lng_exd_notify_sound_default(tr::now)
+				: QFileInfo(path).fileName();
+		}),
+		.onClick = [] {
+			FileDialog::GetOpenPath(
+				QPointer<QWidget>(),
+				tr::lng_exd_notify_sound(tr::now),
+				u"Audio (*.mp3 *.ogg *.wav *.m4a *.opus)"_q,
+				[](FileDialog::OpenResult &&result) {
+					if (result.paths.isEmpty()) {
+						return;
+					}
+					Extera::Config::Instance().setString(
+						u"notify_sound"_q,
+						result.paths.front());
+					Core::App().notifications().resetSound();
+				});
+		},
+		.keywords = { u"sound"_q, u"audio"_q, u"file"_q },
+	});
+	builder.addButton({
+		.id = u"notifications/exd_sound_reset"_q,
+		.title = tr::lng_exd_notify_sound_reset(),
+		.icon = { &st::menuIconRestore },
+		.onClick = [] {
+			Extera::Config::Instance().setString(u"notify_sound"_q, QString());
+			Core::App().notifications().resetSound();
+		},
+		.shown = rpl::duplicate(customSound) | rpl::map([](QString path) {
+			return !path.isEmpty();
+		}),
+	});
+	const auto noDelay = builder.addButton({
+		.id = u"notifications/exd_no_delay"_q,
+		.title = tr::lng_extera_disable_notify_delay(),
+		.icon = { &st::menuIconTimer },
+		.toggled = rpl::single(
+			Extera::Bool(u"disable_notification_delay"_q)),
+		.keywords = { u"delay"_q },
+	});
+	if (noDelay) {
+		noDelay->toggledChanges(
+		) | rpl::on_next([](bool value) {
+			Extera::Config::Instance().setBool(
+				u"disable_notification_delay"_q,
+				value);
+		}, noDelay->lifetime());
+	}
 
 	builder.addSkip();
 

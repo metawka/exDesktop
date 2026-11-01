@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_message.h"
+
+#include "extera/extera_feed.h"
 #include "extera/extera_badges.h"
 
 #include "extera/extera_config.h"
@@ -2536,7 +2538,7 @@ void Message::paintFromName(
 	const auto statusWidth = _fromNameStatus
 		? st::dialogsPremiumIcon.icon.width()
 		: 0;
-	const auto exdGap = style::ConvertScale(4);
+	const auto exdGap = style::ConvertScale(4) + st::msgNameFont->spacew;
 	const auto exdWidth = _exdBadgeStatus
 		? (st::dialogsPremiumIcon.icon.width() + exdGap)
 		: 0;
@@ -3887,6 +3889,8 @@ void Message::unloadHeavyPart() {
 bool Message::hasFromPhoto() const {
 	if (isHidden()) {
 		return false;
+	} else if (Extera::IsFeedList(delegate().get())) {
+		return data()->isRegular() && !data()->isService();
 	}
 	switch (context()) {
 	case Context::AdminLog:
@@ -4295,7 +4299,8 @@ bool Message::getStateFromName(
 			? st::dialogsPremiumIcon.icon.width()
 			: 0;
 		const auto exdWidth = _exdBadgeStatus
-			? (st::dialogsPremiumIcon.icon.width() + style::ConvertScale(4))
+			? (st::dialogsPremiumIcon.icon.width() + style::ConvertScale(4)
+				+ st::msgNameFont->spacew)
 			: 0;
 		if (exdWidth && availableWidth > (statusWidth + exdWidth)) {
 			availableLeft += exdWidth;

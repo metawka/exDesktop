@@ -311,6 +311,11 @@ dialogsSearchFrom: IconButton(dialogsCalendar) {
 	iconOver: icon {{ "dialogs/dialogs_search_from", dialogsMenuIconFgOver }};
 }
 
+exdDialogsSearchMedia: IconButton(dialogsSearchFrom) {
+	icon: icon {{ "menu/image", dialogsMenuIconFg }};
+	iconOver: icon {{ "menu/image", dialogsMenuIconFgOver }};
+}
+
 dialogsFilter: InputField(defaultInputField) {
 	textBg: filterInputInactiveBg;
 	textBgActive: filterInputActiveBg;

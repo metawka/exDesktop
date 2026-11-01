@@ -13,5 +13,6 @@ struct Variant {
 [[nodiscard]] QImage Render(int size, const QString &id, bool square);
 [[nodiscard]] QImage Current(int size);
 void ApplyToShortcuts();
+void Apply();
 
 } // namespace Extera::AppIcon

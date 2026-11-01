@@ -37,6 +37,7 @@ struct SeparateId;
 
 [[nodiscard]] const QImage &Logo();
 [[nodiscard]] const QImage &LogoNoMargin();
+void RefreshLogo();
 void OverrideApplicationIcon(QImage image);
 [[nodiscard]] QIcon CreateIcon(
 	Main::Session *session = nullptr,

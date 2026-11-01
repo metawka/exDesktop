@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_session.h"
 
+#include "extera/extera_plugins.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "main/main_app_config.h"
@@ -3618,6 +3619,9 @@ HistoryItem *Session::addNewMessage(
 		data,
 		localFlags,
 		type);
+	if (result) {
+		Extera::Plugins::NotifyNewMessage(result);
+	}
 	if (type == NewMessageType::Unread) {
 		CheckForSwitchInlineButton(result);
 	}

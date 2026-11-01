@@ -7,8 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/application.h"
 #include "extera/extera_update.h"
+#include "extera/extera_changelog.h"
 #include "extera/extera_ws_proxy.h"
 #include "extera/extera_streamer.h"
+#include "extera/extera_plugins.h"
 
 #include "ui/widgets/checkbox.h"
 
@@ -231,6 +233,10 @@ Application::Application()
 		qApp,
 		&QGuiApplication::applicationStateChanged,
 		[=](Qt::ApplicationState state) {
+			Extera::Plugins::NotifyAppEvent(
+				(state == Qt::ApplicationActive)
+					? u"app_resume"_q
+					: u"app_pause"_q);
 			if (state == Qt::ApplicationActive) {
 				return;
 			}
@@ -554,6 +560,7 @@ void Application::run() {
 	Extera::Update::Start();
 	Extera::WsProxy::Start();
 	Extera::StartWelcome();
+	Extera::Changelog::Start();
 	Extera::Streamer::Start();
 
 	Test::Fire(u"launch_finished"_q);
@@ -1382,6 +1389,9 @@ bool Application::openLocalUrl(const QString &url, QVariant context) {
 	const auto protocol = u"tg://"_q;
 	if (urlTrimmed.startsWith(protocol, Qt::CaseInsensitive)
 		&& !passcodeLocked()) {
+		if (Extera::Plugins::InterceptLocalUrl(urlTrimmed)) {
+			return true;
+		}
 		const auto command = urlTrimmed.mid(protocol.size());
 		const auto my = context.value<ClickHandlerContext>();
 		const auto controller = my.sessionWindow.get()
@@ -1401,7 +1411,7 @@ bool Application::openInternalUrl(const QString &url, QVariant context) {
 }
 
 QString Application::changelogLink() const {
-	return u"https://telegramdesktop.github.io/tdesktop/changelog/"_q;
+	return u"https://github.com/metawka/exDesktop/releases"_q;
 }
 
 bool Application::openCustomUrl(

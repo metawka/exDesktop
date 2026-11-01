@@ -1,7 +1,11 @@
 #include "extera/extera_app_icon.h"
 
 #include "extera/extera_config.h"
+#include "core/application.h"
+#include "main/main_domain.h"
+#include "tray.h"
 #include "ui/painter.h"
+#include "window/main_window.h"
 
 #include <QtCore/QBuffer>
 #include <QtCore/QSettings>
@@ -114,6 +118,42 @@ void SetShortcutIcon(const QString &link, const QString &icon) {
 	}
 	shellLink->Release();
 }
+void UpdatePinned(const QString &icon) {
+	const auto folder = QDir::fromNativeSeparators(qEnvironmentVariable("APPDATA"))
+		+ u"/Microsoft/Internet Explorer/Quick Launch/User Pinned/TaskBar"_q;
+	const auto exe = QDir::toNativeSeparators(
+		QCoreApplication::applicationFilePath()).toLower();
+	const auto files = QDir(folder).entryInfoList(
+		{ u"*.lnk"_q },
+		QDir::Files);
+	for (const auto &info : files) {
+		auto shellLink = (IShellLinkW*)nullptr;
+		if (FAILED(CoCreateInstance(
+				CLSID_ShellLink,
+				nullptr,
+				CLSCTX_INPROC_SERVER,
+				IID_PPV_ARGS(&shellLink)))) {
+			continue;
+		}
+		auto file = (IPersistFile*)nullptr;
+		auto matches = false;
+		if (SUCCEEDED(shellLink->QueryInterface(IID_PPV_ARGS(&file)))) {
+			const auto path = QDir::toNativeSeparators(
+				info.absoluteFilePath()).toStdWString();
+			if (SUCCEEDED(file->Load(path.c_str(), STGM_READ))) {
+				WCHAR target[MAX_PATH] = { 0 };
+				if (SUCCEEDED(shellLink->GetPath(target, MAX_PATH, nullptr, 0))) {
+					matches = (QString::fromWCharArray(target).toLower() == exe);
+				}
+			}
+			file->Release();
+		}
+		shellLink->Release();
+		if (matches) {
+			SetShortcutIcon(info.absoluteFilePath(), icon);
+		}
+	}
+}
 #endif
 
 } // namespace
@@ -214,8 +254,18 @@ void ApplyToShortcuts() {
 			SetShortcutIcon(folder + u"/exDesktop/exDesktop.lnk"_q, icon);
 		}
 	}
+	UpdatePinned(icon);
 	SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
 #endif
+}
+
+void Apply() {
+	ApplyToShortcuts();
+	Window::RefreshLogo();
+	Window::OverrideApplicationIcon(Window::Logo());
+	Core::App().refreshApplicationIcon();
+	Core::App().tray().updateIconCounters();
+	Core::App().domain().notifyUnreadBadgeChanged();
 }
 
 } // namespace Extera::AppIcon
