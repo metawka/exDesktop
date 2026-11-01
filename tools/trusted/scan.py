@@ -132,6 +132,7 @@ def backfill(state, known, chat):
     latest = state['latest'].get(key, 0)
     message_id = 0
     misses = 0
+    skipped = 0
     while message_id < latest or misses < MISS_LIMIT:
         message_id += 1
         try:
@@ -146,6 +147,10 @@ def backfill(state, known, chat):
             if 'message' in text and 'not found' in text:
                 misses += 1
                 continue
+            if "can't be forwarded" in text:
+                misses = 0
+                skipped += 1
+                continue
             print(f'history of {key} skipped: {error}')
             return
         misses = 0
@@ -155,7 +160,8 @@ def backfill(state, known, chat):
             pass
         add(state, known, message, chat, message_id)
     state['scanned'][key] = message_id - misses
-    print(f'history of {key} scanned up to {message_id - misses}')
+    print(f'history of {key} scanned up to {message_id - misses}, '
+          f'not forwardable {skipped}')
 
 
 # Main
