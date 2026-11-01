@@ -1,0 +1,36 @@
+name: Trusted plugin hashes
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [badges.json]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: trusted-hashes
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/trusted/scan.py
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      - run: |
+          git config user.name metawka
+          git config user.email matveus0608@gmail.com
+          git add trusted_hashes.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Edited trusted hashes"
+          git pull --rebase origin main
+          git push origin HEAD:main
