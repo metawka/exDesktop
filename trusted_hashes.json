@@ -1,5 +1,5 @@
 {
-  "offset": 354809183,
+  "offset": 354809251,
   "hashes": [
     {
       "sha256": "f03663d02e67a69e61a8b06bd9c8f89afcfbe59734d0ece18eb9ca166ecd9cfd",
@@ -12,12 +12,67 @@
       "channel": 3914431400,
       "message": 9,
       "name": "petpet.plugin"
+    },
+    {
+      "sha256": "8d7bc332657fa4c18363d24dc07c21c0c33ce35b70b1c025e6e2d6b66b809a2b",
+      "channel": 2189715950,
+      "message": 889,
+      "name": "TheLooker.plugin"
+    },
+    {
+      "sha256": "158f317feed005323e1179d07c6a238d4854d9ec946f7c9c3f543323ac7f54e7",
+      "channel": 2189715950,
+      "message": 235,
+      "name": "OwnMsgsDeleter.plugin"
+    },
+    {
+      "sha256": "cc2e74344962a66b94e82077ef22331ed5ca14a7ab392e4dc6d0560a5162f577",
+      "channel": 2189715950,
+      "message": 156,
+      "name": "downloader.plugin"
+    },
+    {
+      "sha256": "47b137f706999693788c940f4d21160aa8eef3ccbf3b620e1afdffd14ba6064b",
+      "channel": 2189715950,
+      "message": 1066,
+      "name": "uname-in-name.plugin"
+    },
+    {
+      "sha256": "ae152c30666001b04907e67f5aa900239559177909f7ad75fbc24cd381d58861",
+      "channel": 2189715950,
+      "message": 703,
+      "name": "anti_via_bot.plugin"
+    },
+    {
+      "sha256": "5cb347735fcbbdb8c23ac4362262970b53524724d343f5f6fb52bc1c376d781f",
+      "channel": 3914431400,
+      "message": 7,
+      "name": "clawd_pet.plugin"
+    },
+    {
+      "sha256": "7f264d5c6079e4489c8a4db27cb1646c9e133490fcaf5c4048ba95a7955d0a24",
+      "channel": 3914431400,
+      "message": 14,
+      "name": "Unlimited_GIFs.plugin"
+    },
+    {
+      "sha256": "577a3ae68140c636dec302a952c6bab38fa007851ca1e24cb444fb8b4d15ac3f",
+      "channel": 3914431400,
+      "message": 15,
+      "name": "OwnMsgsDeleter.plugin"
+    },
+    {
+      "sha256": "fbc6a1183445fe0f6d8472059f88e9232b20b6aa67ca861abf4ebcd3cfbbc87e",
+      "channel": 3914431400,
+      "message": 16,
+      "name": "downloader.plugin"
     }
   ],
   "scanned": {
-    "3914431400": 9
+    "3914431400": 9,
+    "2189715950": 0
   },
   "latest": {
-    "3914431400": 11
+    "3914431400": 16
   }
 }
