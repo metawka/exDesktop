@@ -11,6 +11,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "extera/extera_plugins.h"
 #include "extera/extera_plugins_ui.h"
+#include "data/data_channel.h"
+#include "extera/extera_plugin_trust.h"
+#include "history/history_item_components.h"
 
 #include "base/platform/base_platform_info.h"
 #include "boxes/abstract_box.h" // Ui::show().
@@ -303,6 +306,34 @@ void ResolveDocument(
 			if (controller
 				&& path.endsWith(u".plugin"_q, Qt::CaseInsensitive)
 				&& Extera::Plugins::Started()) {
+				const auto forwarded = item
+					? item->Get<HistoryMessageForwarded>()
+					: nullptr;
+				const auto origin = (forwarded && forwarded->originalSender)
+					? forwarded->originalSender->asChannel()
+					: nullptr;
+				if (item
+					&& !Extera::Plugins::IsTrustedSource(item->history()->peer)
+					&& origin
+					&& forwarded->originalId
+					&& Extera::Plugins::IsTrustedSource(
+						not_null<PeerData*>(origin))) {
+					const auto weak = base::make_weak(controller);
+					Extera::PluginTrust::VerifyForward(
+						&controller->session(),
+						origin,
+						forwarded->originalId,
+						document->id,
+						[=](bool trusted) {
+							if (const auto strong = weak.get()) {
+								Extera::Plugins::ShowInstallBox(
+									strong,
+									path,
+									trusted);
+							}
+						});
+					return;
+				}
 				Extera::Plugins::ShowInstallBox(
 					controller,
 					path,

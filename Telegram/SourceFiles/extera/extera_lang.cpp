@@ -577,6 +577,7 @@ void ApplyRussian(Fn<void(const QByteArray&, const QByteArray&)> apply) {
 		{ "lng_exd_plugins_sdk", u"SDK \u043F\u043B\u0430\u0433\u0438\u043D\u043E\u0432" },
 		{ "lng_exd_plugins_sdk_version", u"exteraGram SDK" },
 		{ "lng_exd_plugins_engine", u"\u0414\u0432\u0438\u0436\u043E\u043A \u043F\u043B\u0430\u0433\u0438\u043D\u043E\u0432 exDesktop" },
+		{ "lng_exd_md3_switches_muted", u"\u041F\u0440\u0438\u0433\u043B\u0443\u0448\u0451\u043D\u043D\u044B\u0435 \u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u043D\u044B\u0435 \u043F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0430\u0442\u0435\u043B\u0438" },
 	};
 	for (const auto &entry : entries) {
 		apply(

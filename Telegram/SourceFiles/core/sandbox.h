@@ -137,6 +137,7 @@ private:
 	QLocalSocket _localSocket;
 	LocalClients _localClients;
 	std::unique_ptr<QLockFile> _lockFile;
+	std::unique_ptr<QLockFile> _dataLock;
 	bool _secondInstance = false;
 	bool _started = false;
 	static bool QuitOnStartRequested;

@@ -315,6 +315,7 @@ private:
 	struct CachedRow {
 		QRect preview;
 		QRect badge;
+		QRect extera;
 		QImage band;
 		std::pair<uint64, uint64> userpic;
 		bool bandDirty = true;

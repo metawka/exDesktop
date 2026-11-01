@@ -25,11 +25,7 @@ constexpr auto kKillSessionTimeout = 15 * crl::time(1000);
 constexpr auto kMaxSessionsCount = 8;
 
 [[nodiscard]] int DownloadBoost() {
-	static const auto result = std::clamp(
-		Extera::Int(u"download_boost"_q),
-		0,
-		2);
-	return result;
+	return std::clamp(Extera::Int(u"download_boost"_q), 0, 2);
 }
 
 [[nodiscard]] int StartWaitedInSession() {

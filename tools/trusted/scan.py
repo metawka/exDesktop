@@ -31,12 +31,19 @@ def call(method, **params):
         key: json.dumps(value) if isinstance(value, (list, dict, bool)) else value
         for key, value in params.items()
     }).encode()
+    failures = 0
     while True:
         try:
             with urllib.request.urlopen(API + method, data, timeout=60) as response:
                 return json.load(response)['result']
         except urllib.error.HTTPError as error:
             result = json.load(error)
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            failures += 1
+            if failures > 5:
+                raise
+            time.sleep(10)
+            continue
         retry = (result.get('parameters') or {}).get('retry_after')
         if retry:
             time.sleep(retry + 1)

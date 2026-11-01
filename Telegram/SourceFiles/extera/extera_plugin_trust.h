@@ -1,6 +1,7 @@
 #pragma once
 
 class PeerData;
+class ChannelData;
 
 namespace Main {
 class Session;
@@ -21,6 +22,12 @@ struct Source {
 void Verify(
 	not_null<Main::Session*> session,
 	const QString &path,
+	Fn<void(bool)> done);
+void VerifyForward(
+	not_null<Main::Session*> session,
+	not_null<ChannelData*> channel,
+	MsgId id,
+	DocumentId document,
 	Fn<void(bool)> done);
 
 } // namespace Extera::PluginTrust

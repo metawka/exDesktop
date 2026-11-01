@@ -20,7 +20,7 @@
 namespace Extera::Update {
 namespace {
 
-constexpr auto kExteraBuild = 7;
+constexpr auto kExteraBuild = 8;
 constexpr auto kCheckInterval = 6 * 60 * 60 * crl::time(1000);
 constexpr auto kFirstCheckDelay = 10 * crl::time(1000);
 
@@ -217,9 +217,8 @@ int Build() {
 
 QString VersionText() {
 	return QString::fromLatin1(AppVersionStr)
-		+ u" ("_q
-		+ QString::number(kExteraBuild)
-		+ u")"_q;
+		+ '.'
+		+ QString::number(kExteraBuild);
 }
 
 rpl::producer<bool> AvailableValue() {

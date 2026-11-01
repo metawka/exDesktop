@@ -1,6 +1,7 @@
 #include "extera/extera_utils.h"
 
 #include "extera/extera_config.h"
+#include "ui/text/text_entity.h"
 
 #include <QtCore/QLocale>
 #include <QtCore/QTime>
@@ -53,6 +54,47 @@ QString FilterZalgo(QString text) {
 		text.remove(ZalgoPattern());
 	}
 	return text;
+}
+
+void FilterZalgo(TextWithEntities &text) {
+	if (!HasZalgo(text.text)) {
+		return;
+	}
+	const auto size = int(text.text.size());
+	auto marks = std::vector<bool>(size, false);
+	auto matches = ZalgoPattern().globalMatch(text.text);
+	while (matches.hasNext()) {
+		const auto match = matches.next();
+		for (auto i = match.capturedStart(); i != match.capturedEnd(); ++i) {
+			marks[i] = true;
+		}
+	}
+	auto shift = std::vector<int>(size + 1, 0);
+	auto result = QString();
+	result.reserve(size);
+	for (auto i = 0; i != size; ++i) {
+		shift[i] = int(result.size());
+		if (!marks[i]) {
+			result.append(text.text[i]);
+		}
+	}
+	shift[size] = int(result.size());
+	auto entities = EntitiesInText();
+	entities.reserve(text.entities.size());
+	for (const auto &entity : text.entities) {
+		const auto from = std::clamp(entity.offset(), 0, size);
+		const auto till = std::clamp(entity.offset() + entity.length(), from, size);
+		const auto length = shift[till] - shift[from];
+		if (length > 0) {
+			entities.push_back(EntityInText(
+				entity.type(),
+				shift[from],
+				length,
+				entity.data()));
+		}
+	}
+	text.text = std::move(result);
+	text.entities = std::move(entities);
 }
 
 class MathParser final {

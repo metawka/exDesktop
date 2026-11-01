@@ -203,6 +203,12 @@ Application::Application()
 	Ui::Integration::Set(&_private->uiIntegration);
 	Extera::Config::Instance().setWorkingDir(cWorkingDir());
 	Ui::SetMaterialSwitches(Extera::Bool(u"md3_switches"_q));
+	Ui::SetMutedSwitches(Extera::Bool(u"md3_switches_muted"_q));
+	Extera::Config::Instance().boolChanges(
+		u"md3_switches_muted"_q
+	) | rpl::on_next([=](bool enabled) {
+		Ui::SetMutedSwitches(enabled);
+	}, _lifetime);
 	Extera::Config::Instance().boolChanges(
 		u"streamer_mode"_q
 	) | rpl::skip(1) | rpl::on_next([] {

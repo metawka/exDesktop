@@ -249,6 +249,9 @@ int PeerBadge::drawGetWidth(Painter &p, Descriptor &&descriptor) {
 		? Extera::BadgeEmoji(descriptor.peer)
 		: DocumentId();
 	if (!extera && !trusted) {
+		if (_exteraStatus) {
+			_exteraStatus->painted = false;
+		}
 		return drawGetWidthInner(p, std::move(descriptor));
 	}
 	auto copy = descriptor;
@@ -466,10 +469,38 @@ QRect PeerBadge::emojiStatusRect() const {
 		Size(st::emojiSize - 2 * _emojiStatus->skip));
 }
 
+QRect PeerBadge::exteraStatusRect() const {
+	if (!_exteraStatus || !_exteraStatus->emoji || !_exteraStatus->painted) {
+		return QRect();
+	}
+	return QRect(
+		_exteraStatus->lastPosition,
+		Size(st::emojiSize - 2 * _exteraStatus->skip));
+}
+
+void PeerBadge::paintExteraStatusFrame(
+		QPainter &p,
+		crl::time now,
+		bool paused,
+		QPoint position) {
+	if (!_exteraStatus || !_exteraStatus->emoji || !_exteraStatus->painted) {
+		return;
+	}
+	_exteraStatus->emoji->paint(p, {
+		.textColor = _exteraStatus->lastColor,
+		.now = now,
+		.position = position,
+		.paused = paused || On(PowerSaving::kEmojiStatus),
+	});
+}
+
 void PeerBadge::paintEmojiStatusFrame(
 		QPainter &p,
 		crl::time now,
 		bool paused) {
+	if (_exteraStatus && _exteraStatus->painted) {
+		paintExteraStatusFrame(p, now, paused, _exteraStatus->lastPosition);
+	}
 	if (!_emojiStatus || !_emojiStatus->emoji || !_emojiStatus->painted) {
 		return;
 	}
@@ -494,6 +525,7 @@ void PeerBadge::paintEmojiStatusFrame(
 
 void PeerBadge::unload() {
 	_emojiStatus = nullptr;
+	_exteraStatus = nullptr;
 }
 
 bool PeerBadge::ready(const BotVerifyDetails *details) const {

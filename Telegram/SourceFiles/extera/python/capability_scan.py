@@ -311,30 +311,71 @@ def _call_name(node) -> str:
     return ""
 
 
+def _decoder_kind(node, functions, tainted) -> str:
+    if isinstance(node, ast.Name) and node.id in tainted:
+        return tainted[node.id]
+    if not isinstance(node, ast.Call):
+        return ""
+    name = _call_name(node)
+    owner = getattr(getattr(node.func, "value", None), "id", "")
+    if isinstance(node.func, ast.Name) and name in functions:
+        return functions[name]
+    if name == "decode" and owner != "codecs":
+        return ""
+    if name == "loads" and owner != "marshal":
+        return ""
+    return _DECODER_CALLS.get(name, "")
+
+
+def _first_kind(tree, functions, tainted) -> str:
+    for inner in ast.walk(tree):
+        kind = _decoder_kind(inner, functions, tainted)
+        if kind:
+            return kind
+    return ""
+
+
 def _exec_of_decoded(source: str) -> List[str]:
     try:
         tree = ast.parse(source)
     except Exception:
         return []
+    defs = [node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    assigns = [node for node in tree.body
+               if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None]
+    functions: Dict[str, str] = {}
+    tainted: Dict[str, str] = {}
+    changed = True
+    while changed:
+        changed = False
+        for node in defs:
+            if node.name in functions:
+                continue
+            kind = _first_kind(node, functions, tainted)
+            if kind:
+                functions[node.name] = kind
+                changed = True
+        for node in assigns:
+            kind = _first_kind(node.value, functions, tainted)
+            if not kind:
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id not in tainted:
+                    tainted[target.id] = kind
+                    changed = True
     result: List[str] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        if not isinstance(node.func, ast.Name)                 or node.func.id not in ("exec", "eval", "compile"):
+        if not isinstance(node.func, ast.Name) \
+                or node.func.id not in ("exec", "eval", "compile"):
             continue
         for arg in node.args[:1]:
-            for inner in ast.walk(arg):
-                if not isinstance(inner, ast.Call):
-                    continue
-                name = _call_name(inner)
-                owner = getattr(getattr(inner.func, "value", None), "id", "")
-                if name == "decode" and owner != "codecs":
-                    continue
-                if name == "loads" and owner != "marshal":
-                    continue
-                kind = _DECODER_CALLS.get(name)
-                if kind and ("exec+" + kind) not in result:
-                    result.append("exec+" + kind)
+            kind = _first_kind(arg, functions, tainted)
+            if kind and ("exec+" + kind) not in result:
+                result.append("exec+" + kind)
     if "marshal.loads" in source and "types.FunctionType" in source:
         result.append("marshal code")
     return result

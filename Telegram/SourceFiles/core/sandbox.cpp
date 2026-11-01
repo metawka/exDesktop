@@ -122,7 +122,11 @@ Sandbox::Sandbox(int &argc, char **argv)
 
 int Sandbox::start() {
 	{
-		const auto d = QFile::encodeName(QDir(cWorkingDir()).absolutePath());
+		auto path = QDir(cWorkingDir()).absolutePath();
+		if constexpr (Platform::IsWindows()) {
+			path = path.toLower();
+		}
+		const auto d = QFile::encodeName(path);
 		char h[33] = { 0 };
 		hashMd5Hex(d.constData(), d.size(), h);
 		_localServerName = Platform::SingleInstanceLocalServerName(h);
@@ -442,6 +446,18 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 		LOG(("Socket connect error %1, starting server and app...").arg(e));
 	}
 	_localSocket.close();
+
+	QDir().mkpath(cWorkingDir() + u"tdata"_q);
+	_dataLock = std::make_unique<QLockFile>(
+		cWorkingDir() + u"tdata/exd_instance.lock"_q);
+	_dataLock->setStaleLockTime(0);
+	if (!_dataLock->tryLock(3000)
+		&& (!Platform::IsWindows()
+			|| !_dataLock->removeStaleLockFile()
+			|| !_dataLock->tryLock())) {
+		LOG(("Data folder is used by another instance, quitting."));
+		return Quit();
+	}
 
 	// Local server does not work in WinRT build.
 #ifndef Q_OS_WINRT

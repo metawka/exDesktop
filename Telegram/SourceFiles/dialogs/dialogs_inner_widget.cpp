@@ -1221,6 +1221,7 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 					Ui::RowPainter::Paint(q, row, nullptr, context);
 					auto cached = CachedRow();
 					cached.badge = badge.emojiStatusRect();
+					cached.extera = badge.exteraStatusRect();
 					cached.preview = (view && view->hasAnimatedContent())
 						? view->lastPaintGeometry()
 						: QRect();
@@ -1231,6 +1232,9 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 						: std::pair<uint64, uint64>();
 					if (!cached.badge.isEmpty()) {
 						q.fillRect(cached.badge, st::dialogsBg);
+					}
+					if (!cached.extera.isEmpty()) {
+						q.fillRect(cached.extera, st::dialogsBg);
 					}
 					_cachedRows[cacheKey] = std::move(cached);
 				});
@@ -3737,6 +3741,13 @@ void InnerWidget::paintCachedRowOverlays(
 				return;
 			}
 		}
+	}
+	if (!i->second.extera.isEmpty()) {
+		row->entry()->chatListPeerBadge().paintExteraStatusFrame(
+			p,
+			context.now,
+			context.paused,
+			i->second.extera.topLeft());
 	}
 	if (!i->second.badge.isEmpty()) {
 		row->entry()->chatListPeerBadge().paintEmojiStatusFrame(

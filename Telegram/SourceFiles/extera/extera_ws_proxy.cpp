@@ -87,7 +87,15 @@ void Launch();
 
 void ScheduleRestart() {
 	auto &state = Instance();
-	if (state.stopping || state.restarts >= kMaxRestarts || !Enabled()) {
+	if (state.stopping || !Enabled()) {
+		return;
+	} else if (state.restarts >= kMaxRestarts) {
+		const auto &settings = Core::App().settings().proxy();
+		if (settings.isEnabled() && IsOurs(settings.selected())) {
+			Core::App().setCurrentProxy(
+				settings.selected(),
+				MTP::ProxyData::Settings::Disabled);
+		}
 		return;
 	}
 	++state.restarts;

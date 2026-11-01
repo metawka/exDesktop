@@ -1,3 +1,15 @@
+7.3.3.8 (01.11.26)
+- Option to mute inactive switches in Material Design 3 settings.
+- Plugins forwarded from trusted channels are verified by the original post.
+- Session could break after the first launch from the installer.
+- Version in the device list.
+- exDesktop badges disappeared while scrolling member and chat lists.
+- Improved malicious plugin filter.
+- Download and upload speed boost applied only after a restart.
+- No connection after TG WS Proxy failed to start several times.
+- Zalgo filter skipped messages with formatting.
+- Phone numbers with brackets were not recognized.
+
 7.3.3.7 (01.11.26)
 - Updated plugin engine: significantly improved compatibility, ready for full use.
 - Improved verification of trusted plugin sources.

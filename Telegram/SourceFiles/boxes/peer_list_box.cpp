@@ -915,6 +915,7 @@ int PeerListRow::paintNameIconGetWidth(
 		int outerWidth,
 		bool selected) {
 	_statusIconRect = QRect();
+	_exteraIconRect = QRect();
 	if (_skipPeerBadge
 		|| special()
 		|| !_savedMessagesStatus.isEmpty()
@@ -949,6 +950,7 @@ int PeerListRow::paintNameIconGetWidth(
 		.paused = false,
 	});
 	_statusIconRect = _badge.emojiStatusRect();
+	_exteraIconRect = _badge.exteraStatusRect();
 	return width;
 }
 
@@ -2079,9 +2081,12 @@ crl::time PeerListContent::paintRow(
 			[&](QImage &image) {
 				auto q = Painter(&image);
 				paintRowContent(q, now, index, false, 0);
-				const auto statusRect = row->statusIconRect();
-				if (!statusRect.isEmpty()) {
-					q.fillRect(statusRect, st.button.textBg);
+				for (const auto &rect : {
+						row->emojiIconRect(),
+						row->exteraIconRect() }) {
+					if (!rect.isEmpty()) {
+						q.fillRect(rect, st.button.textBg);
+					}
 				}
 			});
 		if (!row->statusIconRect().isEmpty()) {

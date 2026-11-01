@@ -259,4 +259,44 @@ void Verify(
 	Release(state);
 }
 
+void VerifyForward(
+		not_null<Main::Session*> session,
+		not_null<ChannelData*> channel,
+		MsgId id,
+		DocumentId document,
+		Fn<void(bool)> done) {
+	session->api().request(MTPchannels_GetMessages(
+		channel->inputChannel(),
+		MTP_vector<MTPInputMessage>(
+			1,
+			MTP_inputMessageID(MTP_int(id.bare)))
+	)).done([=](const MTPmessages_Messages &result) {
+		auto found = false;
+		result.match([](const MTPDmessages_messagesNotModified &) {
+		}, [&](const auto &data) {
+			for (const auto &message : data.vmessages().v) {
+				message.match([&](const MTPDmessage &data) {
+					const auto media = data.vmedia();
+					if (!media) {
+						return;
+					}
+					media->match([&](const MTPDmessageMediaDocument &data) {
+						if (const auto original = data.vdocument()) {
+							original->match([&](const MTPDdocument &data) {
+								found = (DocumentId(data.vid().v) == document);
+							}, [](const auto &) {
+							});
+						}
+					}, [](const auto &) {
+					});
+				}, [](const auto &) {
+				});
+			}
+		});
+		done(found);
+	}).fail([=] {
+		done(false);
+	}).send();
+}
+
 } // namespace Extera::PluginTrust

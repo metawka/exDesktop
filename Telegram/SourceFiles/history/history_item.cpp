@@ -4720,11 +4720,7 @@ void HistoryItem::detectTextLinks(
 }
 
 void HistoryItem::setText(TextWithEntities textWithEntities) {
-	if (textWithEntities.entities.empty()
-		&& Extera::HasZalgo(textWithEntities.text)) {
-		textWithEntities.text = Extera::FilterZalgo(
-			std::move(textWithEntities.text));
-	}
+	Extera::FilterZalgo(textWithEntities);
 	Extera::ApplyLocalPremiumEmoji(textWithEntities);
 	detectTextLinks(textWithEntities);
 	setTextValue((_media && _media->consumeMessageText(textWithEntities))

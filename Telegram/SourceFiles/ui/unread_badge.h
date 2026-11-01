@@ -68,6 +68,12 @@ public:
 	};
 	int drawGetWidth(Painter &p, Descriptor &&descriptor);
 	[[nodiscard]] QRect emojiStatusRect() const;
+	[[nodiscard]] QRect exteraStatusRect() const;
+	void paintExteraStatusFrame(
+		QPainter &p,
+		crl::time now,
+		bool paused,
+		QPoint position);
 	void paintEmojiStatusFrame(QPainter &p, crl::time now, bool paused);
 	void paintEmojiStatusFrame(
 		QPainter &p,
