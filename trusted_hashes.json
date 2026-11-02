@@ -1,5 +1,5 @@
 {
-  "offset": 354809853,
+  "offset": 354809873,
   "hashes": [
     {
       "sha256": "f03663d02e67a69e61a8b06bd9c8f89afcfbe59734d0ece18eb9ca166ecd9cfd",
@@ -2856,6 +2856,60 @@
       "channel": 3914431400,
       "message": 21,
       "name": "customsnow.plugin"
+    },
+    {
+      "sha256": "fa7629c5ff6311a9fca0849771ffe609c8cba3cc50015ce5a5c0076d8a8dc8bf",
+      "channel": 2189715950,
+      "message": 1204,
+      "name": "GWS.plugin"
+    },
+    {
+      "sha256": "2c263dc8649cd95ab717a22d6d902f59203a04199928f189fb8d3114820ab723",
+      "channel": 2189715950,
+      "message": 1205,
+      "name": "chess_game.plugin"
+    },
+    {
+      "sha256": "b212460915c2b7fff6e17f86f53ec99a2169240d08561f466f0d92396fc56f9a",
+      "channel": 2189715950,
+      "message": 1207,
+      "name": "channel_inspector.plugin"
+    },
+    {
+      "sha256": "2f7f20c67b8a90a05d035ff4b074d3694bc283ba1afe6aec56c241cf5e1a89ac",
+      "channel": 2189715950,
+      "message": 1208,
+      "name": "mini_app_domain.plugin"
+    },
+    {
+      "sha256": "fdb8c5bd625dc25f5c48e3966daf86859ba89e795243630338002fd9f9776c2d",
+      "channel": 2189715950,
+      "message": 1209,
+      "name": "settings_wallpaper.plugin"
+    },
+    {
+      "sha256": "56db6a67debf61bcb7dfa91e6959112cb8888f8ed44295ede05ac4095be6acea",
+      "channel": 2189715950,
+      "message": 1210,
+      "name": "ayu_round_effects.plugin"
+    },
+    {
+      "sha256": "310637a9785183abfe22dcc4ae3a2e6d8aacbc83373ad97b7ee886c1979019b4",
+      "channel": 2189715950,
+      "message": 1211,
+      "name": "avatar_in_dm_dex.plugin"
+    },
+    {
+      "sha256": "aa7bc3af9b820066150a0d3144bf2b52db972bc60437acdaf3b70032afddf073",
+      "channel": 2189715950,
+      "message": 1212,
+      "name": "selall.plugin"
+    },
+    {
+      "sha256": "5ec0dc1cde78e468ed7abe48a2caecb8c278a903427f438cd227cb2d23bae2bd",
+      "channel": 2189715950,
+      "message": 1213,
+      "name": "melodic_piano_typing.plugin"
     }
   ],
   "scanned": {
@@ -2863,6 +2917,6 @@
     "2189715950": 0
   },
   "latest": {
-    "3914431400": 22
+    "3914431400": 27
   }
 }
