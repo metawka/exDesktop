@@ -1,5 +1,5 @@
 {
-  "offset": 354809843,
+  "offset": 354809853,
   "hashes": [
     {
       "sha256": "f03663d02e67a69e61a8b06bd9c8f89afcfbe59734d0ece18eb9ca166ecd9cfd",
@@ -2850,6 +2850,12 @@
       "channel": 2189715950,
       "message": 1203,
       "name": "clawd_pet.plugin"
+    },
+    {
+      "sha256": "0b22178a026f21f6a840b30a66265a81ec49003b7129ba865df6e038a0461682",
+      "channel": 3914431400,
+      "message": 21,
+      "name": "customsnow.plugin"
     }
   ],
   "scanned": {
@@ -2857,6 +2863,6 @@
     "2189715950": 0
   },
   "latest": {
-    "3914431400": 19
+    "3914431400": 22
   }
 }
