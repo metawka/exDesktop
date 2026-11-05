@@ -1,5 +1,5 @@
 {
-  "offset": 354809901,
+  "offset": 354809914,
   "hashes": [
     {
       "sha256": "f03663d02e67a69e61a8b06bd9c8f89afcfbe59734d0ece18eb9ca166ecd9cfd",
@@ -2928,6 +2928,60 @@
       "channel": 3914431400,
       "message": 31,
       "name": "mini_app_domain.plugin"
+    },
+    {
+      "sha256": "762e9b9d6530c4ef93dfea33dba18a7507492ec258b1cef8bfb7eab79227700e",
+      "channel": 2189715950,
+      "message": 1218,
+      "name": "pinterest_pic.plugin"
+    },
+    {
+      "sha256": "3c8c44775c89b836d608bab8d60a8e6dc69911eb2a4e8b7da46fc7d72c544805",
+      "channel": 2189715950,
+      "message": 1219,
+      "name": "player_clip.plugin"
+    },
+    {
+      "sha256": "501b9320eccb605187baf500a48190b0c0ae66e9c755de2788ae8e38cd89f174",
+      "channel": 2189715950,
+      "message": 1220,
+      "name": "telegram_jam.plugin"
+    },
+    {
+      "sha256": "8a06b5736f7a97d6fbf13b30709a293caf16f45c429b2e253098a9e071a33063",
+      "channel": 2189715950,
+      "message": 1221,
+      "name": "custom_emoji_nick.plugin"
+    },
+    {
+      "sha256": "497f614241eaf8f45568a89db8c07c1923f2344c0d8ffbdbd58ed2f7567f4420",
+      "channel": 2189715950,
+      "message": 1222,
+      "name": "profile_wallpaper.plugin"
+    },
+    {
+      "sha256": "06fd876e7ab27251a98f9239a8fd325816b58f7043aeeab27ff9541e09bf9268",
+      "channel": 2189715950,
+      "message": 1223,
+      "name": "instant_tab_switch.plugin"
+    },
+    {
+      "sha256": "825ad3b01e4ed2fc8d9722308eaf59630f0263867975ab6294d23d7644e61041",
+      "channel": 2189715950,
+      "message": 1224,
+      "name": "ndb.plugin"
+    },
+    {
+      "sha256": "e5e5b8889ca7f19ac8ed8cc9862e39f71ebaf98621639f69f03a1c02643ab10e",
+      "channel": 2189715950,
+      "message": 1225,
+      "name": "folder_swipe.plugin"
+    },
+    {
+      "sha256": "87682780fb4ad77cf07d2d7e1a44f4ca78a8499f82c73389b261a45e03ebe85a",
+      "channel": 2189715950,
+      "message": 1226,
+      "name": "hide_empty_stories.plugin"
     }
   ],
   "scanned": {
