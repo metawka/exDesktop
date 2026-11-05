@@ -1,5 +1,5 @@
 {
-  "offset": 354809914,
+  "offset": 354809920,
   "hashes": [
     {
       "sha256": "f03663d02e67a69e61a8b06bd9c8f89afcfbe59734d0ece18eb9ca166ecd9cfd",
@@ -2982,6 +2982,12 @@
       "channel": 2189715950,
       "message": 1226,
       "name": "hide_empty_stories.plugin"
+    },
+    {
+      "sha256": "667c4c3105a63c0220ce0920568cf46a07b04cd686e0fd63c498113db109cfa6",
+      "channel": 3914431400,
+      "message": 35,
+      "name": "selall.plugin"
     }
   ],
   "scanned": {
@@ -2989,6 +2995,6 @@
     "2189715950": 0
   },
   "latest": {
-    "3914431400": 34
+    "3914431400": 35
   }
 }
