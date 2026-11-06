@@ -1,254 +1,123 @@
 {
-  "base": {
-    "types": {
-      "default": {
-        "emoji": "5436013804443971578",
-        "text": ""
-      },
-      "developer": {
-        "emoji": "5436088317831588911",
-        "text": ""
-      },
-      "bughunter": {
-        "emoji": "5435955706421358710",
-        "text": ""
-      },
-      "helper": {
-        "emoji": "5436122668980022844",
-        "text": ""
-      },
-      "donor": {
-        "emoji": "5436013804443971578",
-        "text": ""
-      },
-      "trusted": {
-        "emoji": "5436179418382906594",
-        "text": ""
-      }
+  "types": {
+    "default": {
+      "emoji": "5436013804443971578",
+      "text": ""
     },
-    "users": [
-      {
-        "id": 1388181090,
-        "type": "developer"
-      },
-      {
-        "id": 5288193145,
-        "type": "helper"
-      },
-      {
-        "id": 8406822449,
-        "type": "donor",
-        "text": "Пользователь поддержал разработку exDesktop самым первым, большое спасибо <3"
-      },
-      {
-        "id": 1876746076,
-        "type": "custom",
-        "emoji": "5287571024500498635",
-        "text": "мяу"
-      },
-      {
-        "id": 617070284,
-        "type": "custom",
-        "emoji": "5425060246269736415",
-        "text": "фури"
-      },
-      {
-        "id": 969434663,
-        "type": "helper"
-      },
-      {
-        "id": 8354550825,
-        "type": "donor"
-      },
-      {
-        "id": 7386535306,
-        "type": "donor"
-      },
-      {
-        "id": 965180470,
-        "type": "donor"
-      },
-      {
-        "id": 1931431571,
-        "type": "donor"
-      },
-      {
-        "id": 7352054989,
-        "type": "donor"
-      },
-      {
-        "id": 6195937522,
-        "type": "donor"
-      },
-      {
-        "id": 6321868633,
-        "type": "custom",
-        "emoji": "5384559872899555845",
-        "text": "тест"
-      }
-    ],
-    "channels": [
-      {
-        "id": 2661845134,
-        "type": "developer"
-      },
-      {
-        "id": 4433892778,
-        "type": "developer"
-      },
-      {
-        "id": 4478798161,
-        "type": "developer"
-      },
-      {
-        "id": 3978523897,
-        "type": "developer"
-      }
-    ],
-    "bots": [
-      {
-        "id": 9272062768,
-        "type": "developer"
-      },
-      {
-        "id": 9299605786,
-        "type": "developer"
-      }
-    ],
-    "trusted": [
-      {
-        "id": 2189715950,
-        "username": "exteraPluginsSup",
-        "name": "exteraGram Plugins"
-      },
-      {
-        "id": 3914431400,
-        "username": "exDesktopPlugins",
-        "name": "exDesktop Plugins"
-      }
-    ]
+    "developer": {
+      "emoji": "5436088317831588911",
+      "text": ""
+    },
+    "bughunter": {
+      "emoji": "5435955706421358710",
+      "text": ""
+    },
+    "helper": {
+      "emoji": "5436122668980022844",
+      "text": ""
+    },
+    "donor": {
+      "emoji": "5436013804443971578",
+      "text": ""
+    },
+    "trusted": {
+      "emoji": "5436179418382906594",
+      "text": ""
+    }
   },
-  "data": {
-    "types": {
-      "default": {
-        "emoji": "5436013804443971578",
-        "text": ""
-      },
-      "developer": {
-        "emoji": "5436088317831588911",
-        "text": ""
-      },
-      "bughunter": {
-        "emoji": "5435955706421358710",
-        "text": ""
-      },
-      "helper": {
-        "emoji": "5436122668980022844",
-        "text": ""
-      },
-      "donor": {
-        "emoji": "5436013804443971578",
-        "text": ""
-      },
-      "trusted": {
-        "emoji": "5436179418382906594",
-        "text": ""
-      }
+  "users": [
+    {
+      "id": 1388181090,
+      "type": "developer"
     },
-    "users": [
-      {
-        "id": 1388181090,
-        "type": "developer"
-      },
-      {
-        "id": 5288193145,
-        "type": "helper"
-      },
-      {
-        "id": 8406822449,
-        "type": "donor",
-        "text": "Пользователь поддержал разработку exDesktop самым первым, большое спасибо <3"
-      },
-      {
-        "id": 1876746076,
-        "type": "custom",
-        "emoji": "5287571024500498635",
-        "text": "мяу"
-      },
-      {
-        "id": 617070284,
-        "type": "custom",
-        "emoji": "5425060246269736415",
-        "text": "фури"
-      },
-      {
-        "id": 969434663,
-        "type": "helper"
-      },
-      {
-        "id": 8354550825,
-        "type": "donor"
-      },
-      {
-        "id": 7386535306,
-        "type": "donor"
-      },
-      {
-        "id": 965180470,
-        "type": "donor"
-      },
-      {
-        "id": 1931431571,
-        "type": "donor"
-      },
-      {
-        "id": 7352054989,
-        "type": "donor"
-      },
-      {
-        "id": 6195937522,
-        "type": "donor"
-      }
-    ],
-    "channels": [
-      {
-        "id": 2661845134,
-        "type": "developer"
-      },
-      {
-        "id": 4433892778,
-        "type": "developer"
-      },
-      {
-        "id": 4478798161,
-        "type": "developer"
-      },
-      {
-        "id": 3978523897,
-        "type": "developer"
-      }
-    ],
-    "bots": [
-      {
-        "id": 9272062768,
-        "type": "developer"
-      },
-      {
-        "id": 9299605786,
-        "type": "developer"
-      }
-    ],
-    "trusted": [
-      {
-        "id": 2189715950,
-        "username": "exteraPluginsSup",
-        "name": "exteraGram Plugins"
-      },
-      {
-        "id": 3914431400,
-        "username": "exDesktopPlugins",
-        "name": "exDesktop Plugins"
-      }
-    ]
-  }
+    {
+      "id": 5288193145,
+      "type": "helper"
+    },
+    {
+      "id": 8406822449,
+      "type": "donor",
+      "text": "Пользователь поддержал разработку exDesktop самым первым, большое спасибо <3"
+    },
+    {
+      "id": 1876746076,
+      "type": "custom",
+      "emoji": "5287571024500498635",
+      "text": "мяу"
+    },
+    {
+      "id": 617070284,
+      "type": "custom",
+      "emoji": "5425060246269736415",
+      "text": "фури"
+    },
+    {
+      "id": 969434663,
+      "type": "helper"
+    },
+    {
+      "id": 8354550825,
+      "type": "donor"
+    },
+    {
+      "id": 7386535306,
+      "type": "donor"
+    },
+    {
+      "id": 965180470,
+      "type": "donor"
+    },
+    {
+      "id": 1931431571,
+      "type": "donor"
+    },
+    {
+      "id": 7352054989,
+      "type": "donor"
+    },
+    {
+      "id": 6195937522,
+      "type": "donor"
+    }
+  ],
+  "channels": [
+    {
+      "id": 2661845134,
+      "type": "developer"
+    },
+    {
+      "id": 4433892778,
+      "type": "developer"
+    },
+    {
+      "id": 4478798161,
+      "type": "developer"
+    },
+    {
+      "id": 3978523897,
+      "type": "developer"
+    }
+  ],
+  "bots": [
+    {
+      "id": 9272062768,
+      "type": "developer"
+    },
+    {
+      "id": 9299605786,
+      "type": "developer"
+    }
+  ],
+  "trusted": [
+    {
+      "id": 2189715950,
+      "username": "exteraPluginsSup",
+      "name": "exteraGram Plugins"
+    },
+    {
+      "id": 3914431400,
+      "username": "exDesktopPlugins",
+      "name": "exDesktop Plugins"
+    }
+  ]
 }
