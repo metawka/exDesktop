@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/dialogs_inner_widget.h"
 
+#include "extera/extera_streamer.h"
+
 #include "dialogs/dialogs_three_state_icon.h"
 #include "dialogs/ui/chat_search_empty.h"
 #include "dialogs/ui/chat_search_in.h"
@@ -3742,14 +3744,18 @@ void InnerWidget::paintCachedRowOverlays(
 			}
 		}
 	}
-	if (!i->second.extera.isEmpty()) {
+	const auto streamerHidden = [&] {
+		const auto history = row->history();
+		return history && Extera::Streamer::ForPeer(history->peer).name;
+	}();
+	if (!i->second.extera.isEmpty() && !streamerHidden) {
 		row->entry()->chatListPeerBadge().paintExteraStatusFrame(
 			p,
 			context.now,
 			context.paused,
 			i->second.extera.topLeft());
 	}
-	if (!i->second.badge.isEmpty()) {
+	if (!i->second.badge.isEmpty() && !streamerHidden) {
 		row->entry()->chatListPeerBadge().paintEmojiStatusFrame(
 			p,
 			context.now,

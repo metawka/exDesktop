@@ -123,6 +123,10 @@ jobs:
             "$APP/Contents/Resources/python311/lib/python3.11/site-packages"
           find "$APP/Contents/Resources/python311" -name "__pycache__" -type d -prune -exec rm -rf {} +
           rm -rf "$APP/Contents/Resources/python311/lib/python3.11/config-3.11-darwin"
+          mkdir -p "$APP/Contents/Resources/python/extera"
+          cp -R "$GITHUB_WORKSPACE/tdesktop/Telegram/SourceFiles/extera/python/." "$APP/Contents/Resources/python/extera/"
+          mkdir -p "$APP/Contents/Resources/python/tgws"
+          cp -R "$GITHUB_WORKSPACE/tdesktop/Telegram/SourceFiles/extera/tgws/." "$APP/Contents/Resources/python/tgws/"
           find "$APP" -type l ! -exec test -e {} \; -print -delete
           rm -rf exDesktop.app
           mv "$APP" exDesktop.app

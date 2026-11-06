@@ -23,5 +23,6 @@ namespace Settings {
 [[nodiscard]] Type ExteraSupportId();
 
 void ShowExteraSupportBox(not_null<Window::SessionController*> controller);
+void ShowExteraAppIconBox(not_null<Window::SessionController*> controller);
 
 } // namespace Settings

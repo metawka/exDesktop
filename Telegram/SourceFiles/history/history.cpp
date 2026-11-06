@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history.h"
 
+#include "extera/extera_config.h"
+
 #include "history/view/history_view_element.h"
 #include "history/view/history_view_item_preview.h"
 #include "history/view/history_view_translate_tracker.h"
@@ -627,6 +629,7 @@ not_null<HistoryItem*> History::createItem(
 	const auto result = message.match([&](const auto &data) {
 		return makeMessage(id, data, localFlags);
 	});
+	owner().exteraRemember(peer->id, id, message);
 	if (newMessage && result->out() && result->isRegular()) {
 		session().topPeers().increment(peer, result->date());
 		if (result->starsPaid()) {
@@ -1898,7 +1901,75 @@ void History::addEdgesToSharedMedia() {
 	}
 }
 
-void History::addOlderSlice(const QVector<MTPMessage> &slice) {
+QVector<MTPMessage> History::exteraMergeDeleted(
+		const QVector<MTPMessage> &slice,
+		MsgId lower,
+		MsgId upper,
+		bool includeExisting) {
+	if (!Extera::SaveDeleted()) {
+		return slice;
+	}
+	const auto &stored = owner().exteraDeletedFor(peer->id);
+	if (stored.empty()) {
+		return slice;
+	}
+	auto result = slice;
+	auto present = base::flat_set<MsgId>();
+	for (const auto &message : slice) {
+		present.emplace(IdFromMessage(message));
+	}
+	auto added = false;
+	for (auto i = stored.lower_bound(lower); i != end(stored); ++i) {
+		const auto id = i->first;
+		if (upper && id >= upper) {
+			break;
+		} else if (present.contains(id)
+			|| (!includeExisting && owner().message(peer, id))) {
+			continue;
+		}
+		const auto &bytes = i->second;
+		if (bytes.size() % sizeof(mtpPrime)) {
+			continue;
+		}
+		auto buffer = mtpBuffer(bytes.size() / sizeof(mtpPrime));
+		memcpy(buffer.data(), bytes.constData(), bytes.size());
+		auto from = buffer.constData();
+		auto message = MTPMessage();
+		if (!message.read(from, from + buffer.size())) {
+			continue;
+		}
+		owner().exteraMarkDeleted(FullMsgId(peer->id, id));
+		result.push_back(message);
+		added = true;
+	}
+	if (added) {
+		std::stable_sort(result.begin(), result.end(), [](
+				const MTPMessage &a,
+				const MTPMessage &b) {
+			return IdFromMessage(a) > IdFromMessage(b);
+		});
+	}
+	return result;
+}
+
+void History::addOlderSlice(const QVector<MTPMessage> &original) {
+	auto slice = original;
+	if (!original.isEmpty() && Extera::SaveDeleted()) {
+		auto lowest = IdFromMessage(original.front());
+		auto highest = lowest;
+		for (const auto &message : original) {
+			const auto id = IdFromMessage(message);
+			lowest = std::min(lowest, id);
+			highest = std::max(highest, id);
+		}
+		const auto last = lastMessage();
+		const auto bottom = !last || (last->id <= highest);
+		const auto oldest = minMsgId();
+		slice = exteraMergeDeleted(
+			original,
+			lowest,
+			oldest ? oldest : bottom ? MsgId(0) : (highest + 1));
+	}
 	if (slice.isEmpty()) {
 		_loadedAtTop = true;
 		checkLocalMessages();
@@ -1947,7 +2018,24 @@ void History::addCreatedOlderSlice(
 	addToSharedMedia(items);
 }
 
-void History::addNewerSlice(const QVector<MTPMessage> &slice) {
+void History::addNewerSlice(const QVector<MTPMessage> &original) {
+	auto slice = original;
+	if (!original.isEmpty() && Extera::SaveDeleted()) {
+		auto lowest = IdFromMessage(original.front());
+		auto highest = lowest;
+		for (const auto &message : original) {
+			const auto id = IdFromMessage(message);
+			lowest = std::min(lowest, id);
+			highest = std::max(highest, id);
+		}
+		const auto last = lastMessage();
+		const auto bottom = !last || (last->id <= highest);
+		const auto newest = maxMsgId();
+		slice = exteraMergeDeleted(
+			original,
+			newest ? (newest + 1) : lowest,
+			bottom ? MsgId(0) : (highest + 1));
+	}
 	bool wasLoadedAtBottom = loadedAtBottom();
 
 	if (slice.isEmpty()) {

@@ -199,6 +199,11 @@ public:
 		const QVector<MTPMessage> &data);
 
 	void addOlderSlice(const QVector<MTPMessage> &slice);
+	[[nodiscard]] QVector<MTPMessage> exteraMergeDeleted(
+		const QVector<MTPMessage> &slice,
+		MsgId lower,
+		MsgId upper,
+		bool includeExisting = false);
 	void addNewerSlice(const QVector<MTPMessage> &slice);
 
 	void newItemAdded(not_null<HistoryItem*> item, NewAddType type);

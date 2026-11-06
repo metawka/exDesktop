@@ -877,10 +877,10 @@ void MainMenu::setupMenu() {
 	});
 	tag("settings");
 
-	addAction(
+	const auto streamer = addAction(
 		tr::lng_extera_streamer_mode(),
-		{ &st::menuIconUserHide }
-	)->toggleOn(
+		{ &st::menuIconUserHide });
+	streamer->toggleOn(
 		Extera::Config::Instance().boolChanges(u"streamer_mode"_q)
 	)->toggledChanges(
 	) | rpl::filter([](bool enabled) {
@@ -888,7 +888,26 @@ void MainMenu::setupMenu() {
 	}) | rpl::on_next([](bool enabled) {
 		Extera::Config::Instance().setBool(u"streamer_mode"_q, enabled);
 	}, lifetime());
+	streamer->events(
+	) | rpl::filter([](not_null<QEvent*> e) {
+		return e->type() == QEvent::ContextMenu;
+	}) | rpl::on_next([=] {
+		Extera::Streamer::ShowMenu(controller);
+	}, streamer->lifetime());
 	tag("streamer");
+
+	addAction(
+		tr::lng_exd_ayu_ghost_mode(),
+		{ &st::menuIconStealth }
+	)->toggleOn(
+		Extera::GhostActiveValue()
+	)->toggledChanges(
+	) | rpl::filter([](bool enabled) {
+		return enabled != Extera::GhostActive();
+	}) | rpl::on_next([](bool enabled) {
+		Extera::SetGhostAll(enabled);
+	}, lifetime());
+	tag("ghost");
 
 	_nightThemeToggle = addAction(
 		tr::lng_menu_night_mode(),

@@ -7,6 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_reply.h"
 
+#include "extera/extera_config.h"
+#include "styles/style_settings.h"
+#include "extera/extera_streamer.h"
+
 #include "core/click_handler_types.h"
 #include "core/ui_integration.h"
 #include "data/stickers/data_custom_emoji.h"
@@ -829,13 +833,16 @@ void Reply::paint(
 	y += st::historyReplyTop;
 	const auto rect = QRect(x, y, w, _height);
 	const auto selected = context.selected();
-	const auto backgroundEmojiId = _colorPeer
+	const auto exdPlain = Extera::Bool(u"disable_colorful_replies"_q);
+	const auto backgroundEmojiId = (_colorPeer && !exdPlain)
 		? _colorPeer->backgroundEmojiId()
 		: DocumentId();
-	const auto colorIndexPlusOne = _colorPeer
+	const auto colorIndexPlusOne = exdPlain
+		? 0
+		: _colorPeer
 		? (_colorPeer->colorIndex() + 1)
 		: _hiddenSenderColorIndexPlusOne;
-	const auto &colorCollectible = _colorPeer
+	const auto &colorCollectible = (_colorPeer && !exdPlain)
 		? _colorPeer->colorCollectible()
 		: nullptr;
 	const auto useColorCollectible = colorCollectible && !context.outbg;
@@ -1048,7 +1055,22 @@ void Reply::paint(
 					copy->linkFg = owned->color();
 					replyToTextPalette = &*copy;
 				}
-				_text.draw(p, {
+				if (Extera::Streamer::HideTextOf(view->history()->peer)) {
+					auto hq = PainterHighQualityEnabler(p);
+					p.setPen(Qt::NoPen);
+					p.setBrush(anim::with_alpha(cache->icon, 0.35));
+					const auto bar = st::exteraStreamerBar;
+					const auto line = st::normalFont->height;
+					p.drawRoundedRect(
+						QRect(
+							textLeft,
+							textTop + (line - bar) / 2,
+							std::max(textw * 3 / 4, line * 2),
+							bar),
+						bar / 2.,
+						bar / 2.);
+					p.setTextPalette(stm->textPalette);
+				} else _text.draw(p, {
 					.position = { textLeft, textTop },
 					.geometry = textGeometry(textw, firstLineSkip),
 					.palette = replyToTextPalette,

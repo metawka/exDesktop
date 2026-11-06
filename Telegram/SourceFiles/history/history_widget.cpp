@@ -7752,11 +7752,14 @@ void HistoryWidget::moveFieldControls() {
 		const auto barTop = _fieldBarCancel->isHidden()
 			? (_field->y() - st::historySendPadding)
 			: _fieldBarCancel->y();
+		const auto withMenu = _botMenu && !_botMenu->isHidden();
 		_exdCharsCounter->move(
-			std::max(
-				_attachToggle->x() + (_attachToggle->width()
-					- _exdCharsCounter->width()) / 2,
-				st::historySendPadding),
+			withMenu
+				? _field->x()
+				: std::max(
+					_attachToggle->x() + (_attachToggle->width()
+						- _exdCharsCounter->width()) / 2,
+					st::historySendPadding),
 			barTop - _exdCharsCounter->height() - st::historySendPadding);
 		_exdCharsCounter->raise();
 	}

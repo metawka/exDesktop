@@ -1928,6 +1928,10 @@ PRIVATE
     extera/extera_pdf_viewer.h
     extera/extera_plugin_trust.cpp
     extera/extera_plugin_trust.h
+    extera/exd_plugin_guard.cpp
+    extera/exd_plugin_guard.h
+    extera/exd_ai_chat_section.cpp
+    extera/exd_ai_chat_section.h
     extera/extera_round_video.cpp
     extera/extera_round_video.h
     extera/extera_ws_proxy.cpp
@@ -2789,6 +2793,7 @@ set_target_properties(Telegram PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${output_fold
 if (WIN32)
     target_include_directories(Telegram PRIVATE ${libs_loc}/python311/include)
     target_link_libraries(Telegram PRIVATE ${libs_loc}/python311/libs/python311.lib)
+    target_link_libraries(Telegram PRIVATE Dnsapi)
     add_custom_command(TARGET Telegram POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${libs_loc}/python311/embed $<TARGET_FILE_DIR:Telegram>/python
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/SourceFiles/extera/python $<TARGET_FILE_DIR:Telegram>/python/extera

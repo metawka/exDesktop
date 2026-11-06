@@ -13,6 +13,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/weak_qptr.h"
 #include "base/platform/base_platform_info.h"
 #include "styles/style_widgets.h"
+#include "styles/style_settings.h"
+#include "styles/style_boxes.h"
+
+#include "extera/extera_config.h"
 
 namespace Ui {
 namespace {
@@ -265,7 +269,12 @@ void FilledSlider::paintEvent(QPaintEvent *e) {
 }
 
 MediaSlider::MediaSlider(QWidget *parent, const style::MediaSlider &st) : ContinuousSlider(parent)
-, _st(st) {
+, _st(st)
+, _material(Extera::Bool(u"md3_sliders"_q)
+	&& (&st == &st::settingsScale
+		|| &st == &st::autoDownloadLimitSlider
+		|| &st == &st::defaultContinuousSlider))
+, _materialAuto(Extera::Bool(u"md3_sliders"_q)) {
 }
 
 QSize MediaSlider::getSeekDecreaseSize() const {
@@ -343,19 +352,48 @@ void MediaSlider::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
 	PainterHighQualityEnabler hq(p);
 	if (_material && isHorizontal()) {
-		const auto value = getCurrentValue();
-		const auto handle = style::ConvertScale(4);
+		const auto target = getCurrentValue();
+		if (_materialTarget != target) {
+			const auto shown = (_materialTarget < 0.)
+				? target
+				: _materialMove.value(_materialTarget);
+			_materialTarget = target;
+			if (std::abs(shown - target) * width() > style::ConvertScale(6)) {
+				_materialMove.start(
+					[=] { update(); },
+					shown,
+					target,
+					180,
+					anim::easeOutCubic);
+			} else {
+				_materialMove.stop();
+			}
+		}
+		const auto value = _materialMove.value(target);
+		const auto down = mouseDownNow();
+		if (_materialPressed != down) {
+			_materialPressed = down;
+			_materialPress.start(
+				[=] { update(); },
+				down ? 0. : 1.,
+				down ? 1. : 0.,
+				150,
+				anim::easeOutCubic);
+		}
+		const auto pressed = _materialPress.value(down ? 1. : 0.);
+		const auto handle = style::ConvertScale(4)
+			- pressed * style::ConvertScale(2);
 		const auto handleHeight = std::min(height(), style::ConvertScale(26));
 		const auto gap = style::ConvertScale(5);
 		const auto track = std::min(height(), style::ConvertScale(14));
 		const auto radius = track / 2.;
 		const auto available = width() - handle;
-		const auto mid = int(base::SafeRound(handle / 2. + value * available));
+		const auto mid = handle / 2. + value * available;
 		const auto top = (height() - track) / 2;
 		const auto disabled = isDisabled();
 		p.setPen(Qt::NoPen);
 		p.setBrush(disabled ? _st.activeFgDisabled : _st.activeFg);
-		const auto activeRight = mid - handle / 2 - gap;
+		const auto activeRight = mid - handle / 2. - gap;
 		if (activeRight > 0) {
 			p.drawRoundedRect(
 				QRectF(0, top, activeRight, track),
@@ -363,7 +401,7 @@ void MediaSlider::paintEvent(QPaintEvent *e) {
 				std::min(radius, activeRight / 2.));
 		}
 		p.setBrush(disabled ? _st.inactiveFgDisabled : _st.inactiveFg);
-		const auto inactiveLeft = mid + handle / 2 + gap;
+		const auto inactiveLeft = mid + handle / 2. + gap;
 		if (inactiveLeft < width()) {
 			const auto w = width() - inactiveLeft;
 			p.drawRoundedRect(

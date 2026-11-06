@@ -83,6 +83,9 @@ protected:
 	float64 getCurrentValue() const {
 		return _mouseDown ? _downValue : _value;
 	}
+	bool mouseDownNow() const {
+		return _mouseDown;
+	}
 	float64 getCurrentReceivedTill() const {
 		return _receivedTill;
 	}
@@ -162,6 +165,9 @@ public:
 
 	void setAlwaysDisplayMarker(bool alwaysDisplayMarker) {
 		_alwaysDisplayMarker = alwaysDisplayMarker;
+		if (alwaysDisplayMarker && _materialAuto) {
+			_material = true;
+		}
 		update();
 	}
 	void disablePaint(bool disabled);
@@ -268,6 +274,11 @@ private:
 	bool _alwaysDisplayMarker = false;
 	bool _paintDisabled = false;
 	bool _material = false;
+	bool _materialAuto = false;
+	bool _materialPressed = false;
+	float64 _materialTarget = -1.;
+	Ui::Animations::Simple _materialMove;
+	Ui::Animations::Simple _materialPress;
 
 	std::vector<Divider> _dividers;
 	DividerStyle _dividerStyle = DividerStyle::Marks;

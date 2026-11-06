@@ -1,3 +1,29 @@
+7.3.3.9 (06.11.26)
+- Plugin security check: static rules, PluginGuard vector model and optional AI arbiter, full analysis, installation block and plugin reports.
+- AyuGram features: ghost mode, saved deleted messages, edit history, deleted marks, "Keep locally" on deletion.
+- Local Telegram Premium: client limits, no ads, Premium emoji, chat translation, voice transcription via Telegram or Gemini.
+- AI Chat as a separate conversation in the main settings.
+- Streamer mode: hidden avatars, names and messages everywhere, presets, side menu actions, global shortcuts for toggle and screenshot.
+- Default client for tg://, tonsite:// and ton:// links.
+- Double right click actions.
+- TG WS Proxy settings.
+- Pack owner in the sticker and emoji set menu.
+- App Icon in Telegram chat settings.
+- Material Design 3 sliders everywhere.
+- Linux and macOS installation with one curl command.
+- exDesktop badges for bots, default badge emoji, readable badges in light themes.
+- Faster downloads.
+- Forwarding from another account keeps the original sender.
+- Phone number hiding everywhere with blur or Unknown Number.
+- Better ID recognition.
+- Plugin icons from emoji and emoji packs.
+- Unlimited recent stickers, system emoji and system font did not work.
+- Plugin engine did not work on Linux and macOS.
+- Unpin icon in the quick actions bar.
+- Black trace around rounded avatars.
+- Plugin cards lost icons and buttons.
+- Crash when forwarding from another account.
+
 7.3.3.8 (01.11.26)
 - Option to mute inactive switches in Material Design 3 settings.
 - Plugins forwarded from trusted channels are verified by the original post.

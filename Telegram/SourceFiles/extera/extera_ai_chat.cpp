@@ -1,6 +1,10 @@
 #include "extera/extera_ai_chat.h"
 
 #include "extera/extera_config.h"
+#include "base/unixtime.h"
+#include "extera/exd_ai_chat_section.h"
+#include "settings.h"
+#include <QtCore/QFile>
 #include "lang/lang_keys.h"
 #include "ui/layers/generic_box.h"
 #include "ui/vertical_list.h"
@@ -33,8 +37,36 @@ const auto kModels = std::array{
 
 struct Message {
 	bool user = false;
+	bool error = false;
 	QString text;
+	TimeId date = 0;
 };
+
+[[nodiscard]] QString ErrorFrom(const QByteArray &data) {
+	const auto document = QJsonDocument::fromJson(data);
+	const auto object = document.isArray()
+		? document.array().first().toObject()
+		: document.object();
+	const auto message = object.value(u"error"_q).toObject()
+		.value(u"message"_q).toString();
+	if (!message.isEmpty()) {
+		return message;
+	}
+	const auto blocked = object.value(u"promptFeedback"_q).toObject()
+		.value(u"blockReason"_q).toString();
+	if (!blocked.isEmpty()) {
+		return u"Blocked: "_q + blocked;
+	}
+	const auto candidates = object.value(u"candidates"_q).toArray();
+	if (!candidates.isEmpty()) {
+		const auto reason = candidates[0].toObject()
+			.value(u"finishReason"_q).toString();
+		if (!reason.isEmpty() && reason != u"STOP"_q) {
+			return u"Finish reason: "_q + reason;
+		}
+	}
+	return QString();
+}
 
 struct State {
 	std::vector<Message> history;
@@ -47,6 +79,7 @@ State &Chat() {
 	static auto result = State();
 	return result;
 }
+
 
 [[nodiscard]] QString ModelName() {
 	const auto index = std::clamp(
@@ -82,10 +115,19 @@ void Request(
 		chat.manager = new QNetworkAccessManager(qApp);
 	}
 	auto contents = QJsonArray();
-	const auto limit = HistoryLimit();
-	const auto skip = std::max(int(chat.history.size()) - limit, 0);
-	auto index = 0;
+	auto messages = std::vector<Message>();
 	for (const auto &message : chat.history) {
+		if (!message.error) {
+			messages.push_back(message);
+		}
+	}
+	const auto limit = HistoryLimit();
+	auto skip = std::max(int(messages.size()) - limit, 0);
+	while (skip < int(messages.size()) && !messages[skip].user) {
+		++skip;
+	}
+	auto index = 0;
+	for (const auto &message : messages) {
 		if (index++ < skip) {
 			continue;
 		}
@@ -138,8 +180,7 @@ void Request(
 				}
 				const auto object = QJsonDocument::fromJson(
 					line.mid(5).trimmed()).object();
-				const auto message = object.value(u"error"_q).toObject()
-					.value(u"message"_q).toString();
+				const auto message = ErrorFrom(line.mid(5).trimmed());
 				if (!message.isEmpty()) {
 					*error = message;
 				}
@@ -171,10 +212,7 @@ void Request(
 			} else if (!error->isEmpty()) {
 				done(*error, false);
 			} else {
-				const auto object = QJsonDocument::fromJson(
-					*buffer).object();
-				const auto message = object.value(u"error"_q).toObject()
-					.value(u"message"_q).toString();
+				const auto message = ErrorFrom(*buffer);
 				done(message.isEmpty() ? reply->errorString() : message, false);
 			}
 		});
@@ -182,8 +220,8 @@ void Request(
 	}
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
-		const auto object = QJsonDocument::fromJson(
-			reply->readAll()).object();
+		const auto data = reply->readAll();
+		const auto object = QJsonDocument::fromJson(data).object();
 		const auto candidates = object.value(u"candidates"_q).toArray();
 		auto text = QString();
 		if (!candidates.isEmpty()) {
@@ -198,62 +236,53 @@ void Request(
 			done(text.trimmed(), true);
 			return;
 		}
-		const auto error = object.value(u"error"_q).toObject()
-			.value(u"message"_q).toString();
+		const auto error = ErrorFrom(data);
 		done(error.isEmpty() ? reply->errorString() : error, false);
 	});
 }
 
-void FillMessages(not_null<Ui::VerticalLayout*> list) {
-	list->clear();
-	const auto &history = Chat().history;
-	if (history.empty()) {
-		list->add(
-			object_ptr<Ui::FlatLabel>(
-				list,
-				tr::lng_extera_ai_empty(),
-				st::exteraAbout),
-			st::boxRowPadding);
+[[nodiscard]] rpl::event_stream<> &Updates() {
+	static auto result = rpl::event_stream<>();
+	return result;
+}
+
+[[nodiscard]] QString HistoryPath() {
+	return cWorkingDir() + u"tdata/exd_ai_chat.json"_q;
+}
+
+void SaveHistory() {
+	auto list = QJsonArray();
+	for (const auto &message : Chat().history) {
+		list.push_back(QJsonObject{
+			{ u"user"_q, message.user },
+			{ u"error"_q, message.error },
+			{ u"text"_q, message.text },
+			{ u"date"_q, qint64(message.date) },
+		});
 	}
-	for (const auto &message : history) {
-		list->add(
-			object_ptr<Ui::FlatLabel>(
-				list,
-				message.user
-					? tr::lng_extera_ai_you()
-					: rpl::single(ModelName()),
-				st::exteraSubtitle),
-			st::exteraAiAuthorPadding);
-		const auto label = list->add(
-			object_ptr<Ui::FlatLabel>(
-				list,
-				rpl::single(message.text),
-				st::boxLabel),
-			st::exteraAiMessagePadding);
-		label->setSelectable(true);
+	auto file = QFile(HistoryPath());
+	if (file.open(QIODevice::WriteOnly)) {
+		file.write(QJsonDocument(list).toJson(QJsonDocument::Compact));
 	}
-	if (Chat().waiting) {
-		if (Chat().partial.isEmpty()) {
-			list->add(
-				object_ptr<Ui::FlatLabel>(
-					list,
-					tr::lng_extera_ai_thinking(),
-					st::exteraSubtitle),
-				st::exteraAiMessagePadding);
-		} else {
-			list->add(
-				object_ptr<Ui::FlatLabel>(
-					list,
-					rpl::single(ModelName()),
-					st::exteraSubtitle),
-				st::exteraAiAuthorPadding);
-			list->add(
-				object_ptr<Ui::FlatLabel>(
-					list,
-					rpl::single(Chat().partial),
-					st::boxLabel),
-				st::exteraAiMessagePadding);
-		}
+}
+
+void LoadHistory() {
+	static auto loaded = false;
+	if (std::exchange(loaded, true)) {
+		return;
+	}
+	auto file = QFile(HistoryPath());
+	if (!file.open(QIODevice::ReadOnly)) {
+		return;
+	}
+	for (const auto &entry : QJsonDocument::fromJson(file.readAll()).array()) {
+		const auto object = entry.toObject();
+		Chat().history.push_back({
+			.user = object.value(u"user"_q).toBool(),
+			.error = object.value(u"error"_q).toBool(),
+			.text = object.value(u"text"_q).toString(),
+			.date = TimeId(object.value(u"date"_q).toInteger()),
+		});
 	}
 }
 
@@ -282,72 +311,152 @@ void ShowKeyBox(not_null<Window::SessionController*> controller) {
 	}));
 }
 
-void ShowAiChat(not_null<Window::SessionController*> controller) {
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
-		box->setTitle(tr::lng_extera_ai_chat());
-		box->setWidth(st::boxWideWidth);
-		const auto key = box->addRow(
-			object_ptr<Ui::SettingsButton>(
-				box,
-				tr::lng_extera_ai_key(),
-				st::settingsButtonLightNoIcon),
-			style::margins());
-		key->setClickedCallback([=] { ShowKeyBox(controller); });
-		const auto list = box->addRow(
-			object_ptr<Ui::VerticalLayout>(box),
-			style::margins());
-		FillMessages(list);
-		const auto field = box->addRow(object_ptr<Ui::InputField>(
-			box,
-			st::defaultInputField,
-			Ui::InputField::Mode::MultiLine,
-			tr::lng_extera_ai_placeholder()));
-		box->setFocusCallback([=] { field->setFocusFast(); });
-		const auto refresh = [=] {
-			FillMessages(list);
-			list->resizeToWidth(list->width());
-		};
-		const auto send = [=] {
-			const auto text = field->getLastText().trimmed();
-			if (text.isEmpty() || Chat().waiting) {
-				return;
+bool CanTranscribe() {
+	return (Int(u"transcribe_provider"_q) == 1)
+		&& !String(u"ai_chat_key"_q).trimmed().isEmpty();
+}
+
+void Transcribe(
+		const QByteArray &data,
+		const QString &mime,
+		Fn<void(QString text, bool ok)> done) {
+	auto &chat = Chat();
+	if (!chat.manager) {
+		chat.manager = new QNetworkAccessManager(qApp);
+	}
+	auto request = QNetworkRequest(QUrl(
+		u"https://generativelanguage.googleapis.com/v1beta/models/"_q
+		+ ModelName()
+		+ u":generateContent"_q));
+	request.setHeader(
+		QNetworkRequest::ContentTypeHeader,
+		u"application/json"_q);
+	request.setRawHeader(
+		"x-goog-api-key",
+		String(u"ai_chat_key"_q).trimmed().toUtf8());
+	const auto body = QJsonDocument(QJsonObject{
+		{ u"contents"_q, QJsonArray{ QJsonObject{
+			{ u"role"_q, u"user"_q },
+			{ u"parts"_q, QJsonArray{
+				QJsonObject{
+					{ u"inline_data"_q, QJsonObject{
+						{ u"mime_type"_q, mime },
+						{ u"data"_q, QString::fromLatin1(data.toBase64()) },
+					} },
+				},
+				QJsonObject{
+					{ u"text"_q, u"Transcribe the speech in this recording "
+						"verbatim in its original language. Return only the "
+						"transcription text without comments."_q },
+				},
+			} },
+		} } },
+		{ u"generationConfig"_q, QJsonObject{
+			{ u"temperature"_q, 0. },
+		} },
+	}).toJson(QJsonDocument::Compact);
+	const auto reply = chat.manager->post(request, body);
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		reply->deleteLater();
+		const auto bytes = reply->readAll();
+		const auto object = QJsonDocument::fromJson(bytes).object();
+		const auto candidates = object.value(u"candidates"_q).toArray();
+		auto text = QString();
+		if (!candidates.isEmpty()) {
+			const auto parts = candidates[0].toObject()
+				.value(u"content"_q).toObject()
+				.value(u"parts"_q).toArray();
+			for (const auto &part : parts) {
+				text += part.toObject().value(u"text"_q).toString();
 			}
-			if (String(u"ai_chat_key"_q).trimmed().isEmpty()) {
-				ShowKeyBox(controller);
-				return;
-			}
-			field->clear();
-			Chat().history.push_back({ .user = true, .text = text });
-			Chat().waiting = true;
-			refresh();
-			const auto weak = base::make_weak(box.get());
-			Chat().partial = QString();
-			Request([=](QString answer, bool ok) {
-				Chat().waiting = false;
-				Chat().partial = QString();
-				if (ok) {
-					Chat().history.push_back({ .text = answer });
-				} else {
-					Chat().history.pop_back();
-					controller->showToast(answer);
-				}
-				if (weak) {
-					refresh();
-				}
-			}, [=](QString partial) {
-				Chat().partial = partial;
-				if (weak) {
-					refresh();
-				}
-			});
-		};
-		field->submits() | rpl::on_next(send, field->lifetime());
-		box->addButton(tr::lng_extera_ai_send(), send);
-		box->addLeftButton(tr::lng_extera_ai_clear(), [=] {
-			Chat().history.clear();
-			refresh();
+		}
+		if (!text.trimmed().isEmpty()) {
+			done(text.trimmed(), true);
+		} else {
+			const auto error = ErrorFrom(bytes);
+			done(error.isEmpty() ? reply->errorString() : error, false);
+		}
+	});
+}
+
+std::vector<AiChatMessage> AiChatHistory() {
+	LoadHistory();
+	auto result = std::vector<AiChatMessage>();
+	for (const auto &message : Chat().history) {
+		result.push_back({
+			message.user,
+			message.error,
+			message.text,
+			message.date,
 		});
-	}));
+	}
+	return result;
+}
+
+QString AiChatPartial() {
+	return Chat().partial;
+}
+
+bool AiChatWaiting() {
+	return Chat().waiting;
+}
+
+QString AiChatModel() {
+	return ModelName();
+}
+
+rpl::producer<> AiChatUpdates() {
+	return Updates().events();
+}
+
+void AiChatClear() {
+	LoadHistory();
+	if (Chat().waiting) {
+		return;
+	}
+	Chat().history.clear();
+	SaveHistory();
+	Updates().fire({});
+}
+
+bool AiChatSend(
+		not_null<Window::SessionController*> controller,
+		const QString &text) {
+	LoadHistory();
+	if (text.trimmed().isEmpty() || Chat().waiting) {
+		return false;
+	} else if (String(u"ai_chat_key"_q).trimmed().isEmpty()) {
+		ShowKeyBox(controller);
+		return false;
+	}
+	Chat().history.push_back({
+		.user = true,
+		.text = text.trimmed(),
+		.date = base::unixtime::now(),
+	});
+	Chat().waiting = true;
+	Chat().partial = QString();
+	SaveHistory();
+	Updates().fire({});
+	Request([=](QString answer, bool ok) {
+		Chat().waiting = false;
+		Chat().partial = QString();
+		Chat().history.push_back({
+			.error = !ok,
+			.text = answer,
+			.date = base::unixtime::now(),
+		});
+		SaveHistory();
+		Updates().fire({});
+	}, [=](QString partial) {
+		Chat().partial = partial;
+		Updates().fire({});
+	});
+	return true;
+}
+
+void ShowAiChat(not_null<Window::SessionController*> controller) {
+	Exd::ShowAiChatSection(controller);
 }
 
 } // namespace Extera

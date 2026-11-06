@@ -832,6 +832,7 @@ void PaidReactionSlider(
 
 	const auto discreter = StarSelectDiscreterForMax(max);
 	slider->setAlwaysDisplayMarker(true);
+	slider->setMaterialStyle(false);
 	slider->setDirection(ContinuousSlider::Direction::Horizontal);
 
 	const auto ratioToValue = [=](float64 ratio) {

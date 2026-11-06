@@ -67,6 +67,7 @@
         <li>Встроенный QuoteReply</li>
         <li>Отложенная отправка для редакторов каналов</li>
         <li>Пересылка сообщений с других аккаунтов</li>
+        <li>Двойное действие по ЛКМ и ПКМ</li>
         <li>Перевод сообщений с сохранением форматирования</li>
       </ul>
     </td>
@@ -92,6 +93,8 @@
         <li>Режим стримера</li>
         <li>Показ скрытых участников в группах</li>
         <li>Скрытие архива</li>
+        <li>Режим призрака</li>
+        <li>Сохранение удалённых сообщений и истории изменений</li>
       </ul>
     </td>
   </tr>
@@ -104,6 +107,8 @@
         <li>Настройка визуала уведомлений</li>
         <li>Звук уведомлений</li>
         <li>Снятие лимита по кол-ву аккаунтов</li>
+        <li>Локальный Telegram Premium</li>
+        <li>Клиент по умолчанию для ссылок tg://</li>
         <li>Автоматические обновления</li>
       </ul>
     </td>
@@ -114,7 +119,8 @@
         <li>Настройки плагинов</li>
         <li>Экспорт плагинов</li>
         <li>Установка из файла</li>
-        <li>ИИ-чат</li>
+        <li>Проверка безопасности плагинов</li>
+        <li>AI Chat [бета]</li>
       </ul>
     </td>
   </tr>
@@ -129,6 +135,12 @@
 | macOS | `exDesktop-macos-arm64.*.dmg` или `.zip` для Apple Silicon |
 
 Все файлы доступны на [странице релизов](https://github.com/metawka/exDesktop/releases/latest). exDesktop устанавливается рядом с Telegram Desktop и хранит данные отдельно.
+
+Установка в Linux и macOS из терминала (установщик определяет систему и предлагает ярлык в меню приложений, зависимости TG WS Proxy и функции AyuGram):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/metawka/exDesktop/main/install.sh | sh
+```
 
 ## Сборка
 
@@ -216,6 +228,7 @@ cmake --build out --config Release --target Telegram
 | [exteraGram](https://github.com/exteraSquad/exteraGram) | Функции и формат плагинов |
 | [AyuGram Desktop](https://github.com/AyuGram/AyuGramDesktop) | Примеры реализации для компьютера |
 | [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy) | Встроенный WebSocket-прокси, лицензия MIT |
+| [Kangel Plugins Manager](https://git.kangel.xyz/KangelPlugins/PluginManager) | Принцип проверки плагинов и векторная модель PluginGuard |
 
 ## Лицензия
 

@@ -14,5 +14,6 @@ struct Variant {
 [[nodiscard]] QImage Current(int size);
 void ApplyToShortcuts();
 void Apply();
+void MakeDefaultClient();
 
 } // namespace Extera::AppIcon

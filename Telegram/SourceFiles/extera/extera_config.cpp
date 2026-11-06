@@ -1,8 +1,11 @@
 #include "extera/extera_config.h"
 
 #include <QtCore/QJsonDocument>
+
+#include <set>
 #include <QtCore/QFile>
 #include <QtCore/QSaveFile>
+#include <rpl/combine.h>
 
 namespace Extera {
 namespace {
@@ -24,6 +27,36 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"upload_boost"_q, false },
 		{ u"relative_last_seen"_q, false },
 		{ u"hide_phone"_q, true },
+		{ u"hide_phone_mode"_q, 0 },
+		{ u"ayu_features"_q, false },
+		{ u"ayu_ghost"_q, false },
+		{ u"ayu_ghost_read"_q, true },
+		{ u"ayu_ghost_stories"_q, true },
+		{ u"ayu_ghost_online"_q, true },
+		{ u"ayu_ghost_typing"_q, true },
+		{ u"ayu_ghost_offline"_q, true },
+		{ u"ayu_ghost_read_after"_q, true },
+		{ u"ayu_save_deleted"_q, true },
+		{ u"ghost_read"_q, false },
+		{ u"ghost_stories"_q, false },
+		{ u"ghost_online"_q, false },
+		{ u"ghost_typing"_q, false },
+		{ u"ghost_offline"_q, false },
+		{ u"ayu_keep_deleted"_q, false },
+		{ u"plugins_guard"_q, 0 },
+		{ u"ai_chat_main"_q, true },
+		{ u"ayu_edit_history"_q, true },
+		{ u"guard_llm_provider"_q, 0 },
+		{ u"guard_llm_key"_q, QString() },
+		{ u"guard_llm_model"_q, QString() },
+		{ u"guard_model_check"_q, 0 },
+		{ u"guard_model_version"_q, QString() },
+		{ u"plugins_guard_blocked"_q, QString() },
+		{ u"ayu_save_bots"_q, true },
+		{ u"deleted_mark"_q, 2 },
+		{ u"translucent_deleted"_q, false },
+		{ u"disable_colorful_replies"_q, false },
+		{ u"install_conf"_q, QString() },
 		{ u"show_id_dc"_q, 1 },
 		{ u"hide_archive"_q, false },
 
@@ -62,6 +95,11 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"streamer_channels_text"_q, true },
 		{ u"streamer_shown"_q, QString() },
 		{ u"streamer_hidden"_q, QString() },
+		{ u"streamer_notifications_off"_q, true },
+		{ u"streamer_everywhere"_q, false },
+		{ u"streamer_presets"_q, QString() },
+		{ u"streamer_hotkey"_q, QString() },
+		{ u"streamer_hotkey_shot"_q, QString() },
 		{ u"feed_in_menu"_q, true },
 		{ u"feed_wide_posts"_q, true },
 		{ u"wide_posts_group"_q, true },
@@ -80,6 +118,8 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"hide_reactions_channels"_q, false },
 		{ u"double_click_incoming"_q, 0 },
 		{ u"double_click_outgoing"_q, 0 },
+		{ u"right_click_incoming"_q, 5 },
+		{ u"right_click_outgoing"_q, 5 },
 		{ u"disable_notification_delay"_q, false },
 		{ u"disable_telegram_ai"_q, false },
 		{ u"disable_greeting_sticker"_q, false },
@@ -124,11 +164,25 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"ws_proxy"_q, true },
 		{ u"ws_proxy_secret"_q, QString() },
 		{ u"ws_proxy_port"_q, 0 },
+		{ u"ws_proxy_dc_ip"_q, QString() },
+		{ u"ws_proxy_buf_kb"_q, 256 },
+		{ u"ws_proxy_pool"_q, 4 },
+		{ u"ws_proxy_cf"_q, true },
+		{ u"ws_proxy_cf_domain"_q, QString() },
+		{ u"ws_proxy_cf_worker"_q, QString() },
+		{ u"ws_proxy_h2"_q, true },
+		{ u"ws_proxy_secure"_q, true },
+		{ u"ws_proxy_fake_tls"_q, QString() },
+		{ u"ws_proxy_log"_q, false },
 		{ u"welcome_shown"_q, false },
 		{ u"wizard_shown"_q, false },
 		{ u"changelog_seen"_q, 0 },
 		{ u"notify_sound"_q, QString() },
 		{ u"local_premium_emoji"_q, true },
+		{ u"local_premium"_q, true },
+		{ u"premium_no_ads"_q, true },
+		{ u"transcribe_provider"_q, 0 },
+		{ u"premium_wizard_shown"_q, false },
 		{ u"poll_results_before_voting"_q, true },
 		{ u"bottom_button"_q, 0 },
 		{ u"wide_posts"_q, false },
@@ -186,6 +240,64 @@ void Config::load() {
 	if (document.isObject()) {
 		_values = document.object();
 	}
+	const auto old = [&](const QString &key, bool fallback) {
+		return _values.contains(key)
+			? _values.value(key).toBool()
+			: fallback;
+	};
+	const auto features = old(u"ayu_features"_q, false);
+	if (!_values.contains(u"ayu_keep_deleted"_q)) {
+		_values.insert(
+			u"ayu_keep_deleted"_q,
+			features && old(u"ayu_save_deleted"_q, true));
+	}
+	if (!_values.contains(u"ghost_read"_q)) {
+		const auto ghost = features && old(u"ayu_ghost"_q, false);
+		for (const auto &key : {
+				u"read"_q,
+				u"stories"_q,
+				u"online"_q,
+				u"typing"_q,
+				u"offline"_q }) {
+			_values.insert(
+				u"ghost_"_q + key,
+				ghost && old(u"ayu_ghost_"_q + key, true));
+		}
+	}
+}
+
+void Config::applyInstallChoice(const QStringList &paths) {
+	load();
+	for (const auto &path : paths) {
+		auto file = QFile(path);
+		if (!file.open(QIODevice::ReadOnly)) {
+			continue;
+		}
+		const auto content = QString::fromUtf8(file.readAll()).trimmed();
+		if (content.isEmpty()
+			|| _values.value(u"install_conf"_q).toString() == content) {
+			return;
+		}
+		for (const auto &line : content.split('\n')) {
+			const auto parts = line.trimmed().split('=');
+			if (parts.size() != 2) {
+				continue;
+			} else if (parts[0] == u"ayu"_q) {
+				setBool(u"ayu_features"_q, parts[1] == u"1"_q);
+				setBool(u"ayu_keep_deleted"_q, parts[1] == u"1"_q);
+			}
+		}
+		setString(u"install_conf"_q, content);
+		return;
+	}
+}
+
+QJsonValue Config::valueOf(const QString &key) const {
+	return value(key);
+}
+
+void Config::setValue(const QString &key, QJsonValue value) {
+	set(key, std::move(value));
 }
 
 QJsonValue Config::value(const QString &key) const {
@@ -329,6 +441,93 @@ int Int(const QString &key) {
 
 QString String(const QString &key) {
 	return Config::Instance().stringValue(key);
+}
+
+bool AyuEnabled(const QString &key) {
+	return Bool(key);
+}
+
+const QStringList &GhostKeys() {
+	static const auto result = QStringList{
+		u"ghost_read"_q,
+		u"ghost_stories"_q,
+		u"ghost_online"_q,
+		u"ghost_typing"_q,
+		u"ghost_offline"_q,
+	};
+	return result;
+}
+
+void SetGhostAll(bool enabled) {
+	for (const auto &key : GhostKeys()) {
+		Config::Instance().setBool(key, enabled);
+	}
+}
+
+rpl::producer<bool> GhostActiveValue() {
+	auto list = std::vector<rpl::producer<bool>>();
+	for (const auto &key : GhostKeys()) {
+		list.push_back(Config::Instance().boolChanges(key));
+	}
+	return rpl::combine(
+		std::move(list)
+	) | rpl::map([](const std::vector<bool> &values) {
+		return std::any_of(values.begin(), values.end(), [](bool v) { return v; });
+	}) | rpl::distinct_until_changed();
+}
+
+[[nodiscard]] std::set<uint64> &GhostReadAllowed() {
+	static auto result = std::set<uint64>();
+	return result;
+}
+
+void AllowGhostRead(uint64 peerId) {
+	GhostReadAllowed().emplace(peerId);
+}
+
+bool ConsumeGhostRead(uint64 peerId) {
+	return GhostReadAllowed().erase(peerId) > 0;
+}
+
+bool GhostActive() {
+	for (const auto &key : GhostKeys()) {
+		if (Bool(key)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+[[nodiscard]] bool GhostOption(const QString &key) {
+	return Bool(key);
+}
+
+bool GhostRead() {
+	return GhostOption(u"ghost_read"_q);
+}
+
+bool GhostStories() {
+	return GhostOption(u"ghost_stories"_q);
+}
+
+bool GhostOnline() {
+	return GhostOption(u"ghost_online"_q);
+}
+
+bool GhostTyping() {
+	return GhostOption(u"ghost_typing"_q);
+}
+
+bool GhostOffline() {
+	return GhostOption(u"ghost_offline"_q);
+}
+
+bool GhostReadAfterAction() {
+	return GhostRead() && Bool(u"ayu_ghost_read_after"_q);
+}
+
+bool SaveDeleted() {
+	return Bool(u"ayu_keep_deleted"_q);
 }
 
 int RecentStickersLimit(int serverLimit) {

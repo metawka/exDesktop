@@ -423,6 +423,7 @@ enum class Flag {
 	TopicJumpRipple  = 0x080,
 	HiddenAuthor     = 0x100,
 	MyNotes          = 0x200,
+	StreamerName     = 0x400,
 };
 inline constexpr bool is_flag_type(Flag) { return true; }
 
@@ -458,9 +459,7 @@ void PaintStreamerOverlay(
 			st->photoSize,
 			st->photoSize);
 		p.fillRect(rect, bg);
-		p.setPen(Qt::NoPen);
-		p.setBrush(anim::with_alpha(st::dialogsTextFgService->c, 0.25));
-		p.drawEllipse(rect);
+		p.drawImage(rect, Extera::Streamer::Avatar());
 	}
 	if (name && !context.narrow) {
 		const auto left = st->nameLeft;
@@ -468,7 +467,6 @@ void PaintStreamerOverlay(
 		const auto width = context.width - left - right;
 		if (width > 0) {
 			const auto height = st::semiboldFont->height;
-			p.fillRect(QRect(left, st->nameTop, width, height), bg);
 			const auto bar = st::exteraStreamerBar;
 			p.setPen(Qt::NoPen);
 			p.setBrush(anim::with_alpha(st::dialogsTextFgService->c, 0.25));
@@ -499,11 +497,13 @@ void PaintStreamerRow(
 	p.setPen(Qt::NoPen);
 	p.setBrush(anim::with_alpha(st::dialogsTextFgService->c, 0.25));
 	const auto st = context.st;
-	p.drawEllipse(
-		st->padding.left(),
-		st->padding.top(),
-		st->photoSize,
-		st->photoSize);
+	p.drawImage(
+		QRect(
+			st->padding.left(),
+			st->padding.top(),
+			st->photoSize,
+			st->photoSize),
+		Extera::Streamer::Avatar());
 	if (context.narrow) {
 		return;
 	}
@@ -677,6 +677,7 @@ void PaintRow(
 			? tr::lng_badge_psa_default(tr::now)
 			: custom;
 		PaintRowTopRight(p, text, rectForName, context);
+	} else if (flags & Flag::StreamerName) {
 	} else if (verifyInfo) {
 		if (!rowBadge.ready(verifyInfo)) {
 			rowBadge.set(
@@ -992,7 +993,8 @@ void PaintRow(
 		});
 		rectForName.setWidth(rectForName.width() - badgeWidth);
 	};
-	if (flags
+	if (flags & Flag::StreamerName) {
+	} else if (flags
 		& (Flag::SavedMessages
 			| Flag::RepliesMessages
 			| Flag::VerifyCodes
@@ -1372,7 +1374,7 @@ void RowPainter::Paint(
 		context,
 		nullptr,
 		badgesState,
-		flags,
+		(streamer.name ? (flags | Flag::StreamerName) : flags),
 		paintItemCallback);
 	if (streamer.avatar || streamer.name) {
 		PaintStreamerOverlay(

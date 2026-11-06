@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_user.h"
 
+#include "extera/extera_config.h"
+
 #include "api/api_credits.h"
 #include "api/api_global_privacy.h"
 #include "api/api_sensitive_content.h"
@@ -642,6 +644,11 @@ bool UserData::isFake() const {
 }
 
 bool UserData::isPremium() const {
+	return isPremiumReal()
+		|| (isSelf() && Extera::Bool(u"local_premium"_q));
+}
+
+bool UserData::isPremiumReal() const {
 	return flags() & UserDataFlag::Premium;
 }
 

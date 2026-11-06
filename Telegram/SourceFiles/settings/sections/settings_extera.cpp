@@ -9,6 +9,9 @@
 #include "core/version.h"
 #include "window/notifications_manager.h"
 #include "extera/extera_app_icon.h"
+#include "ui/new_badges.h"
+#include "ui/widgets/popup_menu.h"
+#include "base/event_filter.h"
 #include "extera/extera_ws_proxy.h"
 #include "ui/style/style_core_font.h"
 #include "core/core_settings.h"
@@ -138,9 +141,23 @@ void AddToggle(
 		}, label->lifetime());
 	}
 	if (button) {
+		const auto controller = builder.controller();
 		button->toggledValue(
 		) | rpl::on_next([=](bool value) {
+			const auto changed = (Extera::Bool(key) != value);
 			Config().setBool(key, value);
+			static const auto restart = QStringList{
+				u"hide_stories"_q,
+				u"sender_mini_avatars"_q,
+				u"local_premium"_q,
+			};
+			if (changed && controller && restart.contains(key)) {
+				controller->show(Ui::MakeConfirmBox({
+					.text = tr::lng_extera_restart_required(),
+					.confirmed = [] { Core::Restart(); },
+					.confirmText = tr::lng_extera_restart(),
+				}));
+			}
 		}, button->lifetime());
 	}
 }
@@ -718,6 +735,31 @@ void PaintGesturesPreview(
 		Extera::Int(u"double_click_outgoing"_q));
 }
 
+void AddBetaBadge(
+		not_null<Ui::RpWidget*> button,
+		rpl::producer<QString> text,
+		const style::SettingsButton &st) {
+	const auto badge = Ui::NewBadge::CreateNewBadge(
+		button,
+		tr::lng_exd_beta());
+	rpl::combine(
+		std::move(text),
+		button->widthValue()
+	) | rpl::on_next([=, &st](const QString &text, int width) {
+		const auto left = st.padding.left()
+			+ st.style.font->width(text)
+			+ st.style.font->spacew;
+		badge->setVisible(width - left - st.padding.right() >= badge->width());
+		badge->moveToLeft(
+			left,
+			st.padding.top()
+				+ st.style.font->ascent
+				- st::settingsPremiumNewBadge.style.font->ascent
+				- st::settingsPremiumNewBadgePadding.top(),
+			width);
+	}, badge->lifetime());
+}
+
 void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setWidth(st::boxWideWidth);
@@ -766,12 +808,16 @@ void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
 					std::move(title),
 					st::exteraBadgeStepTitle),
 				st::exteraBadgeStepLabelPadding);
-			row->add(
+			const auto textLabel = row->add(
 				object_ptr<Ui::FlatLabel>(
 					row,
 					std::move(text),
 					st::exteraBadgeStepText),
 				st::exteraBadgeStepLabelPadding);
+			textLabel->setClickHandlerFilter([=](const auto &...) {
+				crl::on_main(box, [=] { box->closeBox(); });
+				return true;
+			});
 			const auto iconWidget = Ui::CreateChild<Ui::RpWidget>(row);
 			iconWidget->resize(icon->width(), icon->height());
 			iconWidget->paintRequest() | rpl::on_next([=] {
@@ -785,11 +831,21 @@ void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
 		step(
 			&st::menuIconEarn,
 			tr::lng_exd_support_step1_title(),
-			tr::lng_exd_support_step1_text(tr::rich));
+			tr::lng_exd_support_step1_text(
+				lt_link,
+				rpl::single(Ui::Text::Link(
+					tr::lng_exd_support_other(tr::now),
+					u"tg://settings/extera/other?highlight=extera/donate_card"_q)),
+				tr::marked));
 		step(
 			&st::menuIconPhoto,
 			tr::lng_exd_support_step2_title(),
-			tr::lng_exd_support_step2_text(tr::rich));
+			tr::lng_exd_support_step2_text(
+				lt_user,
+				rpl::single(Ui::Text::Link(
+					u"@metawka"_q,
+					u"https://t.me/metawka"_q)),
+				tr::marked));
 		step(
 			&st::menuIconPremium,
 			tr::lng_exd_support_step3_title(),
@@ -839,7 +895,7 @@ void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
 				(preview->height() - size) / 2,
 				size);
 			p.setPen(Qt::NoPen);
-			p.setBrush(st::msgInBg);
+			p.setBrush(st::windowBgOver);
 			const auto left = size + skip * 2;
 			p.drawRoundedRect(
 				QRect(left, 0, preview->width() - left, preview->height()),
@@ -1254,6 +1310,77 @@ void PartGeneral0(SectionBuilder &builder) {
 	builder.addDivider();
 }
 
+void ShowWsProxySettings(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(tr::lng_exd_ws_settings());
+		box->setWidth(st::boxWideWidth);
+		const auto field = [&](
+				const QString &key,
+				rpl::producer<QString> placeholder,
+				bool number) {
+			const auto value = number
+				? QString::number(Extera::Int(key))
+				: Extera::String(key);
+			const auto result = box->addRow(object_ptr<Ui::InputField>(
+				box,
+				st::defaultInputField,
+				std::move(placeholder),
+				value));
+			return std::make_pair(key, result);
+		};
+		const auto check = [&](const QString &key, rpl::producer<QString> text) {
+			const auto result = box->addRow(
+				object_ptr<Ui::Checkbox>(
+					box,
+					std::move(text),
+					Extera::Bool(key),
+					st::defaultBoxCheckbox),
+				st::boxRowPadding + QMargins(0, st::boxLittleSkip, 0, 0));
+			return std::make_pair(key, result);
+		};
+		const auto numbers = std::vector{
+			field(u"ws_proxy_port"_q, tr::lng_exd_ws_port(), true),
+			field(u"ws_proxy_pool"_q, tr::lng_exd_ws_pool(), true),
+			field(u"ws_proxy_buf_kb"_q, tr::lng_exd_ws_buffer(), true),
+		};
+		const auto strings = std::vector{
+			field(u"ws_proxy_dc_ip"_q, tr::lng_exd_ws_dc_ip(), false),
+			field(u"ws_proxy_cf_domain"_q, tr::lng_exd_ws_cf_domain(), false),
+			field(u"ws_proxy_cf_worker"_q, tr::lng_exd_ws_cf_worker(), false),
+			field(u"ws_proxy_fake_tls"_q, tr::lng_exd_ws_fake_tls(), false),
+		};
+		const auto checks = std::vector{
+			check(u"ws_proxy_cf"_q, tr::lng_exd_ws_cf()),
+			check(u"ws_proxy_h2"_q, tr::lng_exd_ws_h2()),
+			check(u"ws_proxy_secure"_q, tr::lng_exd_ws_secure()),
+			check(u"ws_proxy_log"_q, tr::lng_exd_ws_log()),
+		};
+		Ui::AddSkip(box->verticalLayout());
+		box->addRow(object_ptr<Ui::FlatLabel>(
+			box,
+			tr::lng_exd_ws_settings_about(),
+			st::boxDividerLabel));
+		box->addButton(tr::lng_settings_save(), [=] {
+			for (const auto &[key, input] : numbers) {
+				auto ok = false;
+				const auto value = input->getLastText().trimmed().toInt(&ok);
+				if (ok && value >= 0) {
+					Config().setInt(key, value);
+				}
+			}
+			for (const auto &[key, input] : strings) {
+				Config().setString(key, input->getLastText().trimmed());
+			}
+			for (const auto &[key, checkbox] : checks) {
+				Config().setBool(key, checkbox->checked());
+			}
+			Extera::WsProxy::Restart();
+			box->closeBox();
+		});
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+	}));
+}
+
 void PartGeneral1(SectionBuilder &builder) {
 	[[maybe_unused]] const auto controller = builder.controller();
 	[[maybe_unused]] const auto settings = &Core::App().settings();
@@ -1267,6 +1394,17 @@ void PartGeneral1(SectionBuilder &builder) {
 				tr::lng_exd_ws_proxy(),
 				[] { return Extera::WsProxy::Enabled(); },
 				[](bool v) { Extera::WsProxy::SetEnabled(v); });
+			builder.addButton({
+				.id = u"extera/ws_proxy_settings"_q,
+				.title = tr::lng_exd_ws_settings(),
+				.st = &st::settingsButtonNoIcon,
+				.onClick = [=] {
+					if (controller) {
+						ShowWsProxySettings(controller);
+					}
+				},
+				.keywords = { u"proxy"_q, u"websocket"_q },
+			});
 		});
 		builder.addAbout(tr::lng_exd_ws_proxy_about());
 	}
@@ -1471,6 +1609,14 @@ void PartGeneral6(SectionBuilder &builder) {
 			tr::lng_extera_hide_phone());
 		AddChoice(
 			builder,
+			u"hide_phone_mode"_q,
+			tr::lng_exd_hide_phone_mode,
+			{
+				&tr::lng_exd_hide_phone_blur,
+				&tr::lng_exd_hide_phone_unknown,
+			});
+		AddChoice(
+			builder,
 			u"show_id_dc"_q,
 			tr::lng_extera_show_id_dc,
 			{
@@ -1630,6 +1776,7 @@ void PartAppearance4(SectionBuilder &builder) {
 				settings->setCustomFontFamily(v
 					? style::SystemFontTag()
 					: QString());
+				Core::App().saveSettings();
 				controller->show(Ui::MakeConfirmBox({
 					.text = tr::lng_extera_restart_required(),
 					.confirmed = [] { Core::Restart(); },
@@ -1712,11 +1859,48 @@ void PartChats1(SectionBuilder &builder) {
 
 	builder.addSkip();
 	builder.card([&] {
-		builder.addSectionButton({
+		const auto aiController = builder.controller();
+		const auto aiShowOther = builder.showOther();
+		const auto aiButton = builder.addButton({
+			.id = u"extera/ai_chat_open"_q,
 			.title = tr::lng_extera_ai_chat(),
-			.targetSection = ExteraAiChatId(),
 			.icon = { &st::menuIconBotCommands },
+			.onClick = [=] {
+				if (aiController) {
+					Extera::ShowAiChat(aiController);
+				}
+			},
+			.keywords = { u"ai"_q, u"chat"_q },
 		});
+		if (aiButton) {
+			AddBetaBadge(aiButton, tr::lng_extera_ai_chat(), st::settingsButton);
+			const auto controller = builder.controller();
+			const auto menu = aiButton->lifetime().make_state<
+				base::unique_qptr<Ui::PopupMenu>>();
+			base::install_event_filter(aiButton, [=](not_null<QEvent*> e) {
+				if (e->type() != QEvent::ContextMenu) {
+					return base::EventFilterResult::Continue;
+				}
+				*menu = base::make_unique_q<Ui::PopupMenu>(
+					aiButton,
+					st::popupMenuWithIcons);
+				(*menu)->addAction(tr::lng_exd_ai_settings(tr::now), [=] {
+					if (aiShowOther) {
+						aiShowOther(ExteraAiChatId());
+					}
+				}, &st::menuIconSettings);
+				(*menu)->addAction(tr::lng_exd_ai_show_main(tr::now), [=] {
+					Config().setBool(u"ai_chat_main"_q, true);
+					aiButton->hide();
+					if (controller) {
+						controller->showToast(
+							tr::lng_exd_ai_returned(tr::now));
+					}
+				}, &st::menuIconUnarchive);
+				(*menu)->popup(QCursor::pos());
+				return base::EventFilterResult::Cancel;
+			});
+		}
 	});
 	AddAbout(builder, tr::lng_extera_ai_settings_about());
 }
@@ -1753,13 +1937,6 @@ void PartChats2(SectionBuilder &builder) {
 			builder,
 			u"unlimited_recent_stickers"_q,
 			tr::lng_extera_unlimited_stickers());
-		AddToggle(
-			builder,
-			u"local_premium_emoji"_q,
-			tr::lng_extera_local_premium(),
-			{ u"premium"_q, u"emoji"_q },
-			tr::lng_extera_local_premium_about(),
-			true);
 		AddSwitchGroup(
 			builder,
 			u"hide_reactions"_q,
@@ -1795,6 +1972,16 @@ void PartChats3(SectionBuilder &builder) {
 			builder,
 			u"double_click_outgoing"_q,
 			tr::lng_extera_double_click_outgoing,
+			actions);
+		AddChoice(
+			builder,
+			u"right_click_incoming"_q,
+			tr::lng_exd_right_click_incoming,
+			actions);
+		AddChoice(
+			builder,
+			u"right_click_outgoing"_q,
+			tr::lng_exd_right_click_outgoing,
 			actions);
 		AddLivePreview(
 			builder,
@@ -1926,6 +2113,14 @@ void PartChats5(SectionBuilder &builder) {
 			tr::lng_extera_edited_icon());
 		AddToggle(
 			builder,
+			u"disable_colorful_replies"_q,
+			tr::lng_exd_disable_colorful_replies());
+		AddToggle(
+			builder,
+			u"translucent_deleted"_q,
+			tr::lng_exd_translucent_deleted());
+		AddToggle(
+			builder,
 			u"online_indicator"_q,
 			tr::lng_extera_online_indicator());
 		AddToggle(
@@ -2029,6 +2224,103 @@ void PartChats7(SectionBuilder &builder) {
 	AddAbout(builder, tr::lng_extera_auto_pause_about());
 }
 
+void ShowStringBox(
+		not_null<Window::SessionController*> controller,
+		const QString &key,
+		rpl::producer<QString> title,
+		rpl::producer<QString> placeholder) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(std::move(title));
+		const auto field = box->addRow(object_ptr<Ui::InputField>(
+			box,
+			st::defaultInputField,
+			std::move(placeholder),
+			Extera::String(key)));
+		box->setFocusCallback([=] { field->setFocusFast(); });
+		const auto save = [=] {
+			Config().setString(key, field->getLastText().trimmed());
+			box->closeBox();
+		};
+		field->submits() | rpl::on_next(save, field->lifetime());
+		box->addButton(tr::lng_settings_save(), save);
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+	}));
+}
+
+void PartPluginsGuard(SectionBuilder &builder) {
+	const auto controller = builder.controller();
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_guard_title());
+	builder.card([&] {
+		AddChoice(
+			builder,
+			u"plugins_guard"_q,
+			tr::lng_exd_guard_mode,
+			{
+				&tr::lng_exd_guard_mode_auto,
+				&tr::lng_exd_guard_mode_manual,
+				&tr::lng_exd_guard_mode_off,
+			},
+			{ u"security"_q, u"guard"_q, u"plugins"_q });
+		AddChoice(
+			builder,
+			u"guard_llm_provider"_q,
+			tr::lng_exd_guard_llm,
+			{
+				&tr::lng_exd_guard_llm_none,
+				&tr::lng_exd_guard_llm_groq,
+				&tr::lng_exd_guard_llm_openrouter,
+				&tr::lng_exd_guard_llm_deepseek,
+				&tr::lng_exd_guard_llm_openai,
+				&tr::lng_exd_guard_llm_mistral,
+			},
+			{ u"ai"_q, u"llm"_q });
+		builder.addButton({
+			.id = u"extera/guard_llm_key"_q,
+			.title = tr::lng_exd_guard_llm_key(),
+			.st = &st::settingsButtonNoIcon,
+			.label = Config().stringChanges(
+				u"guard_llm_key"_q
+			) | rpl::map([](const QString &key) {
+				return key.trimmed().isEmpty()
+					? tr::lng_exd_streamer_hotkey_none(tr::now)
+					: tr::lng_exd_premium_gemini_set(tr::now);
+			}),
+			.onClick = [=] {
+				if (controller) {
+					ShowStringBox(
+						controller,
+						u"guard_llm_key"_q,
+						tr::lng_exd_guard_llm_key(),
+						tr::lng_exd_guard_llm_key_placeholder());
+				}
+			},
+		});
+		builder.addButton({
+			.id = u"extera/guard_llm_model"_q,
+			.title = tr::lng_exd_guard_llm_model(),
+			.st = &st::settingsButtonNoIcon,
+			.label = Config().stringChanges(
+				u"guard_llm_model"_q
+			) | rpl::map([](const QString &model) {
+				return model.trimmed().isEmpty()
+					? tr::lng_exd_guard_llm_model_default(tr::now)
+					: model.trimmed();
+			}),
+			.onClick = [=] {
+				if (controller) {
+					ShowStringBox(
+						controller,
+						u"guard_llm_model"_q,
+						tr::lng_exd_guard_llm_model(),
+						tr::lng_exd_guard_llm_model_placeholder());
+				}
+			},
+		});
+	});
+	AddAbout(builder, tr::lng_exd_guard_about());
+}
+
 void PartPlugins0(SectionBuilder &builder) {
 	[[maybe_unused]] const auto controller = builder.controller();
 
@@ -2114,6 +2406,24 @@ void PartOther0(SectionBuilder &builder) {
 		});
 	});
 	AddAbout(builder, tr::lng_exd_badge_about());
+
+	builder.addSkip();
+	builder.card([&] {
+		builder.addButton({
+			.id = u"extera/default_client"_q,
+			.title = tr::lng_exd_default_client(),
+			.icon = { &st::menuIconLink },
+			.onClick = [=] {
+				Extera::AppIcon::MakeDefaultClient();
+				if (controller) {
+					controller->showToast(tr::lng_exd_default_client_done(
+						tr::now));
+				}
+			},
+			.keywords = { u"default"_q, u"tg"_q, u"links"_q },
+		});
+	});
+	AddAbout(builder, tr::lng_exd_default_client_about());
 }
 
 void PartOther1(SectionBuilder &builder) {
@@ -2130,17 +2440,24 @@ void PartOther1(SectionBuilder &builder) {
 				.id = u"extera/donate_"_q + id,
 				.title = std::move(title),
 				.icon = { &st::menuIconCopy },
-				.label = rpl::single(address.left(6)
-					+ QString::fromUtf8("\xE2\x80\xA6")
-					+ address.right(4)),
+				.label = rpl::single((id == u"card"_q)
+					? address
+					: (address.left(6)
+						+ QString::fromUtf8("\xE2\x80\xA6")
+						+ address.right(4))),
 				.onClick = [=] {
-					QGuiApplication::clipboard()->setText(address);
+					QGuiApplication::clipboard()->setText(
+						QString(address).remove(' '));
 					controller->showToast(
 						tr::lng_exd_donate_copied(tr::now));
 				},
 				.keywords = { u"donate"_q, u"crypto"_q },
 			});
 		};
+		wallet(
+			u"card"_q,
+			tr::lng_exd_donate_card(),
+			u"2200 7021 9261 6667"_q);
 		wallet(
 			u"ton"_q,
 			tr::lng_exd_donate_ton(),
@@ -2738,7 +3055,12 @@ void AddCategoryGrid(SectionBuilder &builder) {
 		});
 		const auto count = int(cards->size());
 		const auto rows = (count + 1) / 2;
-		const auto cardHeight = st::exteraCategoryCardHeight;
+		const auto cardHeight = std::max(
+			st::exteraCategoryCardHeight,
+			(st::exteraCategoryCardPadding * 3 / 2
+				+ st::semiboldFont->height
+				+ st::exteraCategoryAboutSkip
+				+ 2 * st::exteraCategoryAboutFont->height));
 		const auto skip = st::exteraCategoryCardSkip;
 		auto result = object_ptr<Ui::FixedHeightWidget>(
 			ctx.container,
@@ -2791,10 +3113,14 @@ void AddCategoryGrid(SectionBuilder &builder) {
 			for (auto i = 0; i != count; ++i) {
 				const auto rect = cardRect(i);
 				p.setPen(Qt::NoPen);
-				p.setBrush((i == state->over)
-					? st::windowBgRipple
-					: st::windowBgOver);
+				p.setBrush(st::windowBgOver);
 				p.drawRoundedRect(rect, radius, radius);
+				if (i == state->over) {
+					auto over = st::windowFg->c;
+					over.setAlphaF(0.07);
+					p.setBrush(over);
+					p.drawRoundedRect(rect, radius, radius);
+				}
 				const auto tileRect = QRect(
 					rect.x() + padding,
 					rect.y() + (rect.height() - tile) / 2,
@@ -2832,7 +3158,35 @@ void AddCategoryGrid(SectionBuilder &builder) {
 				const auto textLeft = tileRect.x() + tile + st::exteraCategoryTitleSkip;
 				const auto textWidth = rect.x() + rect.width() - padding - textLeft;
 				const auto &aboutFont = st::exteraCategoryAboutFont;
-				const auto aboutLines = (aboutFont->width(state->abouts[i]) > textWidth) ? 2 : 1;
+				const auto aboutText = [&] {
+					const auto &text = state->abouts[i];
+					if (aboutFont->width(text) <= textWidth) {
+						return QStringList{ text };
+					}
+					auto first = QString();
+					const auto words = text.split(' ', Qt::SkipEmptyParts);
+					auto used = 0;
+					for (; used != int(words.size()); ++used) {
+						const auto next = first.isEmpty()
+							? words[used]
+							: (first + ' ' + words[used]);
+						if (aboutFont->width(next) > textWidth) {
+							break;
+						}
+						first = next;
+					}
+					if (first.isEmpty()) {
+						return QStringList{ aboutFont->elided(text, textWidth) };
+					}
+					const auto rest = QStringList(
+						words.begin() + used,
+						words.end()).join(' ');
+					return QStringList{
+						first,
+						aboutFont->elided(rest, textWidth),
+					};
+				}();
+				const auto aboutLines = int(aboutText.size());
 				const auto textHeight = st::semiboldFont->height
 					+ st::exteraCategoryAboutSkip
 					+ aboutLines * aboutFont->height;
@@ -2852,8 +3206,8 @@ void AddCategoryGrid(SectionBuilder &builder) {
 						top,
 						textWidth,
 						aboutLines * aboutFont->height),
-					Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
-					state->abouts[i]);
+					Qt::AlignLeft | Qt::AlignTop,
+					aboutText.join(QChar('\n')));
 			}
 		}, grid->lifetime());
 		grid->setMouseTracking(true);
@@ -3040,6 +3394,7 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 		}
 	});
 	AddAbout(builder, tr::lng_exd_trusted_sources_about());
+	PartPluginsGuard(builder);
 }
 
 // AI Chat
@@ -3050,13 +3405,25 @@ void BuildAiChat(SectionBuilder &builder) {
 	builder.add([=](const WidgetContext &ctx) {
 		auto header = object_ptr<Ui::VerticalLayout>(ctx.container);
 		const auto raw = header.data();
-		raw->add(
+		const auto aiTitle = raw->add(
 			object_ptr<Ui::FlatLabel>(
 				raw,
 				tr::lng_extera_ai_chat(),
 				st::exteraInstallName),
 			st::exteraAiHeaderTitlePadding,
 			style::al_top);
+		{
+			const auto badge = Ui::NewBadge::CreateNewBadge(
+				raw,
+				tr::lng_exd_beta());
+			aiTitle->geometryValue(
+			) | rpl::on_next([=](QRect geometry) {
+				badge->move(
+					geometry.x() + geometry.width() + st::normalFont->spacew,
+					geometry.y()
+						+ (geometry.height() - badge->height()) / 2);
+			}, badge->lifetime());
+		}
 		raw->add(
 			object_ptr<Ui::FlatLabel>(
 				raw,
@@ -3199,6 +3566,8 @@ void BuildMessages(SectionBuilder &builder) {
 	});
 }
 
+void PartPremium(SectionBuilder &builder);
+
 void BuildAppearance(SectionBuilder &builder) {
 	AddCategorySearch(builder, {
 		ExteraAppearanceId(),
@@ -3211,6 +3580,7 @@ void BuildAppearance(SectionBuilder &builder) {
 		PartAppearance4(builder);
 		PartGeneral3(builder);
 		PartChats0(builder);
+		PartPremium(builder);
 		builder.addSkip();
 		builder.card([&] {
 			builder.addSectionButton({
@@ -3237,8 +3607,206 @@ void BuildPlugins(SectionBuilder &builder) {
 		PartPlugins0(builder);
 		PartPlugins1(builder);
 		PartPlugins2(builder);
-		PartChats1(builder);
+		if (!Extera::Bool(u"ai_chat_main"_q)) {
+			PartChats1(builder);
+		}
 	});
+}
+
+void PartAyu(SectionBuilder &builder) {
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_ayu_ghost());
+	builder.card([&] {
+		AddSwitchGroup(
+			builder,
+			u"ghost_mode"_q,
+			tr::lng_exd_ayu_ghost_mode,
+			{
+				{ u"ghost_read"_q, &tr::lng_exd_ayu_ghost_read },
+				{ u"ghost_stories"_q, &tr::lng_exd_ayu_ghost_stories },
+				{ u"ghost_online"_q, &tr::lng_exd_ayu_ghost_online },
+				{ u"ghost_typing"_q, &tr::lng_exd_ayu_ghost_typing },
+				{ u"ghost_offline"_q, &tr::lng_exd_ayu_ghost_offline },
+			});
+		AddToggle(
+			builder,
+			u"ayu_ghost_read_after"_q,
+			tr::lng_exd_ayu_ghost_read_after());
+	});
+	AddAbout(builder, tr::lng_exd_ayu_ghost_about());
+
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_ayu_spy());
+	builder.card([&] {
+		AddToggle(
+			builder,
+			u"ayu_keep_deleted"_q,
+			tr::lng_exd_ayu_save_deleted(),
+			{ u"deleted"_q });
+		AddToggle(
+			builder,
+			u"ayu_edit_history"_q,
+			tr::lng_exd_ayu_edit_history(),
+			{ u"edit"_q, u"history"_q });
+		AddToggle(
+			builder,
+			u"ayu_save_bots"_q,
+			tr::lng_exd_ayu_save_bots());
+		AddToggle(
+			builder,
+			u"translucent_deleted"_q,
+			tr::lng_exd_translucent_deleted());
+		AddPreview(
+			builder,
+			u"deleted_mark"_q,
+			st::exteraPreviewBubble + st::exteraPreviewSkip * 2,
+			[](QPainter &p, QRect frame, int mark) {
+				const auto skip = st::exteraPreviewSkip;
+				const auto bubble = QRectF(
+					frame.x() + skip,
+					frame.y() + skip,
+					frame.width() * 0.6,
+					st::exteraPreviewBubble);
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::msgInBg);
+				p.drawRoundedRect(
+					bubble,
+					st::bubbleRadiusLarge,
+					st::bubbleRadiusLarge);
+				PaintTextBars(
+					p,
+					QRectF(
+						bubble.x() + 12,
+						bubble.y() + 8,
+						bubble.width() * 0.55,
+						bubble.height() - 16),
+					st::msgInDateFg,
+					1);
+				const auto &font = st::msgDateFont;
+				const auto time = QLocale().toString(
+					QTime(12, 30),
+					QLocale::ShortFormat);
+				auto right = int(bubble.right()) - 10;
+				const auto baseline = int(bubble.bottom()) - 8;
+				p.setFont(font);
+				p.setPen(st::msgInDateFg);
+				right -= font->width(time);
+				p.drawText(right, baseline, time);
+				if (mark == 1) {
+					const auto text = tr::lng_exd_message_deleted(tr::now)
+						+ ' ';
+					right -= font->width(text);
+					p.drawText(right, baseline, text);
+				} else if (mark >= 2) {
+					const auto &icon = (mark == 3)
+						? st::exteraDeletedCrossIconEmoji.icon
+						: (mark == 4)
+						? st::exteraDeletedEyeIconEmoji.icon
+						: st::exteraDeletedIconEmoji.icon;
+					right -= icon.width() + 4;
+					icon.paint(
+						p,
+						right,
+						baseline - font->ascent + (font->ascent - icon.height()) / 2 + 1,
+						frame.width(),
+						st::msgInDateFg->c);
+				}
+			});
+		AddChoice(
+			builder,
+			u"deleted_mark"_q,
+			tr::lng_exd_deleted_mark,
+			{
+				&tr::lng_exd_deleted_mark_none,
+				&tr::lng_exd_deleted_mark_text,
+				&tr::lng_exd_deleted_mark_trash,
+				&tr::lng_exd_deleted_mark_cross,
+				&tr::lng_exd_deleted_mark_eye,
+			},
+			{ u"deleted"_q, u"mark"_q });
+		const auto controller = builder.controller();
+		builder.addButton({
+			.id = u"extera/ayu_clear_deleted"_q,
+			.title = tr::lng_exd_ayu_clear_deleted(),
+			.st = &st::settingsAttentionButton,
+			.onClick = [=] {
+				if (!controller) {
+					return;
+				}
+				controller->show(Ui::MakeConfirmBox({
+					.text = tr::lng_exd_ayu_clear_deleted_sure(),
+					.confirmed = [=](Fn<void()> close) {
+						controller->session().data().exteraClearDeleted();
+						close();
+					},
+					.confirmText = tr::lng_exd_ayu_clear_deleted_button(),
+					.confirmStyle = &st::attentionBoxButton,
+				}));
+			},
+		});
+	});
+	AddAbout(builder, tr::lng_exd_ayu_about());
+}
+
+void PartPremium(SectionBuilder &builder) {
+	const auto controller = builder.controller();
+	const auto settings = &Core::App().settings();
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_premium_title());
+	builder.card([&] {
+		AddToggle(
+			builder,
+			u"local_premium"_q,
+			tr::lng_exd_premium_limits(),
+			{ u"premium"_q },
+			tr::lng_exd_premium_limits_about(),
+			true);
+		AddToggle(
+			builder,
+			u"premium_no_ads"_q,
+			tr::lng_exd_premium_no_ads(),
+			{ u"premium"_q, u"ads"_q });
+		AddToggle(
+			builder,
+			u"local_premium_emoji"_q,
+			tr::lng_extera_local_premium(),
+			{ u"premium"_q, u"emoji"_q },
+			tr::lng_extera_local_premium_about(),
+			true);
+		AddCoreToggle(
+			builder,
+			u"premium_translate_chats"_q,
+			tr::lng_exd_premium_translate(),
+			[=] { return settings->translateChatEnabled(); },
+			[=](bool v) { settings->setTranslateChatEnabled(v); });
+		AddChoice(
+			builder,
+			u"transcribe_provider"_q,
+			tr::lng_exd_premium_transcribe,
+			{
+				&tr::lng_exd_premium_transcribe_telegram,
+				&tr::lng_exd_premium_transcribe_gemini,
+			},
+			{ u"voice"_q, u"transcribe"_q });
+		builder.addButton({
+			.id = u"extera/premium_gemini_key"_q,
+			.title = tr::lng_exd_premium_gemini_key(),
+			.st = &st::settingsButtonNoIcon,
+			.label = Config().stringChanges(
+				u"ai_chat_key"_q
+			) | rpl::map([](const QString &key) {
+				return key.trimmed().isEmpty()
+					? tr::lng_exd_streamer_hotkey_none(tr::now)
+					: tr::lng_exd_premium_gemini_set(tr::now);
+			}),
+			.onClick = [=] {
+				if (controller) {
+					Extera::ShowKeyBox(controller);
+				}
+			},
+		});
+	});
+	AddAbout(builder, tr::lng_exd_premium_about());
 }
 
 void BuildPrivacy(SectionBuilder &builder) {
@@ -3246,6 +3814,7 @@ void BuildPrivacy(SectionBuilder &builder) {
 		PartGeneral0(builder);
 		PartGeneral6(builder);
 		PartGeneral7(builder);
+		PartAyu(builder);
 	});
 }
 
@@ -3467,6 +4036,10 @@ rpl::producer<QString> ExteraSection<Index>::title() {
 }
 
 } // namespace
+
+void ShowExteraAppIconBox(not_null<Window::SessionController*> controller) {
+	ShowAppIconBox(controller);
+}
 
 void ShowExteraSupportBox(not_null<Window::SessionController*> controller) {
 	ShowBadgeInfoBox(controller);

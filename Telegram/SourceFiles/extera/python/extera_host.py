@@ -841,6 +841,14 @@ def _source(args):
     return data.decode("utf-8", "replace")
 
 
+def _guard_scan(args):
+    import plugin_guard
+    path = args.get("path")
+    if not path and args.get("id") in _records:
+        path = _records[args["id"]].path
+    return plugin_guard.scan(path)
+
+
 def _metadata(args):
     meta = read_metadata(args["path"])
     result = dict(meta)
@@ -886,6 +894,16 @@ def _set_safe_mode(args):
     return [r.info() for r in _records.values()]
 
 
+def _reload(args):
+    record = _records.get(args["id"])
+    if not record:
+        return False
+    _deactivate(record)
+    if is_enabled(record.id) and not _safe_mode:
+        _activate(record)
+    return record.info()
+
+
 def _shutdown(args):
     for record in list(_records.values()):
         _deactivate(record)
@@ -895,6 +913,7 @@ def _shutdown(args):
 _METHODS = {
     "init": _init,
     "shutdown": _shutdown,
+    "reload": _reload,
     "safe_mode": _set_safe_mode,
     "trust": _trust,
     "is_trusted": _is_trusted,
@@ -913,6 +932,7 @@ _METHODS = {
     "delete": _delete,
     "set_enabled": _set_enabled,
     "metadata": _metadata,
+    "guard_scan": _guard_scan,
     "event": _event,
     "request_hook": _request_hook_dispatch,
     "request_callback": _request_callback,

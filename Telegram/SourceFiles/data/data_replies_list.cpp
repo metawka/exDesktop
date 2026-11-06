@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_replies_list.h"
 
+#include "extera/extera_config.h"
+
 #include "history/history.h"
 #include "history/history_item.h"
 #include "history/history_item_helpers.h"
@@ -676,7 +678,7 @@ bool RepliesList::processMessagesIsEmpty(const MTPmessages_Messages &result) {
 	const auto guard = gsl::finally([&] { _listChanges.fire({}); });
 
 	auto &owner = _history->owner();
-	const auto list = result.match([&](
+	auto list = result.match([&](
 			const MTPDmessages_messagesNotModified &) {
 		LOG(("API Error: received messages.messagesNotModified! "
 			"(HistoryWidget::messagesReceived)"));
@@ -711,6 +713,27 @@ bool RepliesList::processMessagesIsEmpty(const MTPmessages_Messages &result) {
 
 	if (list.isEmpty()) {
 		return true;
+	}
+	if (Extera::SaveDeleted()) {
+		auto lowest = IdFromMessage(list.front());
+		auto highest = lowest;
+		for (const auto &message : list) {
+			const auto id = IdFromMessage(message);
+			lowest = std::min(lowest, id);
+			highest = std::max(highest, id);
+		}
+		const auto last = _history->lastMessage();
+		const auto bottom = !last || (last->id <= highest);
+		const auto front = !_list.empty() && (highest > _list.front());
+		const auto lower = front ? (_list.front() + 1) : lowest;
+		const auto upper = front
+			? (bottom ? MsgId(0) : (highest + 1))
+			: !_list.empty()
+			? _list.back()
+			: bottom
+			? MsgId(0)
+			: (highest + 1);
+		list = _history->exteraMergeDeleted(list, lower, upper, true);
 	}
 
 	const auto maxId = IdFromMessage(list.front());
@@ -1004,6 +1027,10 @@ void RepliesList::sendReadTillRequest() {
 	}
 	const auto api = &_history->session().api();
 	api->request(base::take(_readRequestId)).cancel();
+	if (Extera::GhostRead()
+		&& !Extera::ConsumeGhostRead(_history->peer->id.value)) {
+		return;
+	}
 
 	_readRequestId = api->request(MTPmessages_ReadDiscussion(
 		_history->peer->input(),

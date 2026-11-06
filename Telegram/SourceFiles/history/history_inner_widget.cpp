@@ -2765,24 +2765,35 @@ void HistoryInner::mouseDoubleClickEvent(QMouseEvent *e) {
 		if (const auto view = Element::Moused()) {
 			mouseActionCancel();
 			const auto item = view->data();
-			switch (Extera::Int(item->out()
+			exteraDoubleAction(view, Extera::Int(item->out()
 				? u"double_click_outgoing"_q
-				: u"double_click_incoming"_q)) {
-			case 0: _widget->replyToMessage(item); break;
-			case 1: toggleFavoriteReaction(view); break;
-			case 2:
-				if (item->allowsEdit(base::unixtime::now())) {
-					_widget->editMessage(item, TextSelection());
-				} else {
-					toggleFavoriteReaction(view);
-				}
-				break;
-			case 3: copyContextText(item->fullId()); break;
-			case 4: forwardItem(item->fullId()); break;
-			default: break;
-			}
+				: u"double_click_incoming"_q));
 		}
 	}
+}
+
+bool HistoryInner::exteraDoubleAction(
+		not_null<Element*> view,
+		int action,
+		bool right) {
+	const auto item = view->data();
+	switch (action) {
+	case 0: _widget->replyToMessage(item); break;
+	case 1: toggleFavoriteReaction(view); break;
+	case 2:
+		if (item->allowsEdit(base::unixtime::now())) {
+			_widget->editMessage(item, TextSelection());
+		} else if (right) {
+			return false;
+		} else {
+			toggleFavoriteReaction(view);
+		}
+		break;
+	case 3: copyContextText(item->fullId()); break;
+	case 4: forwardItem(item->fullId()); break;
+	default: break;
+	}
+	return true;
 }
 
 void HistoryInner::toggleFavoriteReaction(not_null<Element*> view) const {
@@ -2824,6 +2835,50 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 	} else if (e->reason() == QContextMenuEvent::Keyboard) {
 		if (_accessibilityFocusedItem) {
 			_dragStateItem = _accessibilityFocusedItem;
+		}
+	}
+	if (e->reason() == QContextMenuEvent::Mouse
+		&& !showFromTouch
+		&& !base::take(_exdRightBypass)
+		&& !inSelectionMode().inSelectionMode) {
+		const auto view = Element::Moused();
+		const auto item = view ? view->data().get() : nullptr;
+		const auto action = item
+			? Extera::Int(item->out()
+				? u"right_click_outgoing"_q
+				: u"right_click_incoming"_q)
+			: 5;
+		if (item && action >= 0 && action < 5) {
+			if (_exdRightTimer.isActive()
+				&& _exdRightItem == item->fullId()) {
+				_exdRightTimer.cancel();
+				_exdRightItem = FullMsgId();
+				if (exteraDoubleAction(view, action, true)) {
+					return;
+				}
+				_exdRightBypass = true;
+				auto event = QContextMenuEvent(
+					QContextMenuEvent::Mouse,
+					mapFromGlobal(e->globalPos()),
+					e->globalPos());
+				showContextMenu(&event);
+				return;
+			}
+			_exdRightItem = item->fullId();
+			_exdRightPos = e->globalPos();
+			_exdRightTimer.setCallback([=] {
+				_exdRightItem = FullMsgId();
+				_exdRightBypass = true;
+				auto event = QContextMenuEvent(
+					QContextMenuEvent::Mouse,
+					mapFromGlobal(_exdRightPos),
+					_exdRightPos);
+				showContextMenu(&event);
+			});
+			_exdRightTimer.callOnce(std::min(
+				QApplication::doubleClickInterval(),
+				170));
+			return;
 		}
 	}
 

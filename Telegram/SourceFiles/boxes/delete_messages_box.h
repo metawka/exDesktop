@@ -79,6 +79,7 @@ private:
 	object_ptr<Ui::Checkbox> _revoke = { nullptr };
 	object_ptr<Ui::SlideWrap<Ui::Checkbox>> _revokeRemember = { nullptr };
 	object_ptr<Ui::LinkButton> _autoDeleteSettings = { nullptr };
+	object_ptr<Ui::Checkbox> _exdKeep = { nullptr };
 
 	int _fullHeight = 0;
 	bool _confirmedDeletePaidSuggestedPosts = false;

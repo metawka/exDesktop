@@ -931,10 +931,7 @@ void ContactStatus::setupShareHandler(not_null<UserData*> user) {
 				tr::now,
 				lt_phone,
 				tr::marked(
-					(Extera::Streamer::Phone()
-						== Extera::Streamer::PhoneMode::Shown)
-						? Ui::FormatPhone(user->session().user()->phone())
-						: tr::lng_extera_unknown_number(tr::now)),
+					Extera::Streamer::SelfPhoneText(Ui::FormatPhone(user->session().user()->phone()))),
 				lt_user,
 				tr::bold(user->name()),
 				tr::marked),

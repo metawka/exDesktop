@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_saved_sublist.h"
+#include "extera/extera_config.h"
 
 #include "api/api_unread_things.h"
 #include "apiwrap.h"
@@ -706,6 +707,10 @@ void SavedSublist::sendReadTillRequest() {
 	}
 	const auto api = &_parent->session().api();
 	api->request(base::take(_readRequestId)).cancel();
+	if (Extera::GhostRead()
+		&& !Extera::ConsumeGhostRead(parentChat->id.value)) {
+		return;
+	}
 
 	_sentReadTill = computeInboxReadTillFull();
 	_readRequestId = api->request(MTPmessages_ReadSavedHistory(

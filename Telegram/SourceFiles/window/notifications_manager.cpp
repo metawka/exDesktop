@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/notifications_manager.h"
 
 #include "extera/extera_config.h"
+#include "extera/extera_streamer.h"
 
 #include "base/options.h"
 #include "base/platform/base_platform_info.h"
@@ -436,6 +437,10 @@ void System::registerThread(not_null<Data::Thread*> thread) {
 
 void System::schedule(Data::ItemNotification notification) {
 	Expects(_manager != nullptr);
+
+	if (Extera::Streamer::NotificationsMuted()) {
+		return;
+	}
 
 	const auto item = notification.item;
 	const auto type = notification.type;

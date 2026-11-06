@@ -41,6 +41,7 @@ struct Item {
 		{ u"wallet"_q, tr::lng_wallet_menu, &st::walletMenuIcon },
 		{ u"settings"_q, tr::lng_menu_settings, &st::menuIconSettings },
 		{ u"streamer"_q, tr::lng_extera_streamer_mode, &st::menuIconUserHide },
+		{ u"ghost"_q, tr::lng_exd_ayu_ghost_mode, &st::menuIconStealth },
 		{ u"night"_q, tr::lng_menu_night_mode, &st::menuIconNightMode },
 	};
 	return result;

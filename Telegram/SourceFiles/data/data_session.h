@@ -421,6 +421,19 @@ public:
 	void requestItemShowHighlight(not_null<HistoryItem*> item);
 	[[nodiscard]] rpl::producer<not_null<HistoryItem*>> itemShowHighlightRequest() const;
 	void requestItemViewRefresh(not_null<const HistoryItem*> item);
+	void exteraRefreshAllViews();
+	[[nodiscard]] bool exteraIsDeleted(FullMsgId id) const;
+	void exteraRemember(PeerId peerId, MsgId id, const MTPMessage &message);
+	void exteraMarkDeleted(FullMsgId id);
+	void exteraClearDeleted();
+	void exdRememberEdit(FullMsgId id, TimeId date, const QString &text);
+	[[nodiscard]] std::vector<std::pair<TimeId, QString>> exdEditsFor(
+		FullMsgId id);
+	void exteraKeepLocally(const MessageIdsList &ids);
+	[[nodiscard]] bool exteraTakeKeep(FullMsgId id);
+	[[nodiscard]] bool exteraSaveFor(not_null<HistoryItem*> item) const;
+	[[nodiscard]] const std::map<MsgId, QByteArray> &exteraDeletedFor(
+		PeerId peerId);
 	[[nodiscard]] rpl::producer<not_null<const HistoryItem*>> itemViewRefreshRequest() const;
 	void requestItemTextRefresh(not_null<HistoryItem*> item);
 	void requestUnreadReactionsAnimation(not_null<HistoryItem*> item);
@@ -1368,6 +1381,13 @@ private:
 	std::unordered_map<
 		not_null<const HistoryItem*>,
 		std::vector<not_null<ViewElement*>>> _views;
+	base::flat_set<FullMsgId> _exteraDeleted;
+	std::map<FullMsgId, QByteArray> _exteraRaw;
+	base::flat_set<FullMsgId> _exteraKeep;
+	std::map<
+		PeerId,
+		std::map<MsgId, std::vector<std::pair<TimeId, QString>>>> _exdEdits;
+	std::map<PeerId, std::map<MsgId, QByteArray>> _exteraStored;
 
 	rpl::event_stream<> _pinnedDialogsOrderUpdated;
 

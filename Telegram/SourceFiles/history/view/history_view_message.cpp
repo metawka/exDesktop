@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "extera/extera_badges.h"
 
 #include "extera/extera_config.h"
+#include "extera/extera_streamer.h"
 
 #include "api/api_suggest_post.h"
 #include "api/api_transcribes.h"
@@ -74,6 +75,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat_helpers.h"
 #include "styles/style_chat_style.h"
 #include "styles/style_dialogs.h"
+#include "styles/style_settings.h"
 #include "styles/style_iv.h"
 #include "styles/style_polls.h"
 
@@ -1796,6 +1798,12 @@ int Message::marginBottom() const {
 }
 
 void Message::draw(Painter &p, const PaintContext &context) const {
+	const auto exdOpacity = p.opacity();
+	const auto exdRestore = gsl::finally([&] { p.setOpacity(exdOpacity); });
+	if (Extera::Bool(u"translucent_deleted"_q)
+		&& history()->owner().exteraIsDeleted(data()->fullId())) {
+		p.setOpacity(exdOpacity * 0.5);
+	}
 	auto g = countGeometry();
 	if (g.width() < 1) {
 		return;
@@ -2573,7 +2581,7 @@ void Message::paintFromName(
 		}
 		if (_exdBadgeStatus->custom) {
 			clearCustomEmojiRepaint();
-			_exdBadgeStatus->custom->paint(p, {
+			Extera::PaintBadgeEmoji(p, _exdBadgeStatus->custom.get(), {
 				.textColor = nameFg,
 				.now = context.now,
 				.position = QPoint(
@@ -3076,6 +3084,29 @@ void Message::paintText(
 	if (!context.clip.intersects(trect)
 		&& context.skipDrawingParts == PaintContext::SkipDrawingParts::None
 		&& !context.gestureHorizontal.translation) {
+		return;
+	}
+	if (Extera::Streamer::HideTextOf(history()->peer)) {
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(anim::with_alpha(stm->historyTextFg->c, 0.25));
+		const auto line = st::msgFont->height;
+		const auto bar = st::exteraStreamerBar;
+		const auto widths = text().countLineWidths(trect.width());
+		const auto lines = std::max(int(widths.size()), 1);
+		for (auto i = 0; i != lines; ++i) {
+			const auto width = widths.empty()
+				? trect.width()
+				: std::clamp(widths[i], line * 2, trect.width());
+			p.drawRoundedRect(
+				QRect(
+					trect.x(),
+					trect.y() + i * line + (line - bar) / 2,
+					width,
+					bar),
+				bar / 2.,
+				bar / 2.);
+		}
 		return;
 	}
 	prepareCustomEmojiPaint(p, context, text());

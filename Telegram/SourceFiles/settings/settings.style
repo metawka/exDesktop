@@ -885,6 +885,19 @@ exteraInstallName: FlatLabel(defaultFlatLabel) {
 	}
 }
 exteraInstallNamePadding: margins(22px, 12px, 22px, 0px);
+exteraBlockedTitle: FlatLabel(defaultFlatLabel) {
+	align: align(top);
+	minWidth: 320px;
+	textFg: attentionButtonFg;
+	style: TextStyle(defaultTextStyle) {
+		font: font(15px semibold);
+	}
+}
+exteraBlockedText: FlatLabel(defaultFlatLabel) {
+	align: align(top);
+	minWidth: 320px;
+	textFg: windowSubTextFg;
+}
 exteraInstallVersion: FlatLabel(defaultFlatLabel) {
 	align: align(top);
 	minWidth: 320px;
@@ -987,6 +1000,18 @@ exteraEditedIconEmoji: IconEmoji {
 	icon: icon {{ "extera/msg_edited-11x11", windowFg }};
 	padding: margins(0px, 3px, 3px, 0px);
 }
+exteraDeletedIconEmoji: IconEmoji {
+	icon: icon {{ "extera/msg_deleted-11x11", windowFg }};
+	padding: margins(0px, 3px, 3px, 0px);
+}
+exteraDeletedCrossIconEmoji: IconEmoji {
+	icon: icon {{ "extera/msg_deleted_cross-11x11", windowFg }};
+	padding: margins(0px, 3px, 3px, 0px);
+}
+exteraDeletedEyeIconEmoji: IconEmoji {
+	icon: icon {{ "extera/msg_deleted_eye-11x11", windowFg }};
+	padding: margins(0px, 3px, 3px, 0px);
+}
 exteraForwardsIconEmoji: IconEmoji {
 	icon: icon {{ "extera/msg_forwards-13x13", windowFg }};
 	padding: margins(0px, 2px, 3px, 0px);
@@ -1037,6 +1062,7 @@ exteraAiHeaderAboutPadding: margins(22px, 6px, 22px, 4px);
 exteraPluginNameButton: SettingsButton(settingsButtonNoIcon) {
 	textBg: transparent;
 	textBgOver: transparent;
+	ripple: emptyRippleAnimation;
 }
 exteraStreamerDateSkip: 64px;
 exteraStreamerToggleSkip: 14px;

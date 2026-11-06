@@ -67,6 +67,7 @@
         <li>Built-in QuoteReply</li>
         <li>Scheduled posting for channel editors</li>
         <li>Forwarding messages from other accounts</li>
+        <li>Double click actions for left and right mouse buttons</li>
         <li>Message translation preserving formatting</li>
       </ul>
     </td>
@@ -92,6 +93,8 @@
         <li>Streamer mode</li>
         <li>Show hidden group members</li>
         <li>Hide archive</li>
+        <li>Ghost mode</li>
+        <li>Saved deleted messages and edit history</li>
       </ul>
     </td>
   </tr>
@@ -104,6 +107,8 @@
         <li>Notification visual settings</li>
         <li>Custom notification sound</li>
         <li>Removed account limit</li>
+        <li>Local Telegram Premium</li>
+        <li>Default client for tg:// links</li>
         <li>Automatic updates</li>
       </ul>
     </td>
@@ -114,7 +119,8 @@
         <li>Plugin settings</li>
         <li>Plugin export</li>
         <li>Install plugins from file</li>
-        <li>AI chat</li>
+        <li>Plugin security check</li>
+        <li>AI Chat [beta]</li>
       </ul>
     </td>
   </tr>
@@ -129,6 +135,12 @@
 | macOS | `exDesktop-macos-arm64.*.dmg` or `.zip` for Apple Silicon |
 
 All files are available on the [releases page](https://github.com/metawka/exDesktop/releases/latest). exDesktop installs beside Telegram Desktop and keeps its data separate.
+
+Linux and macOS installation from the terminal (the installer detects the system and offers the application menu entry, TG WS Proxy dependencies and AyuGram features):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/metawka/exDesktop/main/install.sh | sh
+```
 
 ## Building
 
@@ -216,6 +228,7 @@ Most strings follow Telegram Desktop translations. exDesktop strings are availab
 | [exteraGram](https://github.com/exteraSquad/exteraGram) | Features and plugin format |
 | [AyuGram Desktop](https://github.com/AyuGram/AyuGramDesktop) | Desktop implementation references |
 | [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy) | Built-in WebSocket proxy, MIT License |
+| [Kangel Plugins Manager](https://git.kangel.xyz/KangelPlugins/PluginManager) | Plugin security check approach and the PluginGuard vector model |
 
 ## License
 

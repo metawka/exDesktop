@@ -9,6 +9,8 @@
 #include "ui/boxes/confirm_box.h"
 #include "extera/extera_ws_proxy.h"
 #include "extera/extera_app_icon.h"
+#include "extera/extera_ai_chat.h"
+#include "ui/boxes/single_choice_box.h"
 #include "lang/lang_keys.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
@@ -92,6 +94,110 @@ void FillUnofficialInfo(not_null<Ui::VerticalLayout*> container) {
 		u"@exDesktop"_q,
 		u"https://t.me/exDesktop"_q,
 		&st::exteraIconChannel);
+}
+
+void FillPremium(
+		not_null<Ui::VerticalLayout*> content,
+		not_null<Window::SessionController*> controller) {
+	const auto toggle = [=](
+			rpl::producer<QString> title,
+			bool initial,
+			Fn<void(bool)> apply) {
+		const auto button = content->add(
+			object_ptr<Ui::SettingsButton>(
+				content,
+				std::move(title),
+				st::settingsButtonNoIcon));
+		button->toggleOn(rpl::single(initial));
+		button->toggledChanges(
+		) | rpl::on_next(apply, button->lifetime());
+	};
+	const auto key = [=](const QString &key) {
+		return [=](bool value) { Config::Instance().setBool(key, value); };
+	};
+	toggle(
+		tr::lng_exd_premium_limits(),
+		Bool(u"local_premium"_q),
+		key(u"local_premium"_q));
+	toggle(
+		tr::lng_exd_premium_no_ads(),
+		Bool(u"premium_no_ads"_q),
+		key(u"premium_no_ads"_q));
+	toggle(
+		tr::lng_extera_local_premium(),
+		Bool(u"local_premium_emoji"_q),
+		key(u"local_premium_emoji"_q));
+	const auto settings = &Core::App().settings();
+	toggle(
+		tr::lng_exd_premium_translate(),
+		settings->translateChatEnabled(),
+		[=](bool value) {
+			settings->setTranslateChatEnabled(value);
+			Core::App().saveSettingsDelayed();
+		});
+	const auto provider = content->lifetime().make_state<
+		rpl::variable<int>>(Int(u"transcribe_provider"_q));
+	const auto options = std::vector<QString>{
+		tr::lng_exd_premium_transcribe_telegram(tr::now),
+		tr::lng_exd_premium_transcribe_gemini(tr::now),
+	};
+	const auto transcribe = content->add(
+		object_ptr<Ui::SettingsButton>(
+			content,
+			tr::lng_exd_premium_transcribe(),
+			st::settingsButtonNoIcon));
+	Settings::CreateRightLabel(
+		transcribe,
+		provider->value() | rpl::map([=](int index) {
+			return options[std::clamp(index, 0, 1)];
+		}),
+		st::settingsButtonNoIcon,
+		tr::lng_exd_premium_transcribe());
+	transcribe->setClickedCallback([=] {
+		controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+			SingleChoiceBox(box, {
+				.title = tr::lng_exd_premium_transcribe(),
+				.options = options,
+				.initialSelection = provider->current(),
+				.callback = [=](int index) {
+					Config::Instance().setInt(u"transcribe_provider"_q, index);
+					*provider = index;
+					if (index == 1
+						&& String(u"ai_chat_key"_q).trimmed().isEmpty()) {
+						ShowKeyBox(controller);
+					}
+				},
+			});
+		}));
+	});
+	content->add(
+		object_ptr<Ui::FlatLabel>(
+			content,
+			tr::lng_exd_premium_wizard_about(),
+			st::exteraWelcomeText),
+		st::exteraWelcomeTextPadding,
+		style::al_top);
+}
+
+void ShowPremiumBox(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(tr::lng_exd_premium_title());
+		box->setWidth(st::boxWideWidth);
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_premium_wizard_text(),
+				st::exteraWelcomeText),
+			st::exteraWelcomeTextPadding,
+			style::al_top);
+		FillPremium(box->verticalLayout(), controller);
+		box->addButton(tr::lng_exd_wizard_finish(), [=] {
+			box->closeBox();
+		});
+		box->boxClosing() | rpl::on_next([=] {
+			Config::Instance().setBool(u"premium_wizard_shown"_q, true);
+		}, box->lifetime());
+	}));
 }
 
 void ShowWelcomeBox(not_null<Window::SessionController*> controller) {
@@ -346,8 +452,36 @@ void ShowWelcomeBox(not_null<Window::SessionController*> controller) {
 				tr::lng_extera_local_premium(),
 				nullptr);
 			toggle(u"chars_counter"_q, tr::lng_exd_chars_counter(), nullptr);
+			{
+				const auto button = content->add(
+					object_ptr<Ui::SettingsButton>(
+						content,
+						tr::lng_exd_default_client(),
+						st::settingsButtonNoIcon));
+				button->toggleOn(rpl::single(false));
+				button->toggledChanges(
+				) | rpl::filter(
+					rpl::mappers::_1
+				) | rpl::on_next([=] {
+					AppIcon::MakeDefaultClient();
+				}, button->lifetime());
+			}
 			addText(tr::lng_exd_wizard_settings_about());
-			box->addButton(tr::lng_exd_wizard_finish(), finish);
+			box->addButton(tr::lng_exd_wizard_next(), [=] {
+				crl::on_main(box, [=] {
+					state->step = 3;
+					(*rebuild)();
+				});
+			});
+		};
+		const auto fillPremium = [=] {
+			addTitle(tr::lng_exd_premium_title());
+			addText(tr::lng_exd_premium_wizard_text());
+			FillPremium(content, controller);
+			box->addButton(tr::lng_exd_wizard_finish(), [=] {
+				Config::Instance().setBool(u"premium_wizard_shown"_q, true);
+				finish();
+			});
 		};
 		*rebuild = [=] {
 			box->clearButtons();
@@ -356,7 +490,8 @@ void ShowWelcomeBox(not_null<Window::SessionController*> controller) {
 			switch (state->step) {
 			case 0: fillWelcome(); break;
 			case 1: fillIcon(); break;
-			default: fillSettings(); break;
+			case 2: fillSettings(); break;
+			default: fillPremium(); break;
 			}
 			content->resizeToWidth(st::boxWideWidth);
 		};
@@ -377,10 +512,11 @@ void StartWelcome() {
 	) | rpl::filter([](Main::Session *session) {
 		return session != nullptr;
 	}) | rpl::take(1) | rpl::on_next([](Main::Session *session) {
-		if (Bool(u"wizard_shown"_q)) {
+		const auto premiumOnly = Bool(u"wizard_shown"_q);
+		if (premiumOnly && Bool(u"premium_wizard_shown"_q)) {
 			return;
 		}
-		base::call_delayed(1500, [] {
+		base::call_delayed(1500, [=] {
 			const auto window = Core::App().activePrimaryWindow();
 			const auto controller = window
 				? window->sessionController()
@@ -388,7 +524,11 @@ void StartWelcome() {
 			if (!controller) {
 				return;
 			}
-			ShowWelcomeBox(controller);
+			if (premiumOnly) {
+				ShowPremiumBox(controller);
+			} else {
+				ShowWelcomeBox(controller);
+			}
 		});
 	}, Lifetime());
 }

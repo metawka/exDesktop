@@ -107,7 +107,10 @@ private:
 #ifdef Q_OS_WIN
 	return cExeDir() + u"python/"_q;
 #elif defined(Q_OS_MAC)
-	return cExeDir() + u"python/"_q;
+	const auto resources = cExeDir() + u"../Resources/python/"_q;
+	return QFile::exists(resources + u"extera/extera_host.py"_q)
+		? resources
+		: (cExeDir() + u"python/"_q);
 #else
 	// Linux / generic Unix: check local candidates where extera_host.py might reside
 	const auto localToExe = cExeDir() + u"python/"_q;
@@ -989,6 +992,13 @@ PyObject *InitNativeModule() {
 					&config,
 					&config.home,
 					home.c_str()))) {
+				return false;
+			}
+			if (!QDir(candidate).exists(u"lib64"_q)
+				&& !finish(PyConfig_SetString(
+					&config,
+					&config.platlibdir,
+					L"lib"))) {
 				return false;
 			}
 			break;

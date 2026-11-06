@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/sections/settings_chat.h"
+#include "settings/sections/settings_extera.h"
 
 #include "settings/settings_common_session.h"
 
@@ -2567,6 +2568,14 @@ void SetupThemeSettings(
 			{ fontButton.get(), { .rippleShape = true } },
 		});
 	}
+	AddButtonWithIcon(
+		container,
+		tr::lng_extera_app_icon(),
+		st::settingsButton,
+		{ &st::exteraIconAppearance }
+	)->setClickedCallback([=] {
+		ShowExteraAppIconBox(controller);
+	});
 
 	Ui::AddSkip(container, st::settingsCheckboxesSkip);
 }

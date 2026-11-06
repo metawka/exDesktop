@@ -342,6 +342,17 @@ void ResolveDocument(
 				return;
 			}
 			if (controller
+				&& path.endsWith(u".plugin"_q, Qt::CaseInsensitive)) {
+				const auto error = Extera::Plugins::RuntimeError();
+				controller->showToast(error.isEmpty()
+					? tr::lng_exd_plugins_engine_off(tr::now)
+					: tr::lng_exd_plugins_engine_failed(
+						tr::now,
+						lt_error,
+						error));
+				return;
+			}
+			if (controller
 				&& path.endsWith(u".pdf"_q, Qt::CaseInsensitive)
 				&& Extera::PdfViewer::Supported()) {
 				Extera::PdfViewer::Show(

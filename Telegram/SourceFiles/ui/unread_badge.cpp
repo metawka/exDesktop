@@ -255,10 +255,23 @@ int PeerBadge::drawGetWidth(Painter &p, Descriptor &&descriptor) {
 		return drawGetWidthInner(p, std::move(descriptor));
 	}
 	auto copy = descriptor;
+	const auto size = Ui::Text::AdjustCustomEmojiSize(st::emojiSize);
+	const auto own = (trusted && !Extera::PluginTrust::TrustedEmoji())
+		? size
+		: (descriptor.premium->width() - 2 * (st::emojiSize - size));
+	const auto reserve = own
+		+ style::ConvertScale(4)
+		+ st::normalFont->spacew;
+	const auto innerWidth = std::max(
+		descriptor.rectForName.width() - reserve,
+		0);
+	descriptor.rectForName.setWidth(innerWidth);
 	const auto result = drawGetWidthInner(p, std::move(descriptor));
 	const auto gap = (result ? style::ConvertScale(4) : 0)
 		+ st::normalFont->spacew;
-	copy.nameWidth += result + gap;
+	copy.nameWidth = std::min(copy.nameWidth, innerWidth - result)
+		+ result
+		+ gap;
 	if (trusted) {
 		if (const auto emoji = Extera::PluginTrust::TrustedEmoji()) {
 			return result + gap + drawEmojiStatus(
@@ -427,12 +440,17 @@ int PeerBadge::drawEmojiStatus(
 		icony + slot->skip);
 	slot->lastColor = (*descriptor.premiumFg)->c;
 	slot->painted = true;
-	slot->emoji->paint(p, {
+	const auto context = Ui::Text::CustomEmoji::Context{
 		.textColor = slot->lastColor,
 		.now = descriptor.now,
 		.position = slot->lastPosition,
 		.paused = descriptor.paused || On(PowerSaving::kEmojiStatus),
-	});
+	};
+	if (&slot == &_exteraStatus) {
+		Extera::PaintBadgeEmoji(p, slot->emoji.get(), context);
+	} else {
+		slot->emoji->paint(p, context);
+	}
 	return iconw - 4 * slot->skip;
 }
 

@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_stories.h"
 
+#include "extera/extera_config.h"
+
 #include "base/unixtime.h"
 #include "apiwrap.h"
 #include "core/application.h"
@@ -1405,6 +1407,10 @@ void Stories::sendMarkAsReadRequest(
 		checkQuitPreventFinished();
 	};
 
+	if (Extera::GhostStories()) {
+		finish();
+		return;
+	}
 	const auto api = &_owner->session().api();
 	api->request(MTPstories_ReadStories(
 		peer->input(),
@@ -1439,6 +1445,10 @@ void Stories::sendMarkAsReadRequests() {
 
 void Stories::sendIncrementViewsRequests() {
 	if (_incrementViewsPending.empty()) {
+		return;
+	} else if (Extera::GhostStories()) {
+		_incrementViewsPending.clear();
+		checkQuitPreventFinished();
 		return;
 	}
 	struct Prepared {

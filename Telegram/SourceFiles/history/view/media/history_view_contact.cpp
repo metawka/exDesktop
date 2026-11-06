@@ -26,6 +26,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/power_saving.h"
 #include "ui/rect.h"
 #include "ui/text/format_values.h" // Ui::FormatPhone
+#include "extera/extera_streamer.h"
+#include "main/main_session.h"
+#include "data/data_user.h"
 #include "ui/text/text_options.h"
 #include "ui/text/text_utilities.h" // Ui::Text::Wrapped.
 #include "ui/vertical_list.h"
@@ -217,9 +220,15 @@ Contact::Contact(
 		langFullName(data.firstName, data.lastName),
 		Ui::WebpageTextTitleOptions());
 
+	const auto self = parent->history()->session().user();
+	const auto own = !data.phoneNumber.isEmpty()
+		&& (QString(data.phoneNumber).remove(QRegularExpression(u"\\D"_q))
+			== self->phone());
 	_phoneLine.setText(
 		st::webPageDescriptionStyle,
-		Ui::FormatPhone(data.phoneNumber),
+		(own
+			? Extera::Streamer::SelfPhoneText(Ui::FormatPhone(data.phoneNumber))
+			: Ui::FormatPhone(data.phoneNumber)),
 		Ui::WebpageTextTitleOptions());
 }
 

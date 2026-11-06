@@ -2386,6 +2386,17 @@ void HistoryItem::clearMainView() {
 
 void HistoryItem::applyEdition(HistoryMessageEdition &&edition) {
 	history()->session().ephemeralMessages().revertAnchored(this);
+	if (isRegular() && !isService()) {
+		const auto previous = originalText().text;
+		if (!previous.isEmpty()
+			&& previous != edition.textWithEntities.text) {
+			const auto edited = Get<HistoryMessageEdited>();
+			history()->owner().exdRememberEdit(
+				fullId(),
+				edited ? edited->date : date(),
+				previous);
+		}
+	}
 
 	int keyboardTop = -1;
 	//if (!pendingResize()) {// #TODO edit bot message
@@ -4721,6 +4732,7 @@ void HistoryItem::detectTextLinks(
 
 void HistoryItem::setText(TextWithEntities textWithEntities) {
 	Extera::FilterZalgo(textWithEntities);
+	Extera::DetectPeerIds(textWithEntities);
 	Extera::ApplyLocalPremiumEmoji(textWithEntities);
 	detectTextLinks(textWithEntities);
 	setTextValue((_media && _media->consumeMessageText(textWithEntities))

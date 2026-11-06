@@ -1,4 +1,8 @@
 #include "extera/extera_badges.h"
+#include "ui/text/text_custom_emoji.h"
+#include "window/themes/window_theme.h"
+#include "ui/painter.h"
+#include "styles/style_basic.h"
 
 #include "data/data_peer.h"
 #include "settings.h"
@@ -45,6 +49,7 @@ struct OwnLists {
 	base::flat_map<QString, QString> typeText;
 	base::flat_map<uint64, OwnBadge> users;
 	base::flat_map<uint64, OwnBadge> channels;
+	base::flat_map<uint64, OwnBadge> bots;
 	std::optional<std::vector<TrustedSource>> trusted;
 };
 
@@ -160,6 +165,7 @@ bool ApplyOwn(const QByteArray &bytes) {
 	}
 	lists.users = ReadOwn(object.value(u"users"_q));
 	lists.channels = ReadOwn(object.value(u"channels"_q));
+	lists.bots = ReadOwn(object.value(u"bots"_q));
 	if (object.contains(u"trusted"_q)) {
 		auto trusted = std::vector<TrustedSource>();
 		for (const auto &entry : object.value(u"trusted"_q).toArray()) {
@@ -247,9 +253,18 @@ void RefreshOwn(QNetworkAccessManager *manager) {
 
 [[nodiscard]] const OwnBadge *FindOwn(not_null<PeerData*> peer) {
 	const auto bare = BareId(peer);
-	const auto &map = peer->isUser() ? Own().users : Own().channels;
-	const auto i = map.find(bare);
-	return (i != end(map)) ? &i->second : nullptr;
+	const auto find = [&](const base::flat_map<uint64, OwnBadge> &map) {
+		const auto i = map.find(bare);
+		return (i != end(map)) ? &i->second : nullptr;
+	};
+	if (!peer->isUser()) {
+		return find(Own().channels);
+	} else if (const auto result = find(Own().users)) {
+		return result;
+	} else if (const auto result = find(Own().bots)) {
+		return result;
+	}
+	return find(Own().channels);
 }
 
 [[nodiscard]] BadgeKind OwnKind(
@@ -268,6 +283,57 @@ void RefreshOwn(QNetworkAccessManager *manager) {
 }
 
 } // namespace
+
+void PaintBadgeEmoji(
+		QPainter &p,
+		not_null<Ui::Text::CustomEmoji*> emoji,
+		const Ui::Text::CustomEmojiPaintContext &context) {
+	if (Window::Theme::IsNightMode()) {
+		emoji->paint(p, context);
+		return;
+	}
+	const auto side = std::max(emoji->width(), st::emojiSize)
+		+ style::ConvertScale(4);
+	const auto ratio = style::DevicePixelRatio();
+	auto image = QImage(
+		QSize(side, side) * ratio,
+		QImage::Format_ARGB32_Premultiplied);
+	image.setDevicePixelRatio(ratio);
+	image.fill(Qt::transparent);
+	{
+		auto q = QPainter(&image);
+		auto copy = context;
+		copy.position = QPoint();
+		emoji->paint(q, copy);
+	}
+	auto weight = 0.;
+	auto light = 0.;
+	for (auto y = 0; y < image.height(); y += 2) {
+		const auto line = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+		for (auto x = 0; x < image.width(); x += 2) {
+			const auto pixel = line[x];
+			const auto alpha = qAlpha(pixel);
+			if (alpha < 32) {
+				continue;
+			}
+			const auto factor = 255. / alpha;
+			const auto luma = (0.299 * qRed(pixel)
+				+ 0.587 * qGreen(pixel)
+				+ 0.114 * qBlue(pixel)) * factor / 255.;
+			weight += alpha;
+			light += luma * alpha;
+		}
+	}
+	if (weight > 0. && (light / weight) > 0.8) {
+		auto q = QPainter(&image);
+		q.setCompositionMode(QPainter::CompositionMode_SourceIn);
+		const auto color = QColor(context.textColor);
+		q.fillRect(
+			QRect(0, 0, side, side),
+			color.alpha() ? color : st::windowFg->c);
+	}
+	p.drawImage(context.position, image);
+}
 
 void StartBadges() {
 	static auto started = false;
@@ -337,6 +403,10 @@ DocumentId BadgeEmoji(not_null<PeerData*> peer) {
 		if (i != end(Own().typeEmoji) && i->second) {
 			return i->second;
 		}
+		const auto fallback = Own().typeEmoji.find(u"default"_q);
+		if (fallback != end(Own().typeEmoji) && fallback->second) {
+			return fallback->second;
+		}
 	}
 	switch (BadgeKindFor(peer)) {
 	case BadgeKind::Porter:
@@ -384,6 +454,34 @@ std::optional<std::vector<TrustedSource>> TrustedSources() {
 
 bool IsTrustedHash(const QString &sha256) {
 	return Hashes().contains(sha256.toLower());
+}
+
+bool IsBadgeEmoji(DocumentId id) {
+	if (!id) {
+		return false;
+	} else if (id == kPorterEmoji
+		|| id == kDeveloperEmoji
+		|| id == kSupporterEmoji) {
+		return true;
+	}
+	for (const auto &[type, emoji] : Own().typeEmoji) {
+		if (emoji == id) {
+			return true;
+		}
+	}
+	for (const auto map : { &Own().users, &Own().channels, &Own().bots }) {
+		for (const auto &[bare, badge] : *map) {
+			if (badge.documentId == id) {
+				return true;
+			}
+		}
+	}
+	for (const auto &[bare, custom] : Data().custom) {
+		if (custom.documentId == id) {
+			return true;
+		}
+	}
+	return false;
 }
 
 DocumentId BadgeTypeEmoji(const QString &type) {

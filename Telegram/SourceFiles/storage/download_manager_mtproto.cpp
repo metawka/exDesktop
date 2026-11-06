@@ -22,7 +22,6 @@ namespace Storage {
 namespace {
 
 constexpr auto kKillSessionTimeout = 15 * crl::time(1000);
-constexpr auto kMaxSessionsCount = 8;
 
 [[nodiscard]] int DownloadBoost() {
 	return std::clamp(Extera::Int(u"download_boost"_q), 0, 2);
@@ -37,14 +36,31 @@ constexpr auto kMaxSessionsCount = 8;
 }
 
 [[nodiscard]] std::size_t StartSessionsCount() {
-	return std::size_t(1 + DownloadBoost());
+	constexpr auto counts = std::array<std::size_t, 3>{ 1, 4, 8 };
+	return counts[DownloadBoost()];
+}
+
+[[nodiscard]] std::size_t MaxSessionsCount() {
+	constexpr auto counts = std::array<std::size_t, 3>{ 8, 12, 16 };
+	return counts[DownloadBoost()];
+}
+
+[[nodiscard]] int RetryAddSessionSuccesses() {
+	return DownloadBoost() ? 1 : 3;
+}
+
+[[nodiscard]] crl::time RetryAddSessionTimeout() {
+	constexpr auto delays = std::array<crl::time, 3>{ 8000, 4000, 2000 };
+	return delays[DownloadBoost()];
+}
+
+[[nodiscard]] int RemoveSessionAfterTimeouts() {
+	return 4 + 2 * DownloadBoost();
 }
 constexpr auto kMaxTrackedSessionRemoves = 64;
-constexpr auto kRetryAddSessionTimeout = 8 * crl::time(1000);
 constexpr auto kRetryAddSessionSuccesses = 3;
 constexpr auto kMaxTrackedSuccesses = kRetryAddSessionSuccesses
 	* kMaxTrackedSessionRemoves;
-constexpr auto kRemoveSessionAfterTimeouts = 4;
 constexpr auto kResetDownloadPrioritiesTimeout = crl::time(200);
 constexpr auto kBadRequestDurationThreshold = 8 * crl::time(1000);
 
@@ -287,7 +303,7 @@ void DownloadManagerMtproto::requestSucceeded(
 	data.successes = std::min(data.successes + 1, kMaxTrackedSuccesses);
 	const auto notEnough = ranges::any_of(
 		dc.sessions,
-		_1 < (dc.sessionRemoveTimes + 1) * kRetryAddSessionSuccesses,
+		_1 < (dc.sessionRemoveTimes + 1) * RetryAddSessionSuccesses(),
 		&DcSessionBalanceData::successes);
 	if (notEnough) {
 		return;
@@ -298,11 +314,11 @@ void DownloadManagerMtproto::requestSucceeded(
 	if (dc.timeouts > 0) {
 		--dc.timeouts;
 		return;
-	} else if (dc.sessions.size() == kMaxSessionsCount) {
+	} else if (dc.sessions.size() >= MaxSessionsCount()) {
 		return;
 	}
 	const auto now = crl::now();
-	const auto delay = (dc.sessionRemoveTimes + 1) * kRetryAddSessionTimeout;
+	const auto delay = (dc.sessionRemoveTimes + 1) * RetryAddSessionTimeout();
 	if (dc.lastSessionRemove && now < dc.lastSessionRemove + delay) {
 		return;
 	}
@@ -338,7 +354,7 @@ void DownloadManagerMtproto::sessionTimedOut(MTP::DcId dcId, int index) {
 		session.successes = 0;
 	}
 	if (dc.sessions.size() == StartSessionsCount()
-		|| ++dc.timeouts < kRemoveSessionAfterTimeouts) {
+		|| ++dc.timeouts < RemoveSessionAfterTimeouts()) {
 		return;
 	}
 	dc.timeouts = 0;
@@ -365,9 +381,9 @@ void DownloadManagerMtproto::removeSession(MTP::DcId dcId) {
 	auto &session = dc.sessions.back();
 
 	// Make sure we don't send anything to that session while redirecting.
-	session.requested += MaxWaitedInSession() * kMaxSessionsCount;
+	session.requested += MaxWaitedInSession() * int(MaxSessionsCount());
 	queue.removeSession(index);
-	Assert(session.requested == MaxWaitedInSession() * kMaxSessionsCount);
+	Assert(session.requested == MaxWaitedInSession() * int(MaxSessionsCount()));
 
 	dc.sessions.pop_back();
 	api().instance().killSession(MTP::downloadDcId(dcId, index));

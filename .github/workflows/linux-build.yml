@@ -60,6 +60,13 @@ jobs:
           rm -rf ${{ runner.temp }}/.buildx-cache
           mv ${{ runner.temp }}/.buildx-cache-new ${{ runner.temp }}/.buildx-cache
 
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ${{ runner.os }}-ccache-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-ccache-
+
       - name: Build
         env:
           API_ID: ${{ secrets.TDESKTOP_API_ID }}
@@ -69,9 +76,13 @@ jobs:
             echo "TDESKTOP_API_ID or TDESKTOP_API_HASH secret is not set"
             exit 1
           fi
+          mkdir -p "${{ runner.temp }}/ccache"
           docker run --rm \
             -u "$(id -u)" \
             -v "$PWD:/usr/src/tdesktop" \
+            -v "${{ runner.temp }}/ccache:/var/cache/ccache" \
+            -e CCACHE_DIR=/var/cache/ccache \
+            -e CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime \
             -e CONFIG=Release \
             -e API_ID -e API_HASH \
             "$IMAGE_TAG" \
@@ -101,14 +112,18 @@ jobs:
               rm -rf pkg
               mkdir -p "$PKG/lib" "$PKG/python" "$PKG/python311/lib"
               cp out/Release/Telegram "$PKG/exDesktop-bin"
+              cp Telegram/Resources/art/icon256.png "$PKG/exDesktop.png"
               strip "$PKG/exDesktop-bin"
               cp -L /usr/lib64/libpython3.11.so.1.0 "$PKG/lib/"
               cp -r /usr/lib64/python3.11 "$PKG/python311/lib/python3.11"
               rm -rf "$PKG/python311/lib/python3.11/test" \
                 "$PKG/python311/lib/python3.11/site-packages"
               find "$PKG/python311" -name "__pycache__" -type d -prune -exec rm -rf {} +
+              ln -s lib "$PKG/python311/lib64"
               mkdir -p "$PKG/python/extera"
               cp -r Telegram/SourceFiles/extera/python/. "$PKG/python/extera/"
+              mkdir -p "$PKG/python/tgws"
+              cp -r Telegram/SourceFiles/extera/tgws/. "$PKG/python/tgws/"
               cat > "$PKG/exDesktop" <<SH
           #!/bin/sh
           DIR="\$(cd "\$(dirname "\$0")" && pwd)"

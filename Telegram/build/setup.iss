@@ -78,13 +78,16 @@ Name: "ua";      MessagesFile: "compiler:Languages\Ukrainian.isl"
 
 [CustomMessages]
 TgWsProxy=tg-ws-proxy (connection via WebSocket)
+AyuFeatures=AyuGram features (ghost mode, deleted messages)
 Components=Components:
 ru.TgWsProxy=tg-ws-proxy (подключение через WebSocket)
+ru.AyuFeatures=Функции AyuGram (режим призрака, удалённые сообщения)
 ru.Components=Компоненты:
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "tgws"; Description: "{cm:TgWsProxy}"; GroupDescription: "{cm:Components}"
+Name: "ayu"; Description: "{cm:AyuFeatures}"; GroupDescription: "{cm:Components}"; Flags: unchecked
 
 [InstallDelete]
 Type: filesandordirs; Name: "{app}\python\tgws"; Tasks: not tgws
@@ -111,6 +114,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 
 [UninstallDelete]
 Type: files; Name: "{app}\data"
+Type: files; Name: "{app}\exd_install.conf"
 Type: files; Name: "{app}\data_config"
 Type: files; Name: "{app}\log.txt"
 Type: filesandordirs; Name: "{app}\DebugLogs"
@@ -192,6 +196,10 @@ var ResultCode: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
+    if WizardIsTaskSelected('ayu') then
+      SaveStringToFile(ExpandConstant('{app}\exd_install.conf'), 'ayu=1' + #13#10, False)
+    else
+      SaveStringToFile(ExpandConstant('{app}\exd_install.conf'), 'ayu=0' + #13#10, False);
     HasNewKey := RegKeyExists(HKEY_CURRENT_USER, 'Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{{#MyAppId}}_is1') or RegKeyExists(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{{#MyAppId}}_is1');
     HasOldKey := RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{{#MyAppId}}_is1') or RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{{#MyAppId}}_is1');
     UserDesktopLnk := ExpandFileName(GetShellFolderByCSIDL(CSIDL_DESKTOPDIRECTORY, False) + '\{#MyAppShortName}.lnk');

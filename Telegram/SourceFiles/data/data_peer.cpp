@@ -452,7 +452,8 @@ void PeerData::paintUserpic(
 		return;
 	}
 	const auto size = context.size;
-	if (isSelf() && Extera::Streamer::HideAvatar()) {
+	if ((isSelf() && Extera::Streamer::HideAvatar())
+		|| Extera::Streamer::HideAvatarOf(this)) {
 		const auto &logo = Extera::Streamer::Avatar();
 		auto hq = PainterHighQualityEnabler(p);
 		auto path = QPainterPath();
@@ -1318,7 +1319,9 @@ ChannelData *PeerData::broadcastMonoforum() const {
 }
 
 const QString &PeerData::topBarNameText() const {
-	if (const auto to = migrateTo()) {
+	if (Extera::Streamer::HideNameOf(this)) {
+		return Extera::Streamer::PlaceholderName();
+	} else if (const auto to = migrateTo()) {
 		return to->topBarNameText();
 	} else if (const auto user = asUser()) {
 		if (!user->nameOrPhone.isEmpty()) {
@@ -1336,6 +1339,8 @@ const QString &PeerData::name() const {
 	if (isSelf() && Extera::Streamer::HideName()) {
 		static const auto streamer = Extera::Streamer::Name();
 		return streamer;
+	} else if (Extera::Streamer::HideNameOf(this)) {
+		return Extera::Streamer::PlaceholderName();
 	} else if (const auto to = migrateTo()) {
 		return to->name();
 	} else if (const auto broadcast = monoforumBroadcast()) {

@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/application.h"
+#include "data/data_forum_topic.h"
+#include "ui/emoji_config.h"
 #include "extera/extera_update.h"
 #include "extera/extera_changelog.h"
 #include "extera/extera_ws_proxy.h"
@@ -55,6 +57,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_specific.h"
 #include "platform/platform_integration.h"
 #include "history/history.h"
+#include "history/history_item.h"
+#include "data/data_histories.h"
+#include "data/data_user.h"
+#include "apiwrap.h"
+#include "base/timer.h"
 #include "apiwrap.h"
 #include "api/api_updates.h"
 #include "calls/calls_instance.h"
@@ -202,8 +209,108 @@ Application::Application()
 , _autoLockTimer([=] { checkAutoLock(); }) {
 	Ui::Integration::Set(&_private->uiIntegration);
 	Extera::Config::Instance().setWorkingDir(cWorkingDir());
+	Extera::Config::Instance().applyInstallChoice({
+		cExeDir() + u"exd_install.conf"_q,
+		psAppDataPath() + u"exd_install.conf"_q,
+	});
 	Ui::SetMaterialSwitches(Extera::Bool(u"md3_switches"_q));
 	Ui::SetMutedSwitches(Extera::Bool(u"md3_switches_muted"_q));
+	Extera::Config::Instance().changes(
+	) | rpl::filter([](const QString &key) {
+		static const auto keys = base::flat_set<QString>{
+			u"remove_message_tail"_q,
+			u"hide_share_button"_q,
+			u"edited_icon"_q,
+			u"forward_count"_q,
+			u"sticker_size"_q,
+			u"sticker_time"_q,
+			u"name_accent"_q,
+			u"online_indicator"_q,
+			u"wide_posts"_q,
+			u"feed_wide_posts"_q,
+			u"hide_reactions_private"_q,
+			u"hide_reactions_groups"_q,
+			u"hide_reactions_channels"_q,
+			u"time_with_seconds"_q,
+			u"disable_number_rounding"_q,
+			u"system_emoji"_q,
+			u"inline_math"_q,
+			u"filter_zalgo"_q,
+			u"local_premium_emoji"_q,
+			u"poll_results_before_voting"_q,
+			u"translucent_deleted"_q,
+			u"disable_colorful_replies"_q,
+		};
+		return keys.contains(key);
+	}) | rpl::on_next([=] {
+		crl::on_main(this, [=] {
+			for (const auto &[index, account] : domain().accounts()) {
+				if (account->sessionExists()) {
+					account->session().data().exteraRefreshAllViews();
+				}
+			}
+		});
+	}, _lifetime);
+	{
+		const auto ghostOnline = std::make_shared<
+			base::flat_set<not_null<Main::Session*>>>();
+		const auto ghostTimer = std::make_shared<base::Timer>([=] {
+			if (!Extera::GhostOffline() || Core::Quitting()) {
+				return;
+			}
+			const auto now = base::unixtime::now();
+			for (const auto &[index, account] : domain().accounts()) {
+				const auto session = account->maybeSession();
+				if (!session) {
+					continue;
+				}
+				const auto dirty = ghostOnline->contains(session);
+				if (dirty || session->user()->lastseen().isOnline(now)) {
+					ghostOnline->remove(session);
+					session->api().request(MTPaccount_UpdateStatus(
+						MTP_bool(true)
+					)).send();
+				}
+			}
+		});
+		ghostTimer->callEach(3000);
+		const auto ghostSubscribed = std::make_shared<
+			base::flat_set<not_null<Main::Session*>>>();
+		_domain->activeSessionValue(
+		) | rpl::filter([](Main::Session *session) {
+			return session != nullptr;
+		}) | rpl::on_next([=](not_null<Main::Session*> session) {
+			if (!ghostSubscribed->emplace(session).second) {
+				return;
+			}
+			session->lifetime().add([=] {
+				ghostSubscribed->remove(session);
+				ghostOnline->remove(session);
+			});
+			session->data().newItemAdded(
+			) | rpl::filter([](not_null<HistoryItem*> item) {
+				return item->out() && item->isRegular();
+			}) | rpl::on_next([=](not_null<HistoryItem*> item) {
+				ghostOnline->emplace(session);
+				if (Extera::GhostRead() && Extera::GhostReadAfterAction()) {
+					const auto history = item->history();
+					if (const auto topic = item->topic()) {
+						Extera::AllowGhostRead(history->peer->id.value);
+						topic->readTillEnd();
+					} else {
+						Extera::AllowGhostRead(history->peer->id.value);
+						history->owner().histories().readInbox(history);
+					}
+				}
+			}, session->lifetime());
+		}, _lifetime);
+		_lifetime.add([=] { ghostTimer->cancel(); });
+	}
+	Extera::Config::Instance().boolChanges(
+		u"system_emoji"_q
+	) | rpl::on_next([=](bool enabled) {
+		Ui::Emoji::SetSystemEmoji(enabled);
+	}, _lifetime);
 	Extera::Config::Instance().boolChanges(
 		u"md3_switches_muted"_q
 	) | rpl::on_next([=](bool enabled) {

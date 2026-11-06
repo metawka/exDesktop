@@ -268,4 +268,20 @@ void Apply() {
 	Core::App().domain().notifyUnreadBadgeChanged();
 }
 
+void MakeDefaultClient() {
+#ifdef Q_OS_WIN
+	for (const auto protocol : { L"tg", L"tonsite", L"ton" }) {
+		const auto path = std::wstring(
+			L"Software\\Microsoft\\Windows\\Shell\\Associations\\"
+			L"UrlAssociations\\") + protocol + L"\\UserChoice";
+		RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str());
+		RegDeleteKeyW(HKEY_CURRENT_USER, path.c_str());
+	}
+#endif
+	Core::Application::RegisterUrlScheme();
+#ifdef Q_OS_WIN
+	SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+#endif
+}
+
 } // namespace Extera::AppIcon

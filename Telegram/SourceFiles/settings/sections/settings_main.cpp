@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "settings/sections/settings_extera.h"
 #include "extera/extera_config.h"
+#include "extera/extera_ai_chat.h"
 #include "extera/extera_streamer.h"
 
 #include "settings/settings_common_session.h"
@@ -85,6 +86,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/menu/menu_add_action_callback.h"
 #include "ui/widgets/menu/menu_item_base.h"
 #include "ui/widgets/popup_menu.h"
+#include "base/event_filter.h"
 #include "ui/wrap/slide_wrap.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
@@ -281,6 +283,11 @@ void Cover::initViewers() {
 	) | rpl::on_next([=] {
 		updatePhoneText();
 	}, lifetime());
+	Extera::Config::Instance().intChanges(
+		u"hide_phone_mode"_q
+	) | rpl::skip(1) | rpl::on_next([=] {
+		updatePhoneText();
+	}, lifetime());
 
 	Info::Profile::UsernameValue(
 		_user
@@ -340,8 +347,12 @@ void Cover::refreshNameGeometry(int newWidth) {
 }
 
 void Cover::updatePhoneText() {
-	if (_user->session().settings().phoneNumberHidden()
-		|| Extera::Bool(u"hide_phone"_q)) {
+	using Mode = Extera::Streamer::PhoneMode;
+	const auto mode = Extera::Streamer::SelfPhone();
+	if (mode == Mode::Unknown) {
+		_phone->setText(tr::lng_extera_unknown_number(tr::now));
+	} else if (_user->session().settings().phoneNumberHidden()
+		|| mode == Mode::Spoiler) {
 		_phone->setMarkedText(
 			Ui::Text::Wrapped({ _phoneText }, EntityType::Spoiler));
 	} else {
@@ -391,6 +402,61 @@ void BuildSectionButtons(SectionBuilder &builder) {
 		.onClick = [=] { showOther(ExteraId()); },
 		.keywords = { u"exdesktop"_q },
 	});
+	if (Extera::Bool(u"ai_chat_main"_q)) {
+		const auto ai = builder.addButton({
+			.id = u"main/ai_chat"_q,
+			.title = tr::lng_extera_ai_chat(),
+			.icon = { &st::menuIconBotCommands },
+			.onClick = [=] {
+				if (controller) {
+					Extera::ShowAiChat(controller);
+				}
+			},
+			.keywords = { u"ai"_q, u"chat"_q },
+		});
+		if (ai) {
+			const auto badge = Ui::NewBadge::CreateNewBadge(
+				ai,
+				tr::lng_exd_beta());
+			ai->widthValue() | rpl::on_next([=](int width) {
+				const auto &st = st::settingsButton;
+				const auto left = st.padding.left()
+					+ st.style.font->width(tr::lng_extera_ai_chat(tr::now))
+					+ st.style.font->spacew;
+				badge->moveToLeft(
+					left,
+					st.padding.top()
+						+ st.style.font->ascent
+						- st::settingsPremiumNewBadge.style.font->ascent
+						- st::settingsPremiumNewBadgePadding.top(),
+					width);
+			}, badge->lifetime());
+			const auto menu = ai->lifetime().make_state<
+				base::unique_qptr<Ui::PopupMenu>>();
+			base::install_event_filter(ai, [=](not_null<QEvent*> e) {
+				if (e->type() != QEvent::ContextMenu) {
+					return base::EventFilterResult::Continue;
+				}
+				*menu = base::make_unique_q<Ui::PopupMenu>(
+					ai,
+					st::popupMenuWithIcons);
+				(*menu)->addAction(tr::lng_exd_ai_settings(tr::now), [=] {
+					showOther(ExteraAiChatId());
+				}, &st::menuIconSettings);
+				(*menu)->addAction(tr::lng_exd_ai_hide(tr::now), [=] {
+					Extera::Config::Instance().setBool(
+						u"ai_chat_main"_q,
+						false);
+					ai->hide();
+					if (controller) {
+						controller->showToast(tr::lng_exd_ai_moved(tr::now));
+					}
+				}, &st::menuIconArchive);
+				(*menu)->popup(QCursor::pos());
+				return base::EventFilterResult::Cancel;
+			});
+		}
+	}
 	builder.addDivider();
 	builder.addSkip();
 
@@ -911,10 +977,7 @@ void SetupValidatePhoneNumberSuggestion(
 		tr::lng_settings_suggestion_phone_number_title(
 			lt_phone,
 			rpl::single(
-				(Extera::Streamer::Phone()
-					== Extera::Streamer::PhoneMode::Shown)
-					? Ui::FormatPhone(controller->session().user()->phone())
-					: tr::lng_extera_unknown_number(tr::now))),
+				Extera::Streamer::SelfPhoneText(Ui::FormatPhone(controller->session().user()->phone())))),
 		QMargins(
 			st::boxRowPadding.left()
 				- st::defaultSubsectionTitlePadding.left(),

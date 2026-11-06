@@ -7,6 +7,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_session.h"
 
+#include "extera/extera_config.h"
+
+#include <QtCore/QFile>
+
+#include <QtCore/QFileInfo>
+
+#include <QtCore/QDir>
+
+#include <QtCore/QDataStream>
+
 #include "extera/extera_plugins.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
@@ -2279,6 +2289,192 @@ void Session::requestItemViewRefresh(not_null<const HistoryItem*> item) {
 	_itemViewRefreshRequest.fire_copy(item);
 }
 
+bool Session::exteraIsDeleted(FullMsgId id) const {
+	return _exteraDeleted.contains(id);
+}
+
+[[nodiscard]] QString ExteraDeletedPath(
+		not_null<Main::Session*> session,
+		PeerId peerId) {
+	return cWorkingDir()
+		+ u"tdata/exd_deleted/"_q
+		+ QString::number(session->userId().bare)
+		+ '/'
+		+ QString::number(peerId.value)
+		+ u".bin"_q;
+}
+
+void Session::exteraRemember(
+		PeerId peerId,
+		MsgId id,
+		const MTPMessage &message) {
+	if (!Extera::SaveDeleted() || !IsServerMsgId(id)) {
+		return;
+	}
+	if (_exteraRaw.size() > 200000) {
+		_exteraRaw.erase(_exteraRaw.begin());
+	}
+	auto buffer = mtpBuffer();
+	message.write(buffer);
+	_exteraRaw[FullMsgId(peerId, id)] = QByteArray(
+		reinterpret_cast<const char*>(buffer.constData()),
+		buffer.size() * sizeof(buffer.front()));
+}
+
+const std::map<MsgId, QByteArray> &Session::exteraDeletedFor(PeerId peerId) {
+	const auto i = _exteraStored.find(peerId);
+	if (i != end(_exteraStored)) {
+		return i->second;
+	}
+	auto &result = _exteraStored[peerId];
+	auto file = QFile(ExteraDeletedPath(_session, peerId));
+	if (file.open(QIODevice::ReadOnly)) {
+		auto stream = QDataStream(&file);
+		stream.setVersion(QDataStream::Qt_5_1);
+		while (!stream.atEnd()) {
+			auto id = qint64();
+			auto bytes = QByteArray();
+			stream >> id >> bytes;
+			if (stream.status() != QDataStream::Ok) {
+				break;
+			}
+			result[MsgId(id)] = bytes;
+		}
+	}
+	return result;
+}
+
+void Session::exteraMarkDeleted(FullMsgId id) {
+	_exteraDeleted.emplace(id);
+	const auto i = _exteraRaw.find(id);
+	if (i == end(_exteraRaw)) {
+		return;
+	}
+	auto &stored = const_cast<std::map<MsgId, QByteArray>&>(
+		exteraDeletedFor(id.peer));
+	if (stored.contains(id.msg)) {
+		return;
+	}
+	stored[id.msg] = i->second;
+	const auto path = ExteraDeletedPath(_session, id.peer);
+	QDir().mkpath(QFileInfo(path).absolutePath());
+	auto file = QFile(path);
+	if (file.open(QIODevice::WriteOnly | QIODevice::Append)) {
+		auto stream = QDataStream(&file);
+		stream.setVersion(QDataStream::Qt_5_1);
+		stream << qint64(id.msg.bare) << i->second;
+	}
+}
+
+void Session::exteraClearDeleted() {
+	auto destroy = std::vector<not_null<HistoryItem*>>();
+	for (const auto &id : _exteraDeleted) {
+		if (const auto item = message(id)) {
+			destroy.push_back(item);
+		}
+	}
+	_exteraDeleted.clear();
+	_exteraStored.clear();
+	QDir(cWorkingDir()
+		+ u"tdata/exd_deleted/"_q
+		+ QString::number(_session->userId().bare)).removeRecursively();
+	if (!destroy.empty()) {
+		notifyItemsAboutToBeDestroyed(destroy);
+		for (const auto &item : destroy) {
+			item->destroy();
+		}
+	}
+}
+
+[[nodiscard]] QString ExdEditsPath(
+		not_null<Main::Session*> session,
+		PeerId peerId) {
+	return cWorkingDir()
+		+ u"tdata/exd_edits/"_q
+		+ QString::number(session->userId().bare)
+		+ '/'
+		+ QString::number(peerId.value)
+		+ u".bin"_q;
+}
+
+std::vector<std::pair<TimeId, QString>> Session::exdEditsFor(FullMsgId id) {
+	auto i = _exdEdits.find(id.peer);
+	if (i == end(_exdEdits)) {
+		auto &loaded = _exdEdits[id.peer];
+		auto file = QFile(ExdEditsPath(_session, id.peer));
+		if (file.open(QIODevice::ReadOnly)) {
+			auto stream = QDataStream(&file);
+			stream.setVersion(QDataStream::Qt_5_1);
+			while (!stream.atEnd()) {
+				auto msg = qint64();
+				auto date = qint32();
+				auto text = QString();
+				stream >> msg >> date >> text;
+				if (stream.status() != QDataStream::Ok) {
+					break;
+				}
+				loaded[MsgId(msg)].emplace_back(TimeId(date), text);
+			}
+		}
+		i = _exdEdits.find(id.peer);
+	}
+	const auto j = i->second.find(id.msg);
+	return (j != end(i->second))
+		? j->second
+		: std::vector<std::pair<TimeId, QString>>();
+}
+
+void Session::exdRememberEdit(
+		FullMsgId id,
+		TimeId date,
+		const QString &text) {
+	if (!Extera::Bool(u"ayu_edit_history"_q) || !IsServerMsgId(id.msg)) {
+		return;
+	}
+	auto list = exdEditsFor(id);
+	if (!list.empty() && list.back().second == text) {
+		return;
+	}
+	_exdEdits[id.peer][id.msg].emplace_back(date, text);
+	const auto path = ExdEditsPath(_session, id.peer);
+	QDir().mkpath(QFileInfo(path).absolutePath());
+	auto file = QFile(path);
+	if (file.open(QIODevice::WriteOnly | QIODevice::Append)) {
+		auto stream = QDataStream(&file);
+		stream.setVersion(QDataStream::Qt_5_1);
+		stream << qint64(id.msg.bare) << qint32(date) << text;
+	}
+}
+
+void Session::exteraKeepLocally(const MessageIdsList &ids) {
+	for (const auto &id : ids) {
+		_exteraKeep.emplace(id);
+	}
+}
+
+bool Session::exteraTakeKeep(FullMsgId id) {
+	return _exteraKeep.remove(id);
+}
+
+bool Session::exteraSaveFor(not_null<HistoryItem*> item) const {
+	if (item->isService() || !item->isRegular()) {
+		return false;
+	}
+	const auto user = item->history()->peer->asUser();
+	return !user || !user->isBot() || Extera::Bool(u"ayu_save_bots"_q);
+}
+
+void Session::exteraRefreshAllViews() {
+	auto items = std::vector<not_null<const HistoryItem*>>();
+	items.reserve(_views.size());
+	for (const auto &[item, views] : _views) {
+		items.push_back(item);
+	}
+	for (const auto item : items) {
+		requestItemViewRefresh(item);
+	}
+}
+
 rpl::producer<not_null<const HistoryItem*>> Session::itemViewRefreshRequest() const {
 	return _itemViewRefreshRequest.events();
 }
@@ -3351,6 +3547,18 @@ void Session::processMessagesDeleted(
 			affected->unknownMessageDeleted(messageId.v);
 		}
 	}
+	if (Extera::SaveDeleted()) {
+		auto destroy = std::vector<not_null<HistoryItem*>>();
+		for (const auto &item : toDestroy) {
+			if (!exteraSaveFor(item)) {
+				destroy.push_back(item);
+			} else {
+				exteraMarkDeleted(item->fullId());
+				requestItemViewRefresh(item);
+			}
+		}
+		toDestroy = std::move(destroy);
+	}
 	if (!toDestroy.empty()) {
 		notifyItemsAboutToBeDestroyed(toDestroy);
 		for (const auto &item : toDestroy) {
@@ -3373,6 +3581,18 @@ void Session::processNonChannelMessagesDeleted(const QVector<MTPint> &data) {
 			toDestroy.push_back(item);
 			historiesToCheck.emplace(history);
 		}
+	}
+	if (Extera::SaveDeleted()) {
+		auto destroy = std::vector<not_null<HistoryItem*>>();
+		for (const auto &item : toDestroy) {
+			if (!exteraSaveFor(item)) {
+				destroy.push_back(item);
+			} else {
+				exteraMarkDeleted(item->fullId());
+				requestItemViewRefresh(item);
+			}
+		}
+		toDestroy = std::move(destroy);
 	}
 	if (!toDestroy.empty()) {
 		notifyItemsAboutToBeDestroyed(toDestroy);

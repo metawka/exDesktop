@@ -31,6 +31,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/labels.h"
 #include "ui/rect.h"
 #include "ui/wrap/slide_wrap.h"
+#include "extera/extera_config.h"
 #include "styles/style_chat_helpers.h"
 #include "styles/style_layers.h"
 
@@ -241,6 +242,17 @@ void DeleteMessagesBox::prepare() {
 		}
 	}
 	_text.create(this, rpl::single(std::move(details)), st::boxLabel);
+	if (!_wipeHistoryPeer
+		&& Extera::SaveDeleted()
+		&& !hasScheduledMessages()
+		&& !hasWelcomeTemplateMessages()
+		&& !hasSavedMusicMessages()) {
+		_exdKeep.create(
+			this,
+			tr::lng_exd_keep_locally(tr::now),
+			false,
+			st::defaultBoxCheckbox);
+	}
 	_text->resizeToWidth(st::boxWidth - rect::m::sum::h(st::boxPadding));
 
 	if (_wipeHistoryJustClear && _wipeHistoryPeer) {
@@ -283,6 +295,10 @@ void DeleteMessagesBox::prepare() {
 			+ st::boxPadding.bottom();
 		if (_revoke) {
 			fullHeight += st::boxMediumSkip + _revoke->heightNoMargins();
+		}
+		if (_exdKeep) {
+			fullHeight += (_revoke ? st::boxLittleSkip : st::boxMediumSkip)
+				+ _exdKeep->heightNoMargins();
 		}
 		if (_autoDeleteSettings) {
 			fullHeight += st::boxMediumSkip
@@ -450,6 +466,11 @@ void DeleteMessagesBox::resizeEvent(QResizeEvent *e) {
 			top += _revokeRemember->heightNoMargins();
 		}
 	}
+	if (_exdKeep) {
+		_exdKeep->resizeToNaturalWidth(width() - 2 * padding.left());
+		_exdKeep->moveToLeft(padding.left(), top);
+		top += _exdKeep->heightNoMargins() + st::boxLittleSkip;
+	}
 	if (_autoDeleteSettings) {
 		top += st::boxMediumSkip - st::boxLittleSkip;
 		_autoDeleteSettings->moveToLeft(padding.left(), top);
@@ -581,6 +602,9 @@ void DeleteMessagesBox::deleteAndClear() {
 		return;
 	}
 	const auto ids = _ids;
+	if (_exdKeep && _exdKeep->checked()) {
+		session->data().exteraKeepLocally(ids);
+	}
 	invokeCallbackAndClose();
 	session->data().histories().deleteMessages(ids, revoke);
 	session->data().sendHistoryChangeNotifications();

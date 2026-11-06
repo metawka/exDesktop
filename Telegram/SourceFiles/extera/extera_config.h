@@ -19,6 +19,8 @@ public:
 	void setBool(const QString &key, bool value);
 	void setInt(const QString &key, int value);
 	void setString(const QString &key, const QString &value);
+	[[nodiscard]] QJsonValue valueOf(const QString &key) const;
+	void setValue(const QString &key, QJsonValue value);
 
 	[[nodiscard]] rpl::producer<bool> boolChanges(const QString &key) const;
 	[[nodiscard]] rpl::producer<int> intChanges(const QString &key) const;
@@ -30,6 +32,7 @@ public:
 	bool importJson(const QByteArray &data);
 	void reset();
 	void saveNow();
+	void applyInstallChoice(const QStringList &paths);
 
 private:
 	Config();
@@ -52,5 +55,19 @@ private:
 [[nodiscard]] int Int(const QString &key);
 [[nodiscard]] QString String(const QString &key);
 [[nodiscard]] int RecentStickersLimit(int serverLimit);
+[[nodiscard]] bool AyuEnabled(const QString &key);
+[[nodiscard]] bool GhostActive();
+[[nodiscard]] const QStringList &GhostKeys();
+void SetGhostAll(bool enabled);
+[[nodiscard]] rpl::producer<bool> GhostActiveValue();
+void AllowGhostRead(uint64 peerId);
+[[nodiscard]] bool ConsumeGhostRead(uint64 peerId);
+[[nodiscard]] bool GhostRead();
+[[nodiscard]] bool GhostStories();
+[[nodiscard]] bool GhostOffline();
+[[nodiscard]] bool GhostReadAfterAction();
+[[nodiscard]] bool GhostOnline();
+[[nodiscard]] bool GhostTyping();
+[[nodiscard]] bool SaveDeleted();
 
 } // namespace Extera

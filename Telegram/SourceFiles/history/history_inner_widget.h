@@ -554,6 +554,10 @@ private:
 		const HistoryView::TextState &replyState) const
 	-> HistoryView::ReplyButton::ButtonParameters;
 	void toggleFavoriteReaction(not_null<Element*> view) const;
+	bool exteraDoubleAction(
+		not_null<Element*> view,
+		int action,
+		bool right = false);
 	void reactionChosen(const ChosenReaction &reaction);
 
 	void setupSharingDisallowed();
@@ -669,6 +673,10 @@ private:
 
 	QPoint _trippleClickPoint;
 	base::Timer _trippleClickTimer;
+	base::Timer _exdRightTimer;
+	FullMsgId _exdRightItem;
+	QPoint _exdRightPos;
+	bool _exdRightBypass = false;
 
 	Element *_dragSelFrom = nullptr;
 	Element *_dragSelTo = nullptr;

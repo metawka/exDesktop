@@ -1,5 +1,9 @@
 #include <QtWidgets/QApplication>
 #include "extera/extera_menu.h"
+#include "styles/style_boxes.h"
+#include "styles/style_layers.h"
+#include "ui/widgets/labels.h"
+#include "ui/layers/generic_box.h"
 
 #include "api/api_common.h"
 #include "apiwrap.h"
@@ -458,6 +462,39 @@ void AddMessageMenuActions(
 				FullReplyTo{ .messageId = itemId });
 		}, &st::menuIconReply);
 	}
+	if (!session->data().exdEditsFor(itemId).empty()) {
+		menu->addAction(tr::lng_exd_edit_history(tr::now), [=] {
+			const auto item = session->data().message(itemId);
+			if (!item) {
+				return;
+			}
+			const auto list = session->data().exdEditsFor(itemId);
+			const auto current = item->originalText().text;
+			controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+				box->setTitle(tr::lng_exd_edit_history());
+				box->setWidth(st::boxWideWidth);
+				const auto add = [&](const QString &title, const QString &text) {
+					box->addRow(
+						object_ptr<Ui::FlatLabel>(
+							box,
+							rpl::single(title),
+							st::exteraSubtitle),
+						st::boxRowPadding + QMargins(0, 8, 0, 2));
+					const auto label = box->addRow(
+						object_ptr<Ui::FlatLabel>(
+							box,
+							rpl::single(text),
+							st::boxLabel));
+					label->setSelectable(true);
+				};
+				for (const auto &[date, text] : list) {
+					add(langDateTimeFull(base::unixtime::parse(date)), text);
+				}
+				add(tr::lng_exd_edit_history_current(tr::now), current);
+				box->addButton(tr::lng_close(), [=] { box->closeBox(); });
+			}));
+		}, &st::menuIconEdit);
+	}
 	Plugins::AddMessageMenuItems(menu, item);
 	if (Bool(u"menu_details"_q)) {
 		const auto action = menu->addAction(
@@ -533,6 +570,28 @@ void CloseSubmenusOutside(not_null<Ui::PopupMenu*> menu) {
 
 void ApplyQuickActions(not_null<Ui::PopupMenu*> menu) {
 	CloseSubmenusOutside(menu);
+	auto hidden = QStringList();
+	if (!Bool(u"menu_copy_photo"_q)) {
+		hidden.push_back(tr::lng_context_copy_image(tr::now));
+	}
+	if (!Bool(u"menu_save"_q)) {
+		hidden.push_back(tr::lng_context_save_image(tr::now));
+		hidden.push_back(tr::lng_context_save_video(tr::now));
+		hidden.push_back(tr::lng_context_save_audio(tr::now));
+		hidden.push_back(tr::lng_context_save_audio_file(tr::now));
+		hidden.push_back(tr::lng_context_save_file(tr::now));
+	}
+	if (!hidden.isEmpty()) {
+		const auto &actions = menu->actions();
+		for (auto i = int(actions.size()); i != 0;) {
+			const auto action = actions[--i];
+			if (!action->isSeparator()
+				&& !action->menu()
+				&& hidden.contains(action->text())) {
+				menu->removeAction(i);
+			}
+		}
+	}
 	if (!Bool(u"menu_quick_row"_q)) {
 		return;
 	}
@@ -563,7 +622,10 @@ void ApplyQuickActions(not_null<Ui::PopupMenu*> menu) {
 				return text == label(tr::now);
 			});
 			if (matches) {
-				found.push_back({ action.get(), entry->icon, text });
+				const auto icon = (text == tr::lng_context_unpin_msg(tr::now))
+					? &st::menuIconUnpin
+					: entry->icon;
+				found.push_back({ action.get(), icon, text });
 				break;
 			}
 		}

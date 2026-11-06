@@ -48,6 +48,15 @@ int UserpicCorners() {
 	return Corners;
 }
 
+void DrawUserpicShape(QPainter &p, QRectF rect) {
+	if (Corners >= kMaxCorners) {
+		p.drawEllipse(rect);
+	} else {
+		const auto radius = rect.width() * Corners / (2. * kMaxCorners);
+		p.drawRoundedRect(rect, radius, radius);
+	}
+}
+
 float64 ForumUserpicRadiusMultiplier() {
 	return 0.3;
 }

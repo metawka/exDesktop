@@ -157,7 +157,11 @@ void Badge::setContent(Content content) {
 				if (!_emojiStatusPanel
 					|| !_emojiStatusPanel->paintBadgeFrame(check)) {
 					Painter p(check);
-					_emojiStatus->paint(p, args);
+					if (Extera::IsBadgeEmoji(id.documentId)) {
+						Extera::PaintBadgeEmoji(p, _emojiStatus.get(), args);
+					} else {
+						_emojiStatus->paint(p, args);
+					}
 				}
 			}
 			if (icon) {

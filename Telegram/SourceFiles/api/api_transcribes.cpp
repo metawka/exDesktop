@@ -7,9 +7,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "api/api_transcribes.h"
 
+#include "data/data_document_media.h"
+#include "data/data_media_types.h"
+#include "data/data_user.h"
+#include "extera/extera_ai_chat.h"
+
+#include <QtCore/QFile>
+
 #include "apiwrap.h"
 #include "api/api_text_entities.h"
 #include "data/data_channel.h"
+#include "data/data_file_origin.h"
 #include "data/data_document.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
@@ -170,8 +178,79 @@ void Transcribes::apply(const MTPDupdateTranscribedAudio &update) {
 	}
 }
 
+void Transcribes::loadLocal(not_null<HistoryItem*> item) {
+	const auto id = item->fullId();
+	const auto media = item->media();
+	const auto document = media ? media->document() : nullptr;
+	if (!document) {
+		return;
+	}
+	auto &entry = _map.emplace(id).first->second;
+	entry.shown = true;
+	entry.failed = false;
+	entry.pending = true;
+	entry.requestId = 0;
+	const auto round = document->isVideoMessage();
+	if (round) {
+		entry.roundview = true;
+		document->owner().requestItemViewRefresh(item);
+	}
+	_session->data().requestItemResize(item);
+	const auto view = document->createMediaView();
+	const auto session = _session;
+	const auto send = [=](QByteArray bytes) {
+		Extera::Transcribe(
+			bytes,
+			round ? u"video/mp4"_q : u"audio/ogg"_q,
+			[=](QString text, bool ok) {
+				auto &entry = _map[id];
+				entry.pending = false;
+				entry.failed = !ok;
+				entry.result = ok ? text : QString();
+				if (const auto item = session->data().message(id)) {
+					if (entry.roundview) {
+						session->data().requestItemViewRefresh(item);
+					}
+					session->data().requestItemResize(item);
+				}
+			});
+	};
+	const auto tryRead = [=] {
+		auto bytes = view->bytes();
+		if (bytes.isEmpty()) {
+			const auto path = document->filepath(true);
+			if (!path.isEmpty()) {
+				auto file = QFile(path);
+				if (file.open(QIODevice::ReadOnly)) {
+					bytes = file.readAll();
+				}
+			}
+		}
+		if (bytes.isEmpty()) {
+			return false;
+		}
+		send(bytes);
+		return true;
+	};
+	if (tryRead()) {
+		return;
+	}
+	document->save(Data::FileOriginMessage(id), QString());
+	const auto lifetime = std::make_shared<rpl::lifetime>();
+	session->downloaderTaskFinished(
+	) | rpl::on_next([=] {
+		if (tryRead()) {
+			lifetime->destroy();
+		}
+	}, *lifetime);
+}
+
 void Transcribes::load(not_null<HistoryItem*> item) {
 	if (!item->isHistoryEntry() || item->isLocal()) {
+		return;
+	}
+	if (Extera::CanTranscribe()) {
+		loadLocal(item);
 		return;
 	}
 	const auto toggleRound = [](not_null<HistoryItem*> item, Entry &entry) {

@@ -139,7 +139,7 @@ rpl::producer<TextWithEntities> PhoneValue(not_null<UserData*> user) {
 	) | rpl::map([=] {
 		using PhoneMode = Extera::Streamer::PhoneMode;
 		if (user->isSelf()) {
-			switch (Extera::Streamer::Phone()) {
+			switch (Extera::Streamer::SelfPhone()) {
 			case PhoneMode::Unknown:
 				return tr::marked(tr::lng_extera_unknown_number(tr::now));
 			case PhoneMode::Spoiler:
@@ -189,12 +189,19 @@ rpl::producer<TextWithEntities> PhoneWithSpoilerValue(
 	return rpl::combine(
 		std::move(phone),
 		user->session().settings().phoneNumberHiddenValue(),
-		Extera::Config::Instance().boolChanges(u"hide_phone"_q)
+		Extera::Config::Instance().boolChanges(u"hide_phone"_q),
+		Extera::Config::Instance().intChanges(u"hide_phone_mode"_q)
 	) | rpl::map([](
 			const TextWithEntities &phone,
 			bool hidden,
-			bool exteraHidden) {
-		return (hidden || exteraHidden)
+			bool,
+			int) {
+		using Mode = Extera::Streamer::PhoneMode;
+		const auto mode = Extera::Streamer::SelfPhone();
+		if (mode == Mode::Unknown) {
+			return tr::marked(tr::lng_extera_unknown_number(tr::now));
+		}
+		return (hidden || mode == Mode::Spoiler)
 			? Ui::Text::Wrapped(phone, EntityType::Spoiler)
 			: phone;
 	});

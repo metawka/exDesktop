@@ -57,6 +57,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat_helpers.h"
 #include "styles/style_window.h"
 #include "styles/style_menu_icons.h"
+#include "extera/extera_config.h"
 
 #include <QtWidgets/QApplication>
 
@@ -3442,7 +3443,8 @@ auto StickersListWidget::collectRecentStickers() -> std::vector<Sticker> {
 
 	auto add = [&](not_null<DocumentData*> document, bool custom) {
 		if (result.size() >= kRecentDisplayLimit
-			&& !OptionUnlimitedRecentStickers.value()) {
+			&& !OptionUnlimitedRecentStickers.value()
+			&& !Extera::Bool(u"unlimited_recent_stickers"_q)) {
 			return;
 		}
 		const auto i = ranges::find(result, document, &Sticker::document);
