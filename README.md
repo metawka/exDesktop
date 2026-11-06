@@ -29,10 +29,6 @@
   <a href="README.ru.md"><img src="https://img.shields.io/badge/Русский-open-ee6b54?style=for-the-badge" alt="Русский"></a>
 </p>
 
-<p align="center">
-  <img src="docs/screenshots/exdesktop.png" width="100%" alt="exDesktop">
-</p>
-
 <table>
   <tr>
     <td width="50%"><img src="docs/screenshots/settings.webp" alt="Settings"></td>

@@ -29,10 +29,6 @@
   <img src="https://img.shields.io/badge/Русский-выбран-555?style=for-the-badge" alt="Русский">
 </p>
 
-<p align="center">
-  <img src="docs/screenshots/exdesktop.png" width="100%" alt="exDesktop">
-</p>
-
 <table>
   <tr>
     <td width="50%"><img src="docs/screenshots/settings.webp" alt="Настройки"></td>
