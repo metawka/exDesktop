@@ -35,12 +35,24 @@
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/settings.png" alt="Настройки"></td>
-    <td width="50%"><img src="docs/screenshots/appearance.png" alt="Оформление"></td>
+    <td width="50%"><img src="docs/screenshots/settings.webp" alt="Настройки"></td>
+    <td width="50%"><img src="docs/screenshots/appearance.webp" alt="Оформление"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/chats.png" alt="Чаты"></td>
-    <td width="50%"><img src="docs/screenshots/plugins.png" alt="Плагины"></td>
+    <td width="50%"><img src="docs/screenshots/messages.webp" alt="Сообщения"></td>
+    <td width="50%"><img src="docs/screenshots/premium.webp" alt="Telegram Premium"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/privacy.webp" alt="Конфиденциальность"></td>
+    <td width="50%"><img src="docs/screenshots/saving.webp" alt="Сохранение сообщений"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/network.webp" alt="Сеть"></td>
+    <td width="50%"><img src="docs/screenshots/plugins.webp" alt="Плагины"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/analysis.webp" alt="Анализ плагина"></td>
+    <td width="50%"><img src="docs/screenshots/support.webp" alt="Поддержка проекта"></td>
   </tr>
 </table>
 

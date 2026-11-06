@@ -35,12 +35,24 @@
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/settings.png" alt="Settings"></td>
-    <td width="50%"><img src="docs/screenshots/appearance.png" alt="Appearance"></td>
+    <td width="50%"><img src="docs/screenshots/settings.webp" alt="Settings"></td>
+    <td width="50%"><img src="docs/screenshots/appearance.webp" alt="Appearance"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/chats.png" alt="Chats"></td>
-    <td width="50%"><img src="docs/screenshots/plugins.png" alt="Plugins"></td>
+    <td width="50%"><img src="docs/screenshots/messages.webp" alt="Messages"></td>
+    <td width="50%"><img src="docs/screenshots/premium.webp" alt="Telegram Premium"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/privacy.webp" alt="Privacy"></td>
+    <td width="50%"><img src="docs/screenshots/saving.webp" alt="Saving messages"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/network.webp" alt="Network"></td>
+    <td width="50%"><img src="docs/screenshots/plugins.webp" alt="Plugins"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/analysis.webp" alt="Plugin analysis"></td>
+    <td width="50%"><img src="docs/screenshots/support.webp" alt="Support the project"></td>
   </tr>
 </table>
 

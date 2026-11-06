@@ -523,7 +523,7 @@ void SetupPluginIcon(
 				p.translate(rect.center());
 				p.scale(scale, scale);
 				if (emojiReady) {
-					const auto real = std::max(state->emoji->width(), 1);
+					const auto real = std::max(size, int(st::exteraInstallIcon));
 					if (real != size) {
 						p.scale(size / float64(real), size / float64(real));
 					}
