@@ -1,5 +1,9 @@
 {
   "types": {
+    "default": {
+      "emoji": "",
+      "text": ""
+    },
     "developer": {
       "emoji": "5395339798430919126",
       "text": ""
@@ -85,6 +89,16 @@
     },
     {
       "id": 3978523897,
+      "type": "developer"
+    }
+  ],
+  "bots": [
+    {
+      "id": 9272062768,
+      "type": "developer"
+    },
+    {
+      "id": 9299605786,
       "type": "developer"
     }
   ],
