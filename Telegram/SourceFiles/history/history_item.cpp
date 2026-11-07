@@ -4194,6 +4194,7 @@ TextWithEntities HistoryItem::translatedTextWithLocalEntities() const {
 		return {};
 	}
 	auto result = withLocalEntities(translatedText());
+	Extera::ApplyLocalPremiumEmoji(result);
 
 	if (hideLinks()) {
 		const auto isUrl = [](const EntityInText &entity) {
@@ -4733,7 +4734,6 @@ void HistoryItem::detectTextLinks(
 void HistoryItem::setText(TextWithEntities textWithEntities) {
 	Extera::FilterZalgo(textWithEntities);
 	Extera::DetectPeerIds(textWithEntities);
-	Extera::ApplyLocalPremiumEmoji(textWithEntities);
 	detectTextLinks(textWithEntities);
 	setTextValue((_media && _media->consumeMessageText(textWithEntities))
 		? TextWithEntities()

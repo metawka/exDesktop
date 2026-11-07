@@ -118,6 +118,7 @@ exteraIconAppearance: icon {{ "extera/theme", menuIconColor }};
 exteraIconChats: icon {{ "extera/discussion", menuIconColor }};
 exteraIconPlugins: icon {{ "extera/plugins", menuIconColor }};
 exteraIconOpenCode: icon {{ "extera/open_code-24x24", menuIconColor }};
+exteraIconMore: icon {{ "title_menu_dots", menuIconColor }};
 exteraIconToBeginning: icon {{ "extera/to_beginning-24x24", menuIconColor }};
 exteraIconOther: icon {{ "extera/fave", menuIconColor }};
 exteraIconChannel: icon {{ "extera/channel", menuIconColor }};

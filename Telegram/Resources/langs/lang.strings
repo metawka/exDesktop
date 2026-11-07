@@ -9476,6 +9476,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_extera_ai_clear" = "Clear";
 "lng_extera_feed" = "Channel Feed";
 "lng_exd_md3_switches_muted" = "Muted inactive switches";
+"lng_exd_plugin_share" = "Share File";
+"lng_exd_plugin_port" = "Port with AI";
+"lng_exd_plugin_reload" = "Reload";
+"lng_exd_plugin_perm_none" = "No permissions granted";
+"lng_exd_plugin_no_settings" = "The plugin has no settings.";
+"lng_exd_plugin_settings_off" = "Settings are available after the plugin is enabled.";
 "lng_exd_port_setup_key_local" = "Not required";
 "lng_exd_port_setup_plan" = "Request";
 "lng_exd_port_setup_request" = "Model request";

@@ -64,6 +64,7 @@
 #include <QtCore/QFile>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QClipboard>
+#include <QtGui/QCursor>
 #include <QtSvg/QSvgRenderer>
 #include <QtCore/QFileInfo>
 #include <QtCore/QDir>
@@ -122,6 +123,25 @@ void FillSettings(
 	const auto items = Call(u"settings"_q, QJsonObject{
 		{ u"id"_q, id },
 	}).toArray();
+	if (items.isEmpty()) {
+		auto enabled = false;
+		for (const auto &entry : Call(u"list"_q).toArray()) {
+			const auto info = entry.toObject();
+			if (info.value(u"id"_q).toString() == id) {
+				enabled = info.value(u"enabled"_q).toBool();
+			}
+		}
+		Ui::AddSkip(container);
+		container->add(
+			object_ptr<Ui::FlatLabel>(
+				container,
+				(enabled
+					? tr::lng_exd_plugin_no_settings()
+					: tr::lng_exd_plugin_settings_off()),
+				st::exteraAbout),
+			st::exteraAboutPadding);
+		return;
+	}
 	const auto changed = [=](int index, QJsonValue value) {
 		Call(u"setting_changed"_q, QJsonObject{
 			{ u"id"_q, id },
@@ -395,11 +415,19 @@ void FillPermissions(
 		const QString &id,
 		Fn<void()> refresh) {
 	const auto permissions = PluginPermissions(id);
-	if (!HasPermissions(permissions)) {
-		return;
-	}
 	Ui::AddSkip(container);
 	Ui::AddSubsectionTitle(container, tr::lng_exd_plugin_permissions());
+	if (!HasPermissions(permissions)) {
+		container->add(
+			object_ptr<Ui::FlatLabel>(
+				container,
+				tr::lng_exd_plugin_perm_none(),
+				st::exteraAbout),
+			st::exteraAboutPadding);
+		Ui::AddSkip(container);
+		Ui::AddDividerText(container, tr::lng_exd_plugin_perm_about());
+		return;
+	}
 	const auto revoke = [=](QString kind, QString key, QString target) {
 		controller->show(Ui::MakeConfirmBox({
 			.text = tr::lng_exd_plugin_perm_revoke_sure(
@@ -1058,17 +1086,9 @@ void FillPluginsList(
 				buttons.push_back(button);
 				return button;
 			};
-			addAction(st::menuIconShare, [=] {
-				SharePluginFile(controller, path);
+			addAction(st::menuIconSettings, [=] {
+				ShowPluginSettings(controller, id);
 			});
-			addAction(st::exteraIconOpenCode, [=] {
-				ShowPluginCode(controller, name, path);
-			});
-			if (Exd::PluginGuard::Mode() != 2) {
-				addAction(st::menuIconAntispam, [=] {
-					RunGuard(controller, path, id);
-				});
-			}
 			const auto isPinned = pinned.contains(id);
 			addAction(
 				isPinned ? st::menuIconUnpin : st::menuIconPin,
@@ -1076,25 +1096,49 @@ void FillPluginsList(
 					SetPluginPinned(id, !isPinned);
 					notifyListChanged();
 				});
-			if (Exd::PluginPorter::Suggested(info)) {
-				addAction(st::menuIconTranslate, [=] {
-					Exd::PluginPorter::Start(controller, path);
-				});
-			}
-			if (info.value(u"has_settings"_q).toBool()
-				|| HasPermissions(PluginPermissions(id))) {
-				addAction(st::menuIconSettings, [=] {
-					ShowPluginSettings(controller, id);
-				});
-			}
-			if (developer) {
-				addAction(st::menuIconRestore, [=] {
-					Call(u"reload"_q, QJsonObject{ { u"id"_q, id } });
-					notifyListChanged();
-					controller->showToast(
-						tr::lng_exd_plugin_reloaded(tr::now, lt_name, name));
-				});
-			}
+			const auto guard = (Exd::PluginGuard::Mode() != 2);
+			const auto suggested = Exd::PluginPorter::Suggested(info);
+			const auto menu = card->lifetime().make_state<
+				base::unique_qptr<Ui::PopupMenu>>();
+			const auto more = Ui::CreateChild<Ui::IconButton>(
+				actions,
+				st::exteraPluginAction);
+			more->setIconOverride(&st::exteraIconMore, &st::exteraIconMore);
+			more->setClickedCallback([=] {
+				*menu = base::make_unique_q<Ui::PopupMenu>(
+					more,
+					st::popupMenuWithIcons);
+				const auto raw = menu->get();
+				raw->addAction(tr::lng_exd_plugin_share(tr::now), [=] {
+					SharePluginFile(controller, path);
+				}, &st::menuIconShare);
+				raw->addAction(tr::lng_exd_plugin_view_code(tr::now), [=] {
+					ShowPluginCode(controller, name, path);
+				}, &st::exteraIconOpenCode);
+				if (guard) {
+					raw->addAction(tr::lng_exd_guard_run(tr::now), [=] {
+						RunGuard(controller, path, id);
+					}, &st::menuIconAntispam);
+				}
+				if (suggested) {
+					raw->addAction(tr::lng_exd_plugin_port(tr::now), [=] {
+						Exd::PluginPorter::Start(controller, path);
+					}, &st::menuIconTranslate);
+				}
+				if (developer) {
+					raw->addAction(tr::lng_exd_plugin_reload(tr::now), [=] {
+						crl::on_main(controller, [=] {
+							Call(u"reload"_q, QJsonObject{ { u"id"_q, id } });
+							notifyListChanged();
+							controller->showToast(tr::lng_exd_plugin_reloaded(
+								tr::now,
+								lt_name,
+								name));
+						});
+					}, &st::menuIconRestore);
+				}
+				raw->popup(QCursor::pos());
+			});
 			const auto remove = Ui::CreateChild<Ui::IconButton>(
 				actions,
 				st::exteraPluginAction);
@@ -1121,6 +1165,7 @@ void FillPluginsList(
 					left += button->width();
 				}
 				remove->moveToRight(0, 0, width);
+				more->moveToRight(remove->width(), 0, width);
 			}, actions->lifetime());
 			Ui::AddSkip(card, st::exteraPluginCardSkip);
 		}
