@@ -128,8 +128,8 @@ jobs:
               find "$PKG/python311" -name "__pycache__" -type d -prune -exec rm -rf {} +
               ln -s lib "$PKG/python311/lib64"
               for so in "$PKG"/python311/lib/python3.11/lib-dynload/*.so "$PKG"/lib/libpython3.11.so.1.0; do
-                ldd "$so" | awk '/=> \//{print $3}'
-              done | sort -u                 | grep -v -E '/(libc|libm|libpthread|libdl|librt|libutil|ld-linux[^/]*)\.so'                 | while read -r dep; do cp -Ln "$dep" "$PKG/lib/" || true; done
+                ldd "$so" | grep -o "=> /[^ ]*" | cut -c4-
+              done | sort -u                 | grep -v -E "/(libc|libm|libpthread|libdl|librt|libutil|ld-linux[^/]*)\.so"                 | while read -r dep; do cp -Ln "$dep" "$PKG/lib/" || true; done
               mkdir -p "$PKG/python/extera" "$PKG/python/site-packages" "$PKG/python/tgws"
               cp -r Telegram/SourceFiles/extera/python/. "$PKG/python/extera/"
               cp -r pkgdeps/site-packages/. "$PKG/python/site-packages/"
