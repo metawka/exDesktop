@@ -36,6 +36,7 @@ void Shutdown();
 int ExportAll(const QString &folder);
 
 [[nodiscard]] bool Available();
+[[nodiscard]] bool IsPluginFile(const QString &path);
 [[nodiscard]] bool Started();
 [[nodiscard]] QString RuntimeError();
 
@@ -54,7 +55,9 @@ void ClickMenuItem(const QString &id, QJsonObject context);
 
 void NotifyNewMessage(not_null<HistoryItem*> item);
 void NotifyAppEvent(const QString &name);
+void NotifyScreen(const QString &screen, int64 dialogId);
 [[nodiscard]] bool InterceptLocalUrl(const QString &url);
+[[nodiscard]] bool InterceptUrl(const QString &url);
 
 [[nodiscard]] int64 DialogId(not_null<PeerData*> peer);
 [[nodiscard]] bool IsTrustedSource(not_null<PeerData*> peer);

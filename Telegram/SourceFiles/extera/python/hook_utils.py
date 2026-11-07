@@ -3,6 +3,10 @@ from typing import Any
 
 def find_class(name: str) -> Any:
     import _compat
+    import exd_java
+    found = exd_java.lookup(str(name))
+    if found is not None:
+        return found
     return _compat.Missing(str(name))
 
 

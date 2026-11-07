@@ -166,11 +166,43 @@ begin
   end;
 end;
 
+function ExdFileLocked(Path: String): Boolean;
+var Stream: TFileStream;
+begin
+  Result := False;
+  if not FileExists(Path) then
+    Exit;
+  try
+    Stream := TFileStream.Create(Path, $12);
+    Stream.Free;
+  except
+    Result := True;
+  end;
+end;
+
+procedure ExdCloseRunning();
+var ResultCode, Attempt: Integer;
+    Exe: String;
+begin
+  Exe := ExpandConstant('{app}\{#MyAppExeName}');
+  if not ExdFileLocked(Exe) then
+    Exit;
+  Exec(Exe, '-quit', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  for Attempt := 1 to 75 do
+  begin
+    if not ExdFileLocked(Exe) then
+      Exit;
+    Sleep(200);
+  end;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
   if IsTelegramDir(ExpandConstant('{app}')) then
-    Result := TelegramDirMessage;
+    Result := TelegramDirMessage
+  else
+    ExdCloseRunning();
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -196,10 +228,13 @@ var ResultCode: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
-    if WizardIsTaskSelected('ayu') then
-      SaveStringToFile(ExpandConstant('{app}\exd_install.conf'), 'ayu=1' + #13#10, False)
-    else
-      SaveStringToFile(ExpandConstant('{app}\exd_install.conf'), 'ayu=0' + #13#10, False);
+    if not (WizardSilent and FileExists(ExpandConstant('{app}\exd_install.conf'))) then
+    begin
+      if WizardIsTaskSelected('ayu') then
+        SaveStringToFile(ExpandConstant('{app}\exd_install.conf'), 'ayu=1' + #13#10, False)
+      else
+        SaveStringToFile(ExpandConstant('{app}\exd_install.conf'), 'ayu=0' + #13#10, False);
+    end;
     HasNewKey := RegKeyExists(HKEY_CURRENT_USER, 'Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{{#MyAppId}}_is1') or RegKeyExists(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{{#MyAppId}}_is1');
     HasOldKey := RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{{#MyAppId}}_is1') or RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{{#MyAppId}}_is1');
     UserDesktopLnk := ExpandFileName(GetShellFolderByCSIDL(CSIDL_DESKTOPDIRECTORY, False) + '\{#MyAppShortName}.lnk');

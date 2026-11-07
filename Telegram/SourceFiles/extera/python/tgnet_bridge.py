@@ -287,10 +287,35 @@ class ChatActivity(_Instance):
         return tl_runtime._ClassInfo("ChatActivity")
 
     def getParentActivity(self):
-        return _compat.Stub("LaunchActivity")
+        return _compat._LaunchActivity.instance
+
+    def startActivityForResult(self, intent, request_code=0, *args):
+        return _compat._LaunchActivity.instance.startActivityForResult(intent, request_code)
 
     def getContext(self):
         return _compat.Stub("Context")
+
+
+class ProfileActivity(ChatActivity):
+    def getClass(self):
+        return tl_runtime._ClassInfo("ProfileActivity")
+
+    def getUserId(self):
+        return self._dialog_id if self._dialog_id > 0 else 0
+
+    def getChatId(self):
+        return -self._dialog_id if self._dialog_id < 0 else 0
+
+
+class DialogsActivity(ChatActivity):
+    def getClass(self):
+        return tl_runtime._ClassInfo("DialogsActivity")
+
+    def getDialogsType(self):
+        return 0
+
+    def getFolderId(self):
+        return 0
 
 
 def current_fragment():
@@ -331,3 +356,5 @@ def install(shims):
     messenger["MessagesController"] = MessagesController
     messenger["UserConfig"] = UserConfig
     shims.setdefault("org.telegram.ui", {})["ChatActivity"] = ChatActivity
+    shims["org.telegram.ui"]["ProfileActivity"] = ProfileActivity
+    shims["org.telegram.ui"]["DialogsActivity"] = DialogsActivity

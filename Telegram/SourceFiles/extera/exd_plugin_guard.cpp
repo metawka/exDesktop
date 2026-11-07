@@ -1,5 +1,6 @@
 #include "extera/exd_plugin_guard.h"
 
+#include "extera/extera_badges.h"
 #include "extera/extera_config.h"
 #include "extera/extera_plugins.h"
 #include "lang/lang_keys.h"
@@ -682,6 +683,15 @@ void MarkBlocked(const QString &sha256) {
 	Config::Instance().setString(u"plugins_guard_blocked"_q, list.join(','));
 }
 
+void Unblock(const QString &sha256) {
+	if (sha256.isEmpty() || !IsBlocked(sha256)) {
+		return;
+	}
+	auto list = Blocked();
+	list.removeAll(sha256);
+	Config::Instance().setString(u"plugins_guard_blocked"_q, list.join(','));
+}
+
 void Scan(const QString &path, Fn<void(Report)> done) {
 	EnsureModel([=] {
 		auto report = Report();
@@ -737,7 +747,19 @@ void Scan(const QString &path, Fn<void(Report)> done) {
 			}
 			Score(report, stats, entropy);
 			crl::on_main([=, report = std::move(report)]() mutable {
-				Arbitrate(std::move(report), scan, done);
+				Arbitrate(std::move(report), scan, [=](Report result) {
+					const auto verdict = result.llmUsed
+						&& (result.llmVerdict == u"MALICIOUS"_q);
+					const auto trusted = Extera::IsTrustedHash(result.sha256)
+						|| Extera::Plugins::Call(u"is_trusted"_q, QJsonObject{
+							{ u"path"_q, path },
+						}).toBool();
+					if (result.level == u"high"_q && !verdict && trusted) {
+						result.level = u"medium"_q;
+						result.score = std::max(result.score, 50);
+					}
+					done(std::move(result));
+				});
 			});
 		});
 	});
@@ -775,7 +797,11 @@ QString RuleTitle(const QString &rule) {
 	} else if (rule == u"OBFUSCATED_CODE_STRUCTURE"_q
 		|| rule == u"HIGH_ENTROPY_LITERAL_DETECTED"_q) {
 		return tr::lng_exd_guard_rule_obfuscation(tr::now);
+	} else if (rule == u"TELEGRAM_STORAGE_MENTION"_q) {
+		return tr::lng_exd_guard_rule_session(tr::now);
 	} else if (rule == u"PRIVILEGED_COMMAND_EXECUTION"_q
+		|| rule == u"SANDBOX_TAMPERING"_q
+		|| rule == u"EXTERNAL_PROGRAM_LAUNCH"_q
 		|| rule == u"CTYPES_NATIVE_ACCESS"_q) {
 		return tr::lng_exd_guard_rule_system(tr::now);
 	} else if (rule == u"EXTERNAL_IP_QUERY_SERVICE"_q) {

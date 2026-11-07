@@ -304,7 +304,7 @@ void ResolveDocument(
 				context = QVariant::fromValue(clickHandlerContext);
 			}
 			if (controller
-				&& path.endsWith(u".plugin"_q, Qt::CaseInsensitive)
+				&& Extera::Plugins::IsPluginFile(path)
 				&& Extera::Plugins::Started()) {
 				const auto forwarded = item
 					? item->Get<HistoryMessageForwarded>()
@@ -342,7 +342,7 @@ void ResolveDocument(
 				return;
 			}
 			if (controller
-				&& path.endsWith(u".plugin"_q, Qt::CaseInsensitive)) {
+				&& Extera::Plugins::IsPluginFile(path)) {
 				const auto error = Extera::Plugins::RuntimeError();
 				controller->showToast(error.isEmpty()
 					? tr::lng_exd_plugins_engine_off(tr::now)

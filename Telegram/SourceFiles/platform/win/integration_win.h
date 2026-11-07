@@ -60,6 +60,7 @@ private:
 	base::Timer _powerBroadcastTimer;
 	winrt::com_ptr<ITaskbarList3> _taskbarList;
 	winrt::com_ptr<ICustomDestinationList> _jumpList;
+	rpl::lifetime _exdJumpListLifetime;
 	std::unique_ptr<TaskbarButtons> _taskbarButtons;
 
 };

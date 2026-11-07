@@ -39,6 +39,7 @@ struct CustomBadge {
 };
 
 struct OwnBadge {
+	int number = 0;
 	QString type;
 	DocumentId documentId = 0;
 	QString text;
@@ -82,6 +83,11 @@ base::flat_set<QString> &Hashes() {
 
 [[nodiscard]] QString OwnCachePath() {
 	return cWorkingDir() + u"tdata/exd_badges.json"_q;
+}
+
+rpl::event_stream<> &ChangesStream() {
+	static auto result = rpl::event_stream<>();
+	return result;
 }
 
 QByteArray &ETag() {
@@ -133,13 +139,16 @@ bool Apply(const QByteArray &bytes) {
 [[nodiscard]] base::flat_map<uint64, OwnBadge> ReadOwn(
 		const QJsonValue &value) {
 	auto result = base::flat_map<uint64, OwnBadge>();
+	auto number = 0;
 	for (const auto &entry : value.toArray()) {
+		++number;
 		const auto object = entry.toObject();
 		const auto id = ReadId(object.value(u"id"_q));
 		if (!id) {
 			continue;
 		}
 		result.emplace(id, OwnBadge{
+			.number = number,
 			.type = object.value(u"type"_q).toString(),
 			.documentId = DocumentId(ReadId(object.value(u"emoji"_q))),
 			.text = object.value(u"text"_q).toString(),
@@ -154,6 +163,10 @@ bool ApplyOwn(const QByteArray &bytes) {
 		return false;
 	}
 	const auto object = document.object();
+	if (!object.value(u"types"_q).isObject()
+		|| !object.value(u"users"_q).isArray()) {
+		return false;
+	}
 	auto lists = OwnLists();
 	const auto types = object.value(u"types"_q).toObject();
 	for (auto i = types.begin(); i != types.end(); ++i) {
@@ -180,12 +193,16 @@ bool ApplyOwn(const QByteArray &bytes) {
 		lists.trusted = std::move(trusted);
 	}
 	Own() = std::move(lists);
+	ChangesStream().fire({});
 	return true;
 }
 
 bool ApplyHashes(const QByteArray &bytes) {
 	const auto document = QJsonDocument::fromJson(bytes);
 	if (!document.isObject()) {
+		return false;
+	}
+	if (!document.object().value(u"hashes"_q).isArray()) {
 		return false;
 	}
 	auto hashes = base::flat_set<QString>();
@@ -197,13 +214,30 @@ bool ApplyHashes(const QByteArray &bytes) {
 		}
 	}
 	Hashes() = std::move(hashes);
+	ChangesStream().fire({});
 	return true;
 }
 
-void RefreshHashes(QNetworkAccessManager *manager) {
-	auto request = QNetworkRequest(QUrl(
-		u"https://raw.githubusercontent.com/metawka/exDesktop/main/trusted_hashes.json"_q));
+[[nodiscard]] QNetworkRequest FileRequest(const QString &name, bool fresh) {
+	auto request = QNetworkRequest(QUrl(fresh
+		? (u"https://api.github.com/repos/metawka/exDesktop/contents/"_q
+			+ name
+			+ u"?ref=main"_q)
+		: (u"https://raw.githubusercontent.com/metawka/exDesktop/main/"_q
+			+ name)));
 	request.setRawHeader("User-Agent", "exDesktop");
+	if (fresh) {
+		request.setRawHeader("Accept", "application/vnd.github.raw");
+		request.setRawHeader("Cache-Control", "no-cache");
+	}
+	request.setAttribute(
+		QNetworkRequest::CacheLoadControlAttribute,
+		QNetworkRequest::AlwaysNetwork);
+	return request;
+}
+
+void RefreshHashes(QNetworkAccessManager *manager, bool fresh = false) {
+	auto request = FileRequest(u"trusted_hashes.json"_q, fresh);
 	const auto reply = manager->get(request);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
@@ -220,10 +254,13 @@ void RefreshHashes(QNetworkAccessManager *manager) {
 	});
 }
 
-void RefreshOwn(QNetworkAccessManager *manager) {
-	auto request = QNetworkRequest(QUrl(
-		u"https://raw.githubusercontent.com/metawka/exDesktop/main/badges.json"_q));
-	request.setRawHeader("User-Agent", "exDesktop");
+[[nodiscard]] QNetworkAccessManager *&Manager() {
+	static QNetworkAccessManager *result = nullptr;
+	return result;
+}
+
+void RefreshOwn(QNetworkAccessManager *manager, bool fresh = false) {
+	auto request = FileRequest(u"badges.json"_q, fresh);
 	const auto reply = manager->get(request);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
@@ -351,6 +388,7 @@ void StartBadges() {
 		ApplyHashes(hashes.readAll());
 	}
 	const auto manager = new QNetworkAccessManager(qApp);
+	Manager() = manager;
 	RefreshOwn(manager);
 	RefreshHashes(manager);
 	const auto timer = new QTimer(manager);
@@ -359,6 +397,17 @@ void StartBadges() {
 		RefreshHashes(manager);
 	});
 	timer->start(kRefreshInterval);
+}
+
+void RefreshBadges() {
+	if (const auto manager = Manager()) {
+		RefreshOwn(manager, true);
+		RefreshHashes(manager, true);
+	}
+}
+
+rpl::producer<> BadgesChanges() {
+	return ChangesStream().events();
 }
 
 BadgeKind BadgeKindFor(not_null<PeerData*> peer) {
@@ -394,6 +443,18 @@ BadgeKind BadgeKindFor(not_null<PeerData*> peer) {
 	return BadgeKind::None;
 }
 
+[[nodiscard]] DocumentId TypeEmojiOr(
+		std::initializer_list<QString> types,
+		DocumentId fallback) {
+	for (const auto &type : types) {
+		const auto i = Own().typeEmoji.find(type);
+		if (i != end(Own().typeEmoji) && i->second) {
+			return i->second;
+		}
+	}
+	return fallback;
+}
+
 DocumentId BadgeEmoji(not_null<PeerData*> peer) {
 	if (const auto own = FindOwn(peer)) {
 		if (own->documentId) {
@@ -411,25 +472,58 @@ DocumentId BadgeEmoji(not_null<PeerData*> peer) {
 	switch (BadgeKindFor(peer)) {
 	case BadgeKind::Porter:
 	case BadgeKind::PorterChannel:
-		return kPorterEmoji;
+		return TypeEmojiOr({ u"porter"_q, u"developer"_q }, kPorterEmoji);
 	case BadgeKind::Developer:
 	case BadgeKind::OfficialChannel:
-		return kDeveloperEmoji;
+		return TypeEmojiOr({ u"extera_developer"_q }, kDeveloperEmoji);
 	case BadgeKind::Supporter:
+		return TypeEmojiOr({ u"supporter"_q, u"default"_q }, kSupporterEmoji);
 	case BadgeKind::Bughunter:
+		return TypeEmojiOr({ u"bughunter"_q, u"default"_q }, kSupporterEmoji);
 	case BadgeKind::Helper:
+		return TypeEmojiOr({ u"helper"_q, u"default"_q }, kSupporterEmoji);
 	case BadgeKind::Donor:
-		return kSupporterEmoji;
+		return TypeEmojiOr({ u"donor"_q, u"default"_q }, kSupporterEmoji);
 	case BadgeKind::Custom: {
 		const auto i = Data().custom.find(BareId(peer));
 		return (i != end(Data().custom) && i->second.documentId)
 			? i->second.documentId
-			: kSupporterEmoji;
+			: TypeEmojiOr({ u"default"_q }, kSupporterEmoji);
 	}
 	case BadgeKind::None:
 		break;
 	}
 	return DocumentId();
+}
+
+bool BadgeIsCustom(not_null<PeerData*> peer) {
+	if (const auto own = FindOwn(peer)) {
+		return (own->type == u"custom"_q) || (own->documentId != 0);
+	}
+	return Data().custom.contains(BareId(peer));
+}
+
+int BadgeHolders(not_null<PeerData*> peer) {
+	const auto own = FindOwn(peer);
+	if (!own || own->type.isEmpty()) {
+		return 0;
+	}
+	auto result = 0;
+	for (const auto map : { &Own().users, &Own().channels, &Own().bots }) {
+		for (const auto &[id, badge] : *map) {
+			if (badge.type == own->type) {
+				++result;
+			}
+		}
+	}
+	return result;
+}
+
+int BadgeNumber(not_null<PeerData*> peer) {
+	if (const auto own = FindOwn(peer)) {
+		return own->number;
+	}
+	return 0;
 }
 
 QString BadgeCustomText(not_null<PeerData*> peer) {

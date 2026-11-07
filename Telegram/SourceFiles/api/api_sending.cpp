@@ -69,6 +69,7 @@ void InnerFillMessagePostFlags(
 }
 
 void SendSimpleMedia(SendAction action, MTPInputMedia inputMedia) {
+	StripEphemeralReply(&action.history->session(), action.replyTo);
 	const auto history = action.history;
 	const auto peer = history->peer;
 	const auto session = &history->session();
@@ -185,6 +186,9 @@ void SendExistingMedia(
 		Fn<MTPInputMedia()> inputMedia,
 		Data::FileOrigin origin,
 		std::optional<MsgId> localMessageId) {
+	StripEphemeralReply(
+		&message.action.history->session(),
+		message.action.replyTo);
 	const auto history = message.action.history;
 	const auto peer = history->peer;
 	const auto session = &history->session();
@@ -422,6 +426,7 @@ void SendMusicSelectionBatch(
 		Fn<void()> done) {
 	Expects(!items.empty());
 
+	StripEphemeralReply(&action.history->session(), action.replyTo);
 	const auto history = action.history;
 	const auto peer = history->peer;
 	const auto session = &history->session();
@@ -800,6 +805,9 @@ void SendExistingPhoto(
 }
 
 bool SendDice(MessageToSend &message) {
+	StripEphemeralReply(
+		&message.action.history->session(),
+		message.action.replyTo);
 	const auto full = QStringView(message.textWithTags.text).trimmed();
 	auto length = 0;
 	if (!Ui::Emoji::Find(full.data(), full.data() + full.size(), &length)

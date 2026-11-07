@@ -933,6 +933,18 @@ topBarNameRightPadding: 3px;
 topBarClearButton: RoundButton(defaultLightButton) {
 	width: -18px;
 }
+exdTopBarPlugins: IconButton {
+	width: 40px;
+	height: topBarHeight;
+
+	icon: icon {{ "menu/exd_puzzle", menuIconFg }};
+	iconOver: icon {{ "menu/exd_puzzle", menuIconFgOver }};
+	iconPosition: point(8px, 15px);
+
+	rippleAreaPosition: point(0px, 7px);
+	rippleAreaSize: 40px;
+	ripple: defaultRippleAnimationBgOver;
+}
 topBarSearch: IconButton {
 	width: 40px;
 	height: topBarHeight;

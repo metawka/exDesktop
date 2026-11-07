@@ -40,6 +40,7 @@ struct Report {
 [[nodiscard]] QString FileHash(const QString &path);
 [[nodiscard]] bool IsBlocked(const QString &sha256);
 void MarkBlocked(const QString &sha256);
+void Unblock(const QString &sha256);
 void Scan(const QString &path, Fn<void(Report)> done);
 
 [[nodiscard]] QString LevelTitle(const QString &level);

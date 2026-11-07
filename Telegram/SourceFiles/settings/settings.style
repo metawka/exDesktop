@@ -944,6 +944,7 @@ exteraTopActionSize: 36px;
 exteraTopActionsMargin: margins(0px, 14px, 14px, 0px);
 exteraTopActionTranslate: icon {{ "menu/translate", windowSubTextFg }};
 exteraTopActionCode: icon {{ "menu/exd_code", windowSubTextFg }};
+exteraTopActionReport: icon {{ "menu/report", windowSubTextFg }};
 exteraThreatTile: 44px;
 exteraThreatTileRadius: 12px;
 exteraThreatRowPadding: margins(14px, 12px, 14px, 12px);

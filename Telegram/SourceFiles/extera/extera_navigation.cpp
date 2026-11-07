@@ -50,6 +50,9 @@ struct Item {
 [[nodiscard]] const Item *FindItem(const QString &id) {
 	for (const auto &item : Items()) {
 		if (item.id == id) {
+			if (id == u"ghost"_q && !Bool(u"ayu_features"_q)) {
+				return nullptr;
+			}
 			return &item;
 		}
 	}
@@ -69,6 +72,9 @@ struct Item {
 	}), result.end());
 	auto previous = QString();
 	for (const auto &item : Items()) {
+		if (!FindItem(item.id)) {
+			continue;
+		}
 		if (!result.contains(item.id) && !hidden.contains(item.id)) {
 			const auto after = previous.isEmpty()
 				? -1

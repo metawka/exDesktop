@@ -327,9 +327,12 @@ rpl::producer<Badge::Content> BadgeContentForPeer(not_null<PeerData*> peer) {
 
 rpl::producer<Badge::Content> VerifiedContentForPeer(
 		not_null<PeerData*> peer) {
-	const auto extera = Extera::BadgeEmoji(peer);
-	const auto trusted = Extera::PluginTrust::IsTrustedChannel(peer);
-	return BadgeValue(peer) | rpl::map([=](BadgeType badge) {
+	return rpl::combine(
+		BadgeValue(peer),
+		rpl::single(rpl::empty) | rpl::then(Extera::BadgesChanges())
+	) | rpl::map([=](BadgeType badge, auto) {
+		const auto extera = Extera::BadgeEmoji(peer);
+		const auto trusted = Extera::PluginTrust::IsTrustedChannel(peer);
 		if (badge != BadgeType::Verified) {
 			if (trusted) {
 				if (const auto emoji = Extera::PluginTrust::TrustedEmoji()) {

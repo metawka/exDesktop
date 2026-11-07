@@ -123,11 +123,45 @@ jobs:
             "$APP/Contents/Resources/python311/lib/python3.11/site-packages"
           find "$APP/Contents/Resources/python311" -name "__pycache__" -type d -prune -exec rm -rf {} +
           rm -rf "$APP/Contents/Resources/python311/lib/python3.11/config-3.11-darwin"
-          mkdir -p "$APP/Contents/Resources/python/extera"
+          mkdir -p "$APP/Contents/Resources/python/extera" "$APP/Contents/Resources/python/site-packages"
           cp -R "$GITHUB_WORKSPACE/tdesktop/Telegram/SourceFiles/extera/python/." "$APP/Contents/Resources/python/extera/"
           mkdir -p "$APP/Contents/Resources/python/tgws"
           cp -R "$GITHUB_WORKSPACE/tdesktop/Telegram/SourceFiles/extera/tgws/." "$APP/Contents/Resources/python/tgws/"
+          "$pythonLocation/bin/python3" -m pip install --disable-pip-version-check \
+            --target "$APP/Contents/Resources/python/site-packages" requests beautifulsoup4 lxml pillow PyYAML packaging
+          find "$APP/Contents/Resources/python" -name "__pycache__" -type d -prune -exec rm -rf {} +
+          FW="$APP/Contents/Frameworks"
+          mkdir -p "$FW"
+          chmod -R u+w "$APP/Contents/Resources/python311" "$FW"
+          bundle_deps() {
+            for target in "$@"; do
+              for dep in $(otool -L "$target" | awk 'NR>1 {print $1}'); do
+                case "$dep" in
+                  /usr/lib/*|/System/*|@*) continue ;;
+                esac
+                name=$(basename "$dep")
+                if [ ! -f "$FW/$name" ]; then
+                  cp -L "$dep" "$FW/$name"
+                  chmod u+w "$FW/$name"
+                  install_name_tool -id "@executable_path/../Frameworks/$name" "$FW/$name"
+                  bundle_deps "$FW/$name"
+                fi
+                install_name_tool -change "$dep" "@executable_path/../Frameworks/$name" "$target"
+              done
+            done
+          }
+          if [ -f "$FW/libpython3.11.dylib" ]; then bundle_deps "$FW/libpython3.11.dylib"; fi
+          bundle_deps "$APP"/Contents/Resources/python311/lib/python3.11/lib-dynload/*.so
           find "$APP" -type l ! -exec test -e {} \; -print -delete
+          find "$APP/Contents/Frameworks" "$APP/Contents/Resources" \( -name "*.so" -o -name "*.dylib" \) \
+            -exec codesign --force --sign - {} \;
+          if find "$APP/Contents" \( -name "*.so" -o -name "*.dylib" \) -exec otool -L {} \; \
+              | grep -E "hostedtoolcache|/opt/homebrew|/usr/local/opt|/usr/local/Cellar"; then
+            echo "Python libraries reference build machine paths"
+            exit 1
+          fi
+          test -f "$APP/Contents/Resources/python/extera/extera_host.py"
+          test -d "$APP/Contents/Resources/python/site-packages/requests"
           rm -rf exDesktop.app
           mv "$APP" exDesktop.app
           codesign --force --deep --sign - exDesktop.app

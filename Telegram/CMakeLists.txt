@@ -1930,6 +1930,10 @@ PRIVATE
     extera/extera_plugin_trust.h
     extera/exd_plugin_guard.cpp
     extera/exd_plugin_guard.h
+    extera/exd_plugin_porter.cpp
+    extera/exd_plugin_porter.h
+    extera/exd_port_bar.cpp
+    extera/exd_port_bar.h
     extera/exd_ai_chat_section.cpp
     extera/exd_ai_chat_section.h
     extera/extera_round_video.cpp

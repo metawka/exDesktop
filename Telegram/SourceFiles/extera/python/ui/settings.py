@@ -175,3 +175,34 @@ def describe(item, index):
     data["clickable"] = bool(getattr(item, "on_click", None))
     data["long_clickable"] = bool(getattr(item, "on_long_click", None))
     return data
+
+
+def _exd_lenient(cls):
+    import dataclasses
+    if not dataclasses.is_dataclass(cls):
+        return
+    original = cls.__init__
+    names = {f.name for f in dataclasses.fields(cls)}
+
+    fields = dataclasses.fields(cls)
+
+    def init(self, *args, **kwargs):
+        extra = {k: kwargs.pop(k) for k in list(kwargs) if k not in names}
+        for field in fields[len(args):]:
+            if field.name in kwargs:
+                continue
+            if field.default is not dataclasses.MISSING or field.default_factory is not dataclasses.MISSING:
+                continue
+            kind = str(field.type)
+            kwargs[field.name] = "" if "str" in kind else False if "bool" in kind else 0 if (
+                "int" in kind or "float" in kind) else None
+        original(self, *args, **kwargs)
+        if extra:
+            self.__dict__.setdefault("_extra", {}).update(extra)
+
+    cls.__init__ = init
+
+
+for _cls in list(globals().values()):
+    if isinstance(_cls, type):
+        _exd_lenient(_cls)

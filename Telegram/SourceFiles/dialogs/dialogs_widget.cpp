@@ -52,6 +52,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/chat/group_call_bar.h"
 #include "ui/chat/more_chats_bar.h"
 #include "ui/controls/download_bar.h"
+#include "extera/exd_port_bar.h"
+#include "extera/extera_plugins_ui.h"
 #include "ui/controls/jump_down_button.h"
 #include "ui/controls/swipe_handler.h"
 #include "ui/painter.h"
@@ -853,6 +855,7 @@ Widget::Widget(
 
 		setupMoreChatsBar();
 		setupDownloadBar();
+		setupExdPortBar();
 	}
 	setupSwipeBack();
 
@@ -1604,6 +1607,23 @@ void Widget::setupMoreChatsBar() {
 			updateControlsGeometry();
 		}, _moreChatsBar->lifetime());
 	}, lifetime());
+}
+
+void Widget::setupExdPortBar() {
+	if (_layout == Layout::Child) {
+		return;
+	}
+	_exdPortBar = std::make_unique<Exd::PortBar>(
+		this,
+		Extera::Plugins::PortBarValue());
+	_exdPortBar->heightValue(
+	) | rpl::on_next([=] {
+		updateControlsGeometry();
+	}, _exdPortBar->lifetime());
+	_exdPortBar->clicks(
+	) | rpl::on_next([=] {
+		Extera::Plugins::OpenPortTask(controller());
+	}, _exdPortBar->lifetime());
 }
 
 void Widget::setupDownloadBar() {
@@ -4774,6 +4794,7 @@ void Widget::updateControlsGeometry() {
 	};
 	putBottomButton(_updateTelegram);
 	putBottomButton(_downloadBar);
+	putBottomButton(_exdPortBar);
 	putBottomButton(_loadMoreChats);
 	if (_connecting) {
 		_connecting->setBottomSkip(bottomSkip);
@@ -5238,6 +5259,7 @@ Widget::~Widget() {
 
 	// Destructor may hide the bar and attempt to double-destroy it.
 	base::take(_downloadBar);
+	base::take(_exdPortBar);
 
 	// Destroying a row of _innerList removes it from the layout, resizing
 	// the layout and firing _scroll position updates into subscriptions

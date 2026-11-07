@@ -13,6 +13,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "extera/extera_feed.h"
 #include "extera/extera_plugins_ui.h"
 #include "extera/extera_plugins.h"
+#include "extera/extera_config.h"
+#include "extera/extera_streamer.h"
 
 #include "core/deep_links/deep_links_router.h"
 #include "api/api_confirm_phone.h"
@@ -1908,6 +1910,21 @@ bool ShowExteraSupport(
 	return true;
 }
 
+bool ToggleExdMode(
+		Window::SessionController *controller,
+		const Match &match,
+		const QVariant &context) {
+	const auto mode = match->captured(1);
+	if (mode == u"streamer"_q) {
+		Extera::Config::Instance().setBool(
+			u"streamer_mode"_q,
+			!Extera::Streamer::Active());
+	} else if (mode == u"ghost"_q && Extera::Bool(u"ayu_features"_q)) {
+		Extera::SetGhostAll(!Extera::GhostActive());
+	}
+	return true;
+}
+
 bool OpenChatById(
 		Window::SessionController *controller,
 		const Match &match,
@@ -1970,6 +1987,10 @@ const std::vector<LocalUrlHandler> &LocalUrlHandlers() {
 		{
 			u"^(donate|support)/?(\\?.*)?$"_q,
 			ShowExteraSupport
+		},
+		{
+			u"^exd_toggle/?\\?mode=(streamer|ghost)(&|$)"_q,
+			ToggleExdMode
 		},
 		{
 			u"^chat/?\\?id=(-?[0-9]+)(&|$)"_q,

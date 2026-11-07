@@ -1,5 +1,6 @@
 #include "extera/extera_plugins.h"
 #include "extera/extera_menu.h"
+#include "extera/extera_plugins_ui.h"
 
 #pragma push_macro("slots")
 #undef slots
@@ -12,6 +13,7 @@
 #include "apiwrap.h"
 #include "base/call_delayed.h"
 #include "core/application.h"
+#include "core/file_utilities.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_peer.h"
@@ -22,6 +24,7 @@
 #include "history/history.h"
 #include "history/history_item.h"
 #include "lang/lang_keys.h"
+#include "lang/lang_instance.h"
 #include "main/main_session.h"
 #include "storage/localimageloader.h"
 #include "storage/storage_media_prepare.h"
@@ -47,6 +50,7 @@
 #include <deque>
 #include <thread>
 #include <QtCore/QDir>
+#include <QtCore/QFileInfo>
 #include <QtCore/QFile>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QUrl>
@@ -73,6 +77,8 @@ struct State {
 	rpl::event_stream<QString> settingsChanges;
 	bool eventInFlight = false;
 	bool intentInFlight = false;
+	bool urlInFlight = false;
+	bool urlFromPlugin = false;
 	std::deque<QJsonObject> recent;
 	rpl::lifetime lifetime;
 };
@@ -377,18 +383,25 @@ void ShowAlert(const QString &payload) {
 	const auto message = data.value(u"message"_q).toString();
 	const auto items = data.value(u"items"_q).toArray();
 	const auto buttons = data.value(u"buttons"_q).toArray();
+	const auto answered = std::make_shared<bool>(false);
+	const auto answer = [=](QJsonValue which) {
+		if (*answered) {
+			return;
+		}
+		*answered = true;
+		Call(u"alert_click"_q, QJsonObject{
+			{ u"id"_q, id },
+			{ u"which"_q, which },
+		});
+	};
+	if (data.value(u"exd"_q).isObject()) {
+		ShowPermissionAlert(controller, data, answer);
+		return;
+	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
-		const auto answered = std::make_shared<bool>(false);
-		const auto answer = [=](int which) {
-			if (*answered) {
-				return;
-			}
-			*answered = true;
-			Call(u"alert_click"_q, QJsonObject{
-				{ u"id"_q, id },
-				{ u"which"_q, which },
-			});
-		};
+		box->boxClosing() | rpl::on_next([=] {
+			answer(u"dismiss"_q);
+		}, box->lifetime());
 		if (!title.isEmpty()) {
 			box->setTitle(rpl::single(title));
 		}
@@ -452,7 +465,64 @@ PyObject *NativeOpenUrl(PyObject *self, PyObject *args) {
 		return nullptr;
 	}
 	const auto value = QString::fromUtf8(text);
-	crl::on_main([=] { UrlClickHandler::Open(value); });
+	crl::on_main([=] {
+		Instance().urlFromPlugin = true;
+		UrlClickHandler::Open(value);
+		Instance().urlFromPlugin = false;
+	});
+	return Py_BuildValue("");
+}
+
+PyObject *NativePickFile(PyObject *self, PyObject *args) {
+	const char *token = nullptr;
+	const char *title = nullptr;
+	const char *filter = nullptr;
+	int multiple = 0;
+	if (!PyArg_ParseTuple(args, "sssi", &token, &title, &filter, &multiple)) {
+		return nullptr;
+	}
+	const auto tokenValue = QString::fromUtf8(token);
+	const auto titleValue = QString::fromUtf8(title);
+	const auto filterValue = QString::fromUtf8(filter);
+	crl::on_main([=] {
+		const auto finish = [=](QStringList paths) {
+			auto list = QJsonArray();
+			for (const auto &path : paths) {
+				list.push_back(path);
+			}
+			Call(u"file_picked"_q, QJsonObject{
+				{ u"token"_q, tokenValue },
+				{ u"paths"_q, list },
+			});
+		};
+		const auto callback = [=](FileDialog::OpenResult &&result) {
+			finish(result.paths);
+		};
+		const auto fail = [=] {
+			finish({});
+		};
+		const auto caption = titleValue.isEmpty()
+			? tr::lng_choose_file(tr::now)
+			: titleValue;
+		const auto filters = filterValue.isEmpty()
+			? FileDialog::AllFilesFilter()
+			: filterValue;
+		if (multiple) {
+			FileDialog::GetOpenPaths(
+				Core::App().getFileDialogParent(),
+				caption,
+				filters,
+				callback,
+				fail);
+		} else {
+			FileDialog::GetOpenPath(
+				Core::App().getFileDialogParent(),
+				caption,
+				filters,
+				callback,
+				fail);
+		}
+	});
 	return Py_BuildValue("");
 }
 
@@ -526,6 +596,25 @@ PyObject *NativeSettingsChanged(PyObject *self, PyObject *args) {
 	}
 	const auto value = QString::fromUtf8(id);
 	crl::on_main([=] { Instance().settingsChanges.fire_copy(value); });
+	return Py_BuildValue("");
+}
+
+PyObject *NativeOpenPluginSettings(PyObject *self, PyObject *args) {
+	const char *id = nullptr;
+	if (!PyArg_ParseTuple(args, "s", &id)) {
+		return nullptr;
+	}
+	const auto value = QString::fromUtf8(id);
+	crl::on_main([=] {
+		if (const auto controller = ActiveController()) {
+			ShowPluginSettings(controller, value);
+		}
+	});
+	return Py_BuildValue("");
+}
+
+PyObject *NativePluginsChanged(PyObject *self, PyObject *args) {
+	crl::on_main([] { notifyListChanged(); });
 	return Py_BuildValue("");
 }
 
@@ -910,10 +999,13 @@ PyMethodDef NativeMethods[] = {
 	{ "toast", NativeToast, METH_VARARGS, nullptr },
 	{ "open_url", NativeOpenUrl, METH_VARARGS, nullptr },
 	{ "copy", NativeCopy, METH_VARARGS, nullptr },
+	{ "pick_file", NativePickFile, METH_VARARGS, nullptr },
 	{ "send_message", NativeSendMessage, METH_VARARGS, nullptr },
 	{ "run_on_main", NativeRunOnMain, METH_VARARGS, nullptr },
 	{ "show_alert", NativeShowAlert, METH_VARARGS, nullptr },
 	{ "settings_changed", NativeSettingsChanged, METH_VARARGS, nullptr },
+	{ "plugins_changed", NativePluginsChanged, METH_VARARGS, nullptr },
+	{ "open_plugin_settings", NativeOpenPluginSettings, METH_VARARGS, nullptr },
 	{ "current_peer", NativeCurrentPeer, METH_VARARGS, nullptr },
 	{ "get_selected_account", NativeGetSelectedAccount, METH_VARARGS, nullptr },
 	{ "self_id", NativeSelfId, METH_VARARGS, nullptr },
@@ -945,13 +1037,57 @@ PyObject *InitNativeModule() {
 	return PyModule_Create(&NativeModule);
 }
 
+[[nodiscard]] QString PythonErrorText() {
+	PyObject *type = nullptr;
+	PyObject *value = nullptr;
+	PyObject *trace = nullptr;
+	PyErr_Fetch(&type, &value, &trace);
+	if (!type) {
+		return u"Unknown Python error"_q;
+	}
+	PyErr_NormalizeException(&type, &value, &trace);
+	auto result = QString();
+	if (const auto module = PyImport_ImportModule("traceback")) {
+		if (const auto format = PyObject_GetAttrString(module, "format_exception")) {
+			const auto none = Py_BuildValue("");
+			const auto lines = PyObject_CallFunctionObjArgs(
+				format,
+				type,
+				value ? value : none,
+				trace ? trace : none,
+				nullptr);
+			Py_XDECREF(none);
+			if (lines) {
+				const auto count = PyList_Check(lines) ? PyList_Size(lines) : 0;
+				for (auto i = Py_ssize_t(0); i != count; ++i) {
+					if (const auto text = PyUnicode_AsUTF8(PyList_GetItem(lines, i))) {
+						result += QString::fromUtf8(text);
+					}
+				}
+				Py_DECREF(lines);
+			}
+			Py_DECREF(format);
+		}
+		Py_DECREF(module);
+	}
+	if (result.isEmpty() && value) {
+		if (const auto text = PyObject_Str(value)) {
+			if (const auto utf = PyUnicode_AsUTF8(text)) {
+				result = QString::fromUtf8(utf);
+			}
+			Py_DECREF(text);
+		}
+	}
+	PyErr_Clear();
+	Py_XDECREF(type);
+	Py_XDECREF(value);
+	Py_XDECREF(trace);
+	return result.trimmed();
+}
+
 [[nodiscard]] bool InitInterpreter(const QString &runtime) {
 	auto config = PyConfig();
-#ifdef Q_OS_WIN
 	PyConfig_InitIsolatedConfig(&config);
-#else
-	PyConfig_InitPythonConfig(&config);
-#endif
 	const auto finish = [&](PyStatus status) {
 		if (PyStatus_Exception(status)) {
 			Instance().error = QString::fromUtf8(status.err_msg
@@ -983,6 +1119,15 @@ PyObject *InitNativeModule() {
 		}
 	}
 #else
+	{
+		const auto executable = QFileInfo(cExeDir() + cExeName()).absoluteFilePath().toStdWString();
+		if (!finish(PyConfig_SetString(
+				&config,
+				&config.executable,
+				executable.c_str()))) {
+			return false;
+		}
+	}
 	for (const auto &candidate : {
 			cExeDir() + u"../Resources/python311"_q,
 			cExeDir() + u"python311"_q }) {
@@ -1040,6 +1185,20 @@ PyObject *InitNativeModule() {
 
 } // namespace
 
+bool IsPluginFile(const QString &path) {
+	for (const auto &extension : {
+			u".plugin"_q,
+			u".elyx"_q,
+			u".eaf"_q,
+			u".elyx.zip"_q,
+			u".eaf.zip"_q }) {
+		if (path.endsWith(extension, Qt::CaseInsensitive)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 bool Available() {
 #ifdef Q_OS_WIN
 	return QFile::exists(RuntimePath() + u"python311.dll"_q)
@@ -1088,14 +1247,21 @@ void Start() {
 		return;
 	}
 	if (!Available()) {
-		state.error = u"Python runtime not found"_q;
+		state.error = tr::lng_extera_plugins_runtime_missing(tr::now);
 		return;
 	}
 #ifdef Q_OS_WIN
 	const auto dll = QDir::toNativeSeparators(
 		RuntimePath() + u"python311.dll"_q).toStdWString();
-	if (!LoadLibraryW(dll.c_str())) {
-		state.error = u"python311.dll could not be loaded"_q;
+	if (!LoadLibraryExW(
+			dll.c_str(),
+			nullptr,
+			LOAD_WITH_ALTERED_SEARCH_PATH)) {
+		const auto code = GetLastError();
+		state.error = tr::lng_exd_plugins_dll_failed(
+			tr::now,
+			lt_code,
+			QString::number(code));
 		return;
 	}
 #endif // Q_OS_WIN
@@ -1103,14 +1269,17 @@ void Start() {
 		state.error = u"Native module registration failed"_q;
 		return;
 	}
+	LOG(("Plugins: runtime %1").arg(RuntimePath()));
 	if (!InitInterpreter(RuntimePath())) {
 		LOG(("Plugins Error: %1").arg(state.error));
 		return;
 	}
 	const auto module = PyImport_ImportModule("extera_host");
 	if (!module) {
-		PyErr_Print();
-		state.error = u"extera_host import failed"_q;
+		const auto details = PythonErrorText();
+		LOG(("Plugins Error: extera_host import failed: %1").arg(details));
+		state.error = u"extera_host import failed: "_q
+			+ details.split('\n').last();
 		state.mainThread = PyEval_SaveThread();
 		return;
 	}
@@ -1147,6 +1316,7 @@ void Start() {
 		{ u"settings"_q, DataPath() + u"settings"_q },
 		{ u"safe_mode"_q, Extera::Bool(u"plugins_safe_mode"_q) },
 		{ u"unknown_sources"_q, Extera::Bool(u"plugins_unknown_sources"_q) },
+		{ u"lang"_q, Lang::Id() },
 	});
 	Call(u"event"_q, QJsonObject{
 		{ u"type"_q, u"app"_q },
@@ -1327,7 +1497,7 @@ int ExportAll(const QString &folder) {
 	auto count = 0;
 	const auto source = QDir(DataPath() + u"plugins"_q);
 	for (const auto &info : source.entryInfoList(
-			{ u"*.plugin"_q, u"*.py"_q },
+			{ u"*.plugin"_q, u"*.py"_q, u"*.elyx"_q, u"*.eaf"_q },
 			QDir::Files)) {
 		const auto target = QDir(folder).filePath(info.fileName());
 		QFile::remove(target);
@@ -1371,6 +1541,20 @@ void NotifyNewMessage(not_null<HistoryItem*> item) {
 	state.eventInFlight = false;
 }
 
+void NotifyScreen(const QString &screen, int64 dialogId) {
+	auto &state = Instance();
+	if (!state.started || state.eventInFlight) {
+		return;
+	}
+	state.eventInFlight = true;
+	Call(u"event"_q, QJsonObject{
+		{ u"type"_q, u"screen"_q },
+		{ u"screen"_q, screen },
+		{ u"dialog_id"_q, double(dialogId) },
+	});
+	state.eventInFlight = false;
+}
+
 void NotifyAppEvent(const QString &name) {
 	auto &state = Instance();
 	if (!state.started || state.eventInFlight) {
@@ -1382,6 +1566,19 @@ void NotifyAppEvent(const QString &name) {
 		{ u"name"_q, name },
 	});
 	state.eventInFlight = false;
+}
+
+bool InterceptUrl(const QString &url) {
+	auto &state = Instance();
+	if (!state.started || state.urlInFlight || state.urlFromPlugin) {
+		return false;
+	}
+	state.urlInFlight = true;
+	const auto handled = Call(u"open_url_hook"_q, QJsonObject{
+		{ u"url"_q, url },
+	}).toBool();
+	state.urlInFlight = false;
+	return handled;
 }
 
 bool InterceptLocalUrl(const QString &url) {

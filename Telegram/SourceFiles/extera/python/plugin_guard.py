@@ -263,18 +263,113 @@ def _literals(tree):
             yield node.value
 
 
+_SESSION_TOKEN = re.compile(r"(?<![a-z0-9_])(key_datas|tdata|cache4\.db|tgnet\.dat|userconfig\.xml|auth_key|getauthkey)(?![a-z0-9_])")
+_NETWORK = re.compile(r"\b(requests|urllib|urllib3|http\.client|aiohttp|httpx|socket|okhttpclient|httpurlconnection|websocket)\b")
+_UPLOAD = re.compile(r"(\.post\(|\.put\(|senddocument|send_file|sendfile|\bfiles\s*=|upload|sendall\(|\.send\(|urlopen\()")
+_FILE_READ = re.compile(r"(\bopen\(|read_bytes|shutil\.copy|copyfile|copytree|make_archive|zipfile|glob\.glob|os\.walk|listdir|sqlite3|fileinputstream)")
+_REMOTE_SOURCE = re.compile(r"(requests\.|urlopen|urllib|httpx|aiohttp|\.recv\(|b64decode|b85decode|a85decode|decompress\(|marshal\.loads|fromhex|okhttp|httpurlconnection)")
+_CLIP_READ = re.compile(r"(getprimaryclip|getclipboardtext|clipboard\.paste|clipboard\(\)\.text|getclipboard\(\)|\.gettext\(\)\s*.*clip|pyperclip\.paste)")
+_CLIP_WRITE = re.compile(r"(setprimaryclip|addtoclipboard|clipboard\.copy|pyperclip\.copy|settext\()")
+_ADDR_PATTERN = re.compile(r"(T\[1-9A-HJ|0x\[a-fA-F0-9\]\{40\}|\[A-Za-z0-9_-\]\{4[68]\}|\(\?:EQ\|UQ\)|bc1\[)")
+_KNOWN_DNS = ("1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "149.112.112.112")
+
+
+def _segment(lines, node):
+    try:
+        first = node.lineno - 1
+        last = node.end_lineno - 1
+        if first == last:
+            return lines[first][node.col_offset:node.end_col_offset]
+        if last - first > 40:
+            last = first + 40
+        return "\n".join(lines[first:last + 1])
+    except Exception:
+        return ""
+
+
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+
+
+def _scope_nodes(scope):
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, _SCOPES):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _names(node):
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+
+def _taint(lines, assigns):
+    tainted = set()
+    for _ in range(4):
+        changed = False
+        for node in assigns:
+            seg = _segment(lines, node.value).lower()
+            if not (_REMOTE_SOURCE.search(seg) or _names(node.value) & tainted):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                for name in _names(target):
+                    if name not in tainted:
+                        tainted.add(name)
+                        changed = True
+        if not changed:
+            break
+    return tainted
+
+
+def _exec_calls(tree, source):
+    lines = source.splitlines()
+    scopes = [tree] + [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    collected = []
+    everywhere = set()
+    for scope in scopes:
+        assigns = []
+        execs = []
+        for node in _scope_nodes(scope):
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and node.value is not None:
+                assigns.append(node)
+            elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id in ("exec", "eval") and node.args):
+                execs.append(node)
+        if not assigns and not execs:
+            continue
+        local = _taint(lines, assigns)
+        everywhere |= local
+        collected.append((execs, local))
+    remote = []
+    indirect = []
+    plain = []
+    for execs, local in collected:
+        for node in execs:
+            arg = node.args[0]
+            seg = _segment(lines, arg).lower()
+            names = _names(arg)
+            if _REMOTE_SOURCE.search(seg) or names & local:
+                remote.append(node.lineno)
+            elif names & everywhere:
+                indirect.append(node.lineno)
+            else:
+                plain.append(node.lineno)
+    return remote, indirect, plain
+
+
 def _rules(source, capabilities):
     findings = []
     lines = source.lower().splitlines()
 
-    def add(rule, level, detail):
-        needle = str(detail).lower().split(",")[0].strip()
-        line = 0
-        if needle:
-            for index, text in enumerate(lines, 1):
-                if needle in text:
-                    line = index
-                    break
+    def add(rule, level, detail, line=0):
+        if not line:
+            needle = str(detail).lower().split(",")[0].strip()
+            if needle:
+                for index, text in enumerate(lines, 1):
+                    if needle in text:
+                        line = index
+                        break
         findings.append({"rule": rule, "level": level, "detail": detail, "line": line})
 
     low = source.lower()
@@ -287,7 +382,13 @@ def _rules(source, capabilities):
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 calls.add(node.func.id)
-    network = any(k in low for k in ("requests", "urllib", "http.client", "aiohttp", "httpx", "socket"))
+    network = bool(_NETWORK.search(low))
+    literal_text = "\n".join(_literals(tree)).lower() if tree is not None else low
+    session = sorted({m.group(1) for m in _SESSION_TOKEN.finditer(literal_text)})
+    if "getauthkey" in low.replace("_", "") and "getauthkey" not in session:
+        session.append("getauthkey")
+    if any(k in low for k in ("exd_sandbox", "_exd_sandbox_installed", "_sandbox.json", "addaudithook")):
+        add("SANDBOX_TAMPERING", "CRITICAL", "sandbox internals")
     if _BOT_TOKEN.search(source):
         add("EMBEDDED_TELEGRAM_BOT_TOKEN", "CRITICAL", "bot token in code")
     if "api.telegram.org/bot" in low:
@@ -295,37 +396,61 @@ def _rules(source, capabilities):
     for host in _HOOK_HOSTS:
         if host in low:
             add("UNAUTHORIZED_DATA_EXFILTRATION", "CRITICAL", host)
-    public_ips = [m.group(0) for m in _RAW_IP_FULL.finditer(source) if not _is_local_ip(m.group(1))]
-    if public_ips:
-        session_access = any(k in low for k in _SESSION_FILES)
-        add("RAW_IP_C2_ENDPOINT", "CRITICAL" if session_access else "HIGH", public_ips[0])
+    public_ips = [m for m in _RAW_IP_FULL.finditer(source) if not _is_local_ip(m.group(1))]
+    unknown_ips = [m.group(0) for m in public_ips if m.group(1) not in _KNOWN_DNS]
+    if unknown_ips:
+        add("RAW_IP_C2_ENDPOINT", "CRITICAL" if session else "HIGH", unknown_ips[0])
+    elif public_ips:
+        add("RAW_IP_C2_ENDPOINT", "WARNING", public_ips[0].group(0))
     for host in _IP_SERVICES:
         if host in low:
             add("EXTERNAL_IP_QUERY_SERVICE", "WARNING", host)
-    session = [k for k in _SESSION_FILES if k in low]
-    if session and network:
+    file_read = bool(_FILE_READ.search(low))
+    upload = bool(_UPLOAD.search(low))
+    if session and file_read and network and upload:
         add("TELEGRAM_DATABASE_EXFILTRATION", "CRITICAL", ", ".join(session))
-    elif session:
+    elif session and file_read:
         add("TELEGRAM_INTERNAL_STORAGE_THEFT", "HIGH", ", ".join(session))
-    if "777000" in source and network:
+    elif session:
+        add("TELEGRAM_STORAGE_MENTION", "WARNING", ", ".join(session))
+    if "777000" in source and network and upload:
         add("SERVICE_2FA_CODE_INTERCEPTION", "CRITICAL", "777000")
     if ("resetauthorizations" in low or "deleteaccount" in low
             or "auth.resetauthorizations" in low or "account.deleteaccount" in low):
         add("UNAUTHORIZED_DATA_EXFILTRATION", "CRITICAL", "account destructive call")
-    if calls & {"exec", "eval"} and network:
-        add("REMOTE_CODE_EXECUTION_STAGER", "CRITICAL", "exec/eval with network")
+    if tree is not None:
+        remote, indirect, local = _exec_calls(tree, source)
+        if remote and network:
+            add("REMOTE_CODE_EXECUTION_STAGER", "CRITICAL", "exec/eval of downloaded code", remote[0])
+        elif remote or indirect:
+            add("DYNAMIC_CODE_EXECUTION", "HIGH", "exec/eval of external data", (remote or indirect)[0])
+        elif local:
+            add("DYNAMIC_CODE_EXECUTION", "WARNING", "exec/eval", local[0])
     elif calls & {"exec", "eval"}:
         add("DYNAMIC_CODE_EXECUTION", "WARNING", "exec/eval")
     if "compile" in calls:
         add("DYNAMIC_CODE_COMPILATION", "WARNING", "compile")
-    if "clipboard" in low and _CRYPTO_ADDR.search(source):
-        add("CLIPBOARD_CRYPTO_CLIPPER", "CRITICAL", "clipboard with wallet address")
+    if _CRYPTO_ADDR.search(source) or _ADDR_PATTERN.search(source):
+        reads = bool(_CLIP_READ.search(low))
+        writes = bool(_CLIP_WRITE.search(low))
+        if reads and writes and _ADDR_PATTERN.search(source):
+            add("CLIPBOARD_CRYPTO_CLIPPER", "CRITICAL", "clipboard address replacement")
+        elif reads and writes:
+            add("CLIPBOARD_CRYPTO_CLIPPER", "WARNING", "clipboard with wallet address")
     if "subprocess" in low or "os.system" in low or "popen" in low:
-        add("PRIVILEGED_COMMAND_EXECUTION", "HIGH", "process execution")
+        shell_exec = "shell=true" in low.replace(" ", "") or "os.system" in low
+        known_tools = any(k in low for k in ("ffmpeg", "ffprobe", "yt-dlp", "yt_dlp"))
+        if known_tools and not shell_exec:
+            add("EXTERNAL_PROGRAM_LAUNCH", "WARNING", "ffmpeg")
+        elif shell_exec or network:
+            add("PRIVILEGED_COMMAND_EXECUTION", "HIGH", "process execution")
+        else:
+            add("PRIVILEGED_COMMAND_EXECUTION", "WARNING", "process execution")
     if "ctypes" in low:
         add("CTYPES_NATIVE_ACCESS", "WARNING", "ctypes")
-    if capabilities.get("obfuscation"):
-        add("OBFUSCATED_CODE_STRUCTURE", "CRITICAL", ", ".join(capabilities["obfuscation"]))
+    obfuscation = capabilities.get("obfuscation") or []
+    if obfuscation:
+        add("OBFUSCATED_CODE_STRUCTURE", "CRITICAL", ", ".join(obfuscation))
     entropy = "NORMAL"
     if tree is not None:
         worst = 0.0
@@ -388,10 +513,10 @@ def _read(path):
             for info in archive.infolist():
                 if info.filename.endswith(".py"):
                     with archive.open(info) as handle:
-                        parts.append(handle.read(4 * 1024 * 1024).decode("utf-8", "replace"))
+                        parts.append(handle.read(16 * 1024 * 1024).decode("utf-8", "replace"))
         return "\n".join(parts)
     with open(path, "rb") as handle:
-        return handle.read(4 * 1024 * 1024).decode("utf-8", "replace")
+        return handle.read(16 * 1024 * 1024).decode("utf-8", "replace")
 
 
 def scan(path):

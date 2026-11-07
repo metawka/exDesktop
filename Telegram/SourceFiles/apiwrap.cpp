@@ -101,6 +101,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "inline_bots/inline_bot_result.h"
 #include "chat_helpers/message_field.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/item_text_options.h"
 #include "ui/text/text_utilities.h"
 #include "ui/chat/attach/attach_prepare.h"
@@ -171,10 +172,12 @@ void ShowChannelsLimitBox(not_null<PeerData*> peer) {
 
 [[nodiscard]] FileLoadTo FileLoadTaskOptions(const Api::SendAction &action) {
 	const auto peer = action.history->peer;
+	auto replyTo = action.replyTo;
+	StripEphemeralReply(&peer->session(), replyTo);
 	return FileLoadTo(
 		peer->id,
 		action.options,
-		action.replyTo,
+		replyTo,
 		action.replaceMediaOf);
 }
 
@@ -4210,8 +4213,10 @@ void ApiWrap::sendSharedContact(
 		const QString &firstName,
 		const QString &lastName,
 		UserId userId,
-		const SendAction &action,
+		const SendAction &original,
 		Fn<void(bool)> done) {
+	auto action = original;
+	StripEphemeralReply(_session, action.replyTo);
 	sendAction(action);
 
 	const auto history = action.history;
@@ -4347,6 +4352,9 @@ void ApiWrap::sendFiles(
 		SendMediaType type,
 		std::shared_ptr<SendingAlbum> album,
 		SendAction action) {
+	if (_session->data().exteraIsDeleted(action.replyTo.messageId)) {
+		StripEphemeralReply(_session, action.replyTo);
+	}
 	const auto &ephemeral = _session->ephemeralMessages();
 	if (album && !ephemeral.isEphemeralBotReply(action.replyTo.messageId)) {
 		const auto peer = action.history->peer;
@@ -4791,6 +4799,46 @@ void ApiWrap::sendMessage(
 					message.action.replyTo.quote = replied->originalText();
 				}
 			}
+		}
+	}
+	if (message.action.replyTo.messageId
+		&& message.action.history->owner().exteraIsDeleted(
+			message.action.replyTo.messageId)) {
+		const auto replied = message.action.history->owner().message(
+			message.action.replyTo.messageId);
+		message.action.replyTo.messageId = FullMsgId();
+		message.action.replyTo.quote = TextWithEntities();
+		if (replied) {
+			auto name = replied->from()->name();
+			auto quote = replied->originalText().text.trimmed();
+			if (quote.size() > 200) {
+				quote = quote.left(200) + QChar(0x2026);
+			}
+			auto &source = message.textWithTags;
+			const auto shift = name.size() + 1 + quote.size() + 1;
+			for (auto &tag : source.tags) {
+				tag.offset += shift;
+			}
+			auto tags = TextWithTags::Tags();
+			if (const auto user = replied->from()->asUser()) {
+				tags.push_back({
+					0,
+					int(name.size()),
+					PrepareMentionTag(user),
+				});
+			}
+			if (!quote.isEmpty()) {
+				tags.push_back({
+					int(name.size()) + 1,
+					int(quote.size()),
+					Ui::InputField::kTagBlockquote,
+				});
+			}
+			for (const auto &tag : source.tags) {
+				tags.push_back(tag);
+			}
+			source.text = name + '\n' + quote + '\n' + source.text;
+			source.tags = std::move(tags);
 		}
 	}
 	const auto history = message.action.history;

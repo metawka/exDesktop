@@ -76,6 +76,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/core_screenshot_protection.h"
 #include "core/click_handler_types.h"
 #include "core/file_utilities.h"
+#include "extera/extera_plugins.h"
 #include "core/ui_integration.h"
 #include "base/options.h"
 #include "base/unixtime.h"
@@ -1412,6 +1413,9 @@ void SessionNavigation::showPeerInfo(
 	//	Core::App().saveSettingsDelayed();
 	//}
 	showSection(std::make_shared<Info::Memento>(peer), params);
+	Extera::Plugins::NotifyScreen(
+		u"profile"_q,
+		Extera::Plugins::DialogId(peer));
 }
 
 void SessionNavigation::showPeerInfo(
@@ -1674,6 +1678,16 @@ SessionController::SessionController(
 	}) | rpl::on_next([=](Data::Folder *folder) {
 		folder->updateChatListSortPosition();
 		closeFolder();
+	}, lifetime());
+
+	activeChatChanges(
+	) | rpl::on_next([=](Dialogs::Key key) {
+		const auto peer = key.peer();
+		crl::on_main(this, [=] {
+			Extera::Plugins::NotifyScreen(
+				u"chat"_q,
+				peer ? Extera::Plugins::DialogId(peer) : 0);
+		});
 	}, lifetime());
 
 	const auto processFiltersMenu = [this] {

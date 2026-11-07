@@ -70,6 +70,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_dialogs.h"
 #include "styles/style_chat.h"
 #include "styles/style_info.h"
+#include "extera/extera_plugins.h"
+#include "extera/extera_plugins_ui.h"
+#include "ui/widgets/popup_menu.h"
 
 #include <QtGui/QWindow>
 
@@ -127,6 +130,7 @@ TopBarWidget::TopBarWidget(
 , _call(this, st::topBarCall)
 , _groupCall(this, st::topBarGroupCall)
 , _search(this, st::topBarSearch)
+, _exdPlugins(this, st::exdTopBarPlugins)
 , _infoToggle(this, st::topBarInfo)
 , _menuToggle(this, st::topBarMenuToggle)
 , _titlePeerText(st::windowMinWidth / 3)
@@ -262,6 +266,37 @@ TopBarWidget::TopBarWidget(
 	_call->setAccessibleName(tr::lng_profile_action_short_call(tr::now));
 	_groupCall->setAccessibleName(tr::lng_group_call_title(tr::now));
 	_search->setAccessibleName(tr::lng_shortcuts_search(tr::now));
+	_exdPlugins->setAccessibleName(tr::lng_exd_plugins_actions(tr::now));
+	_exdPlugins->setClickedCallback([=] {
+		const auto peer = _activeChat.key.peer();
+		if (!peer) {
+			return;
+		}
+		auto actions = std::vector<std::pair<QString, Fn<void()>>>();
+		Extera::Plugins::AddChatMenuItems([&](QString text, Fn<void()> callback) {
+			actions.emplace_back(std::move(text), std::move(callback));
+		}, peer);
+		if (actions.empty()) {
+			return;
+		} else if (actions.size() == 1) {
+			actions.front().second();
+			return;
+		}
+		_exdPluginsMenu = base::make_unique_q<Ui::PopupMenu>(
+			this,
+			st::defaultPopupMenu);
+		for (auto &[text, callback] : actions) {
+			_exdPluginsMenu->addAction(text, std::move(callback));
+		}
+		_exdPluginsMenu->popup(mapToGlobal(QPoint(
+			_exdPlugins->x(),
+			_exdPlugins->y() + _exdPlugins->height())));
+	});
+	Extera::Plugins::listChanges(
+	) | rpl::on_next([=] {
+		updateControlsVisibility();
+		updateControlsGeometry();
+	}, lifetime());
 	_infoToggle->setAccessibleName(tr::lng_settings_section_info(tr::now));
 	_menuToggle->setAccessibleName(tr::lng_chat_menu(tr::now));
 	_back->setAccessibleName(tr::lng_go_back(tr::now));
@@ -1119,6 +1154,16 @@ void TopBarWidget::updateSearchVisibility() {
 		|| (_activeChat.section == Section::SavedSublist
 			&& _activeChat.key.sublist());
 	_search->setVisible(searchAllowedMode && !_chooseForReportReason);
+	auto pluginActions = 0;
+	if (const auto peer = _activeChat.key.peer();
+		peer && Extera::Plugins::Started()) {
+		Extera::Plugins::AddChatMenuItems([&](QString, Fn<void()>) {
+			++pluginActions;
+		}, peer);
+	}
+	_exdPlugins->setVisible(searchAllowedMode
+		&& !_chooseForReportReason
+		&& pluginActions > 0);
 }
 
 void TopBarWidget::updateInfoButtonVisibility() {
@@ -1298,6 +1343,10 @@ void TopBarWidget::updateControlsGeometry() {
 		_call->moveToRight(_rightTaken, otherButtonsTop);
 		_groupCall->moveToRight(_rightTaken, otherButtonsTop);
 		_rightTaken += _call->width();
+	}
+	_exdPlugins->moveToRight(_rightTaken, otherButtonsTop);
+	if (!_exdPlugins->isHidden()) {
+		_rightTaken += _exdPlugins->width();
 	}
 	_search->moveToRight(_rightTaken, otherButtonsTop);
 	if (!_search->isHidden()) {

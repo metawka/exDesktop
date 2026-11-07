@@ -213,6 +213,25 @@ Application::Application()
 		cExeDir() + u"exd_install.conf"_q,
 		psAppDataPath() + u"exd_install.conf"_q,
 	});
+	Extera::Config::Instance().boolChanges(
+		u"ayu_features"_q
+	) | rpl::filter([](bool enabled) {
+		return !enabled;
+	}) | rpl::on_next([] {
+		if (Extera::GhostActive()) {
+			Extera::SetGhostAll(false);
+		}
+	}, _lifetime);
+	Extera::BadgesChanges(
+	) | rpl::on_next([=] {
+		crl::on_main(this, [=] {
+			for (const auto &[index, account] : domain().accounts()) {
+				if (account->sessionExists()) {
+					account->session().data().exteraRefreshAllViews();
+				}
+			}
+		});
+	}, _lifetime);
 	Ui::SetMaterialSwitches(Extera::Bool(u"md3_switches"_q));
 	Ui::SetMutedSwitches(Extera::Bool(u"md3_switches_muted"_q));
 	Extera::Config::Instance().changes(

@@ -36,6 +36,7 @@ class AlertDialogBuilder:
         self._canceled_on_touch_outside = None
         self._progress = None
         self._shown = False
+        self._exd_extra = None
 
     def set_title(self, text):
         self._title = str(text or "")
@@ -128,6 +129,7 @@ class AlertDialogBuilder:
             "alert_type": self._alert_type,
             "items": self._items,
             "cancelable": self._cancelable,
+            "exd": self._exd_extra,
             "buttons": [
                 {"which": which, "text": text}
                 for which, (text, _) in sorted(self._buttons.items())

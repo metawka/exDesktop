@@ -51,6 +51,9 @@ def _plugin_context(plugin_id):
 # Metadata
 
 def read_metadata(path):
+    import exd_elyx
+    if exd_elyx.is_elyx(path):
+        return exd_elyx.read_meta(path)
     import metadata_parser
     return metadata_parser.read_metadata(path)
 
@@ -166,6 +169,9 @@ class Record:
         self.error = None
         self.capabilities = None
         self.library = False
+        self.installing = False
+        self.requirements_done = False
+        self.elyx = meta.get("format") == "elyx"
 
     def info(self):
         enabled = is_enabled(self.id)
@@ -183,6 +189,7 @@ class Record:
             "loaded": self.instance is not None or (self.library and self.module is not None),
             "library": self.library,
             "error": self.error,
+            "installing": self.installing,
             "has_settings": self._has_settings(),
             "path": self.path,
             "permissions": self.meta.get("permissions") or [],
@@ -190,6 +197,11 @@ class Record:
             "requirements": self.meta.get("requirements") or [],
             "app_version": self.meta.get("app_version"),
             "capabilities": self.capabilities or {},
+            "format": "elyx" if self.elyx else "plugin",
+            "desktop": bool(self.meta.get("desktop")),
+            "ported_from": self.meta.get("ported_from") or "",
+            "unsupported": list(getattr(self.instance, "__dict__", {}).get("_exd_unsupported", []))
+            if self.instance is not None else [],
         }
 
     def _has_settings(self):
@@ -240,9 +252,11 @@ class _PluginModuleFinder(importlib.abc.MetaPathFinder):
         if path is not None or fullname in sys.modules:
             return None
         record = _records.get(fullname)
-        if record is None:
+        if record is None or getattr(record, "elyx", False):
             return None
-        loader = importlib.machinery.SourceFileLoader(fullname, record.path)
+        import exd_runtime
+        loader = exd_runtime.PluginLoader(
+            importlib.machinery.SourceFileLoader(fullname, record.path), record.id)
         return importlib.util.spec_from_file_location(
             fullname, record.path, loader=loader)
 
@@ -321,7 +335,11 @@ def _blocked_reason(record):
 
 def _instantiate(record):
     base = _base()
-    module = importlib.import_module(record.id)
+    if record.elyx:
+        import exd_elyx
+        module = exd_elyx.load(record, sys.modules[__name__])
+    else:
+        module = importlib.import_module(record.id)
     record.module = module
     plugin_class = None
     for value in list(module.__dict__.values()):
@@ -336,6 +354,9 @@ def _instantiate(record):
     instance = plugin_class()
     instance._extera_attach(record.id)
     instance.name = record.meta.get("name", record.id)
+    for key in ("version", "author", "description", "icon"):
+        if key not in instance.__dict__ and not hasattr(type(instance), key):
+            setattr(instance, key, record.meta.get(key) or "")
     record.instance = instance
 
 
@@ -349,9 +370,10 @@ def _activate(record):
     try:
         if record.instance is None and not record.library:
             import requirements_installer
-            for problem in requirements_installer.ensure(
-                    record.meta.get("requirements") or []):
-                log(f"plugin {record.id} requirement failed: {problem}")
+            requirements = record.meta.get("requirements") or []
+            if not record.requirements_done and requirements_installer.missing(requirements):
+                _install_requirements(record, requirements)
+                return
             _instantiate(record)
         if record.library:
             log(f"plugin library {record.id} loaded")
@@ -361,11 +383,60 @@ def _activate(record):
         with _plugin_context(record.id):
             record.instance.on_plugin_load()
         log(f"plugin {record.id} loaded")
-    except Exception:
+        if record.instance.__dict__.get("_exd_virtual_app_create"):
+            _fire_app_create(record)
+    except Exception as e:
         record.error = traceback.format_exc(limit=6)
+        library = getattr(e, "name", None) if isinstance(e, ModuleNotFoundError) else None
+        if library and library.split(".")[0] in _LIBRARIES:
+            record.error += "\n" + _library_text(library.split(".")[0])
         record.instance = None
         _clear_plugin(record.id)
         log(f"plugin {record.id} failed:\n{record.error}")
+
+
+_LIBRARIES = {"zwylib": "ZwyLib", "cactuslib": "CactusLib", "plugins_manager": "Plugins Manager"}
+
+
+def _library_text(name):
+    try:
+        import exd_java
+        russian = exd_java.language().startswith("ru")
+    except Exception:
+        russian = False
+    title = _LIBRARIES.get(name, name)
+    return ("Требуется плагин-библиотека %s: установите её из канала плагинов." % title) if russian \
+        else ("Requires the library plugin %s: install it from the plugins channel." % title)
+
+
+def _install_requirements(record, requirements):
+    if record.installing:
+        return
+    record.installing = True
+    log(f"plugin {record.id} installing requirements: {', '.join(map(str, requirements))}")
+
+    def work():
+        import requirements_installer
+        try:
+            problems = requirements_installer.ensure(requirements)
+        except Exception as e:
+            problems = [repr(e)]
+
+        def finish():
+            record.installing = False
+            record.requirements_done = True
+            for problem in problems:
+                log(f"plugin {record.id} requirement failed: {problem}")
+            if _records.get(record.id) is record and is_enabled(record.id) and not _safe_mode:
+                _activate(record)
+            try:
+                _extera.plugins_changed()
+            except Exception:
+                pass
+
+        _extera.run_on_main(finish, 0)
+
+    threading.Thread(target=work, name="exd-requirements", daemon=True).start()
 
 
 def _deactivate(record):
@@ -379,13 +450,17 @@ def _deactivate(record):
     _clear_plugin(record.id)
     record.instance = None
     record.module = None
+    if record.elyx:
+        import exd_elyx
+        exd_elyx.unload(record.id)
     sys.modules.pop(record.id, None)
     sys.modules.pop("plugin_" + record.id, None)
 
 
 def load_all():
+    import exd_elyx
     for name in sorted(os.listdir(PLUGINS_DIR)) if os.path.isdir(PLUGINS_DIR) else []:
-        if not name.endswith(".plugin"):
+        if not name.lower().endswith(".plugin") and not exd_elyx.is_elyx(name):
             continue
         path = os.path.join(PLUGINS_DIR, name)
         try:
@@ -458,6 +533,32 @@ def _send_hook(args):
         except Exception:
             log(f"[{plugin_id}] send hook failed:\n{traceback.format_exc(limit=4)}")
             continue
+        virtual = list(record.instance.__dict__.get("_exd_virtual_send") or ())
+        for handler in virtual:
+            before_text = _params_text(params)
+            before_entities = list(getattr(params, "entities", None) or [])
+            param = base.VirtualParam([params], _compat.Stub("SendMessagesHelper"),
+                                      _compat.Missing("SendMessagesHelper.sendMessage"))
+            try:
+                with client_utils.hook_scope(args.get("account", 0)):
+                    with _plugin_context(plugin_id):
+                        replace = getattr(handler, "replace_hooked_method", None)
+                        before = getattr(handler, "before_hooked_method", None)
+                        if callable(replace):
+                            replace(param)
+                            param.returnEarly = True
+                        elif callable(before):
+                            before(param)
+            except Exception:
+                log(f"[{plugin_id}] send hook failed:\n{traceback.format_exc(limit=4)}")
+                continue
+            if param.returnEarly:
+                return {"strategy": "cancel"}
+            if param.args and param.args[0] is not params and param.args[0] is not None:
+                params = param.args[0]
+                modified = True
+            if _params_text(params) != before_text or list(getattr(params, "entities", None) or []) != before_entities:
+                modified = True
         if result is None:
             continue
         strategy = getattr(result, "strategy", base.HookStrategy.DEFAULT)
@@ -563,6 +664,119 @@ def _matching_request_plugins(name):
     return [plugin_id for _, plugin_id in matches]
 
 
+_screen_state = {"chat": 0}
+
+
+def _virtual_screen(kind, fragment, name, args=()):
+    import client_utils
+    base = _base()
+    for record in list(_records.values()):
+        if not record.instance:
+            continue
+        handlers = list(record.instance.__dict__.get("_exd_virtual_" + kind) or ())
+        for handler in handlers:
+            param = base.VirtualParam(list(args), fragment, _compat.Missing(name))
+            try:
+                with client_utils.hook_scope(0):
+                    with _plugin_context(record.id):
+                        before = getattr(handler, "before_hooked_method", None)
+                        after = getattr(handler, "after_hooked_method", None)
+                        if callable(before):
+                            before(param)
+                        if callable(after) and not param.returnEarly:
+                            after(param)
+            except Exception:
+                log(f"[{record.id}] {name} hook failed:\n{traceback.format_exc(limit=4)}")
+
+
+def _fire_app_create(record):
+    import _compat
+    base = _base()
+    handlers = list(record.instance.__dict__.get("_exd_virtual_app_create") or ())
+    for handler in handlers:
+        param = base.VirtualParam([None], _compat._LaunchActivity.instance, _compat.Missing("LaunchActivity.onCreate"))
+        try:
+            with _plugin_context(record.id):
+                for attr in ("before_hooked_method", "after_hooked_method"):
+                    method = getattr(handler, attr, None)
+                    if callable(method) and not param.returnEarly:
+                        method(param)
+        except Exception:
+            log(f"[{record.id}] LaunchActivity.onCreate hook failed:\n{traceback.format_exc(limit=4)}")
+
+
+def _open_url_hook(args):
+    import _compat
+    import exd_java
+    cls = _compat._Browser
+    if not exd_java.has_shim_hooks(cls, "openUrl"):
+        return False
+    url = str(args.get("url") or "")
+    _compat._BROWSER_EXTERNAL[0] = False
+    try:
+        cls.openUrl(_compat._LaunchActivity.instance, url)
+    finally:
+        handled = not _compat._BROWSER_EXTERNAL[0]
+        _compat._BROWSER_EXTERNAL[0] = True
+    return handled
+
+
+def _screen_event(args):
+    import tgnet_bridge
+    screen = str(args.get("screen") or "")
+    dialog_id = int(args.get("dialog_id") or 0)
+    if screen == "chat":
+        previous = _screen_state.get("chat", 0)
+        if previous and previous != dialog_id:
+            _virtual_screen("chat_close", tgnet_bridge.ChatActivity(previous), "ChatActivity.onPause")
+        _screen_state["chat"] = dialog_id
+        if dialog_id and dialog_id != previous:
+            _virtual_screen("chat_open", tgnet_bridge.ChatActivity(dialog_id), "ChatActivity.onResume")
+        elif not dialog_id:
+            _virtual_screen("dialogs_open", tgnet_bridge.DialogsActivity(0), "DialogsActivity.onResume")
+    elif screen == "profile" and dialog_id:
+        _screen_state["profile"] = dialog_id
+        _virtual_screen("profile_open", tgnet_bridge.ProfileActivity(dialog_id), "ProfileActivity.onResume")
+        return True
+    if screen == "chat":
+        profile = _screen_state.pop("profile", 0)
+        if profile:
+            _virtual_screen("profile_close", tgnet_bridge.ProfileActivity(profile), "ProfileActivity.onPause")
+        if dialog_id and not previous:
+            _virtual_screen("dialogs_close", tgnet_bridge.DialogsActivity(0), "DialogsActivity.onPause")
+    return True
+
+
+def _virtual_incoming(account, update):
+    import client_utils
+    import exd_java
+    base = _base()
+    for record in list(_records.values()):
+        if not record.instance:
+            continue
+        handlers = list(record.instance.__dict__.get("_exd_virtual_incoming") or ())
+        if not handlers:
+            continue
+        message = exd_java.message_object(update, account)
+        values = exd_java.ArrayList([message])
+        for handler in handlers:
+            param = base.VirtualParam(
+                [values, int(update.get("dialog_id") or 0), False, False],
+                _compat.Stub("MessagesController"),
+                _compat.Missing("MessagesController.processNewMessages"))
+            try:
+                with client_utils.hook_scope(account):
+                    with _plugin_context(record.id):
+                        before = getattr(handler, "before_hooked_method", None)
+                        after = getattr(handler, "after_hooked_method", None)
+                        if callable(before):
+                            before(param)
+                        if callable(after) and not param.returnEarly:
+                            after(param)
+            except Exception:
+                log(f"[{record.id}] message hook failed:\n{traceback.format_exc(limit=4)}")
+
+
 def _event(args):
     import client_utils
     kind = args.get("type")
@@ -571,6 +785,15 @@ def _event(args):
     if kind == "update":
         name = args.get("name", "")
         update = args.get("update") or {}
+        if name == "updateNewMessage" and isinstance(update, dict):
+            _virtual_incoming(account, update)
+            try:
+                import exd_android
+                import exd_java
+                if _observers.get(exd_android.NotificationCenter.didReceiveNewMessages):
+                    exd_android.post_new_message(account, update, exd_java.message_object(update, account))
+            except Exception:
+                log(f"didReceiveNewMessages failed: {traceback.format_exc(limit=3)}")
         for record in _records.values():
             if not record.instance:
                 continue
@@ -600,8 +823,15 @@ def _event(args):
             except Exception:
                 log(f"[{record.id}] updates hook failed:\n{traceback.format_exc(limit=4)}")
         return True
+    if kind == "screen":
+        return _screen_event(args)
     if kind == "app":
-        event = base.AppEvent.from_java(args.get("name", ""))
+        name = str(args.get("name", ""))
+        if name in ("app_resume", "app_pause"):
+            import _compat
+            _virtual_screen(name, _compat._LaunchActivity.instance,
+                            "LaunchActivity.onResume" if name == "app_resume" else "LaunchActivity.onPause")
+        event = base.AppEvent.from_java(name)
         if event is None:
             return False
         for record in _records.values():
@@ -706,7 +936,16 @@ def _install(args):
     path = args["path"]
     meta = read_metadata(path)
     os.makedirs(PLUGINS_DIR, exist_ok=True)
-    target = os.path.join(PLUGINS_DIR, meta["id"] + ".plugin")
+    import exd_elyx
+    extension = exd_elyx.canonical_extension(path) if exd_elyx.is_elyx(path) else ".plugin"
+    target = os.path.join(PLUGINS_DIR, meta["id"] + extension)
+    for other in (".plugin", ".elyx", ".eaf"):
+        stale = os.path.join(PLUGINS_DIR, meta["id"] + other)
+        if other != extension and os.path.exists(stale):
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
     old = _records.get(meta["id"])
     if old:
         _deactivate(old)
@@ -876,6 +1115,23 @@ def _init(args):
     import requirements_installer
     requirements_installer.configure(
         os.path.join(os.path.dirname(PLUGINS_DIR), "plugin_deps"))
+    import exd_java
+    exd_java.set_language(args.get("lang"))
+    import exd_runtime
+    exd_runtime.install_os_mapping()
+    import exd_elyx
+    exd_elyx.install_api(sys.modules[__name__])
+    if not args.get("sandbox_off"):
+        import exd_sandbox
+        global _sandbox_api
+        _sandbox_api = exd_sandbox.install(
+            sys.modules[__name__],
+            PLUGINS_DIR,
+            SETTINGS_DIR,
+            os.path.dirname(PLUGINS_DIR),
+            os.path.join(os.path.dirname(PLUGINS_DIR), "plugin_deps"),
+            interactive=bool(args.get("sandbox_prompts", True)))
+        sys.modules.pop("exd_sandbox", None)
     load_all()
     return [r.info() for r in _records.values()]
 
@@ -926,6 +1182,7 @@ _METHODS = {
     "setting_changed": _setting_changed,
     "setting_click": _setting_click,
     "alert_click": _alert_click,
+    "open_url_hook": _open_url_hook,
     "menu_list": _menu_list,
     "menu_click": _menu_click,
     "install": _install,
@@ -939,6 +1196,92 @@ _METHODS = {
     "view_click": _view_click,
     "text_changed": _text_changed,
 }
+
+
+_sandbox_api = None
+
+
+def _sandbox_grant(plugin_id, path):
+    if _sandbox_api is None or len(_sandbox_api) < 3:
+        return False
+    return _sandbox_api[2](plugin_id, path)
+
+
+def _file_picked(args):
+    import exd_picker
+    return exd_picker.picked(args.get("token"), args.get("paths") or [])
+
+
+def _permissions(args):
+    if _sandbox_api is None:
+        return {"net": [], "paths": []}
+    return _sandbox_api[0](str(args.get("id") or ""))
+
+
+def _revoke_permission(args):
+    if _sandbox_api is None:
+        return False
+    return _sandbox_api[1](str(args.get("id") or ""), str(args.get("kind") or ""),
+                           str(args.get("key") or ""))
+
+
+def _port_prepare(args):
+    import exd_porter
+    path = str(args.get("path") or "")
+    if not path and args.get("id") in _records:
+        path = _records[args["id"]].path
+    meta = read_metadata(path)
+    try:
+        import capability_scan
+        capabilities = capability_scan.scan(path)
+    except Exception:
+        capabilities = {}
+    result = exd_porter.prepare(path, meta, capabilities)
+    result["name"] = str(meta.get("name") or meta.get("id") or "")
+    return result
+
+
+def _port_check(args):
+    import exd_porter
+    prepared = args.get("prepared") or {}
+    need = exd_porter.needed(args.get("answer"), prepared)
+    if need:
+        return {
+            "code": "",
+            "report": "",
+            "need": need,
+            "errors": ["NEED: " + ", ".join(need)],
+            "fix": exd_porter.need_prompt(need),
+        }
+    code, report = exd_porter.extract(args.get("answer"))
+    code = exd_porter.autofix(code)
+    errors = exd_porter.check(code, args.get("prepared") or {})
+    if not errors and not exd_porter.has_function(code):
+        return {"code": "", "report": report, "parsed": exd_porter.parse_report(report), "nothing": True,
+                "errors": [], "fix": ""}
+    return {
+        "code": code,
+        "report": report,
+        "parsed": exd_porter.parse_report(report),
+        "errors": errors,
+        "fix": exd_porter.fix_prompt(errors) if errors else "",
+    }
+
+
+def _port_save(args):
+    import exd_porter
+    out_dir = os.path.join(os.path.dirname(PLUGINS_DIR), "ai_ports")
+    return exd_porter.save(str(args.get("code") or ""), args.get("prepared") or {}, out_dir)
+
+
+_METHODS.update({
+    "permissions": _permissions,
+    "revoke_permission": _revoke_permission,
+    "file_picked": _file_picked,
+    "port_prepare": _port_prepare,
+    "port_check": _port_check,
+    "port_save": _port_save,
+})
 
 
 def dispatch(method, payload):

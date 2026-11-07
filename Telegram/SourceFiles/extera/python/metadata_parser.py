@@ -13,7 +13,7 @@ class PluginMetadataError(Exception):
 _METADATA_KEYS = (
     "__id__", "__name__", "__description__", "__author__", "__version__",
     "__icon__", "__app_version__", "__sdk_version__", "__min_version__",
-    "__beta__", "__requirements__", "__permissions__",
+    "__beta__", "__requirements__", "__permissions__", "__desktop__", "__ported_from__", "__desktop_os__",
 )
 
 PERMISSION_UI = "ui"
@@ -163,6 +163,9 @@ def _read_metadata_uncached(path: str) -> Dict[str, Any]:
         "requirements": list(requirements),
         "permissions": permissions,
         "permissions_declared": declared_permissions,
+        "desktop": bool(constants.get("__desktop__", False)),
+        "ported_from": str(constants.get("__ported_from__") or ""),
+        "desktop_os": str(constants.get("__desktop_os__") or ""),
     }
 
 

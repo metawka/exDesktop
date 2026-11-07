@@ -14,6 +14,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_notifications_manager.h"
 #include "platform/platform_specific.h"
 #include "lang/lang_keys.h"
+#include "extera/extera_config.h"
+#include "extera/extera_streamer.h"
 
 #include <QtWidgets/QApplication>
 
@@ -57,6 +59,20 @@ void Tray::create() {
 
 	Core::App().passcodeLockChanges(
 	) | rpl::on_next([=] {
+		rebuildMenu();
+	}, _tray.lifetime());
+
+	Extera::Config::Instance().changes(
+	) | rpl::filter([](const QString &key) {
+		return key == u"streamer_mode"_q || key.startsWith(u"ghost_"_q);
+	}) | rpl::on_next([=] {
+		updateMenuText();
+	}, _tray.lifetime());
+
+	Extera::Config::Instance().changes(
+	) | rpl::filter([](const QString &key) {
+		return key == u"ayu_features"_q;
+	}) | rpl::on_next([=] {
 		rebuildMenu();
 	}, _tray.lifetime());
 
@@ -106,6 +122,30 @@ void Tray::rebuildMenu() {
 		_tray.addAction(
 			std::move(notificationsText),
 			[=] { toggleSoundNotifications(); });
+
+		auto streamerText = _textUpdates.events(
+		) | rpl::map([=] {
+			return (Extera::Streamer::Active() ? u"✓ "_q : QString())
+				+ tr::lng_extera_streamer_mode(tr::now);
+		});
+		_tray.addAction(std::move(streamerText), [=] {
+			Extera::Config::Instance().setBool(
+				u"streamer_mode"_q,
+				!Extera::Streamer::Active());
+			updateMenuText();
+		});
+
+		if (Extera::Bool(u"ayu_features"_q)) {
+			auto ghostText = _textUpdates.events(
+			) | rpl::map([=] {
+				return (Extera::GhostActive() ? u"✓ "_q : QString())
+					+ tr::lng_exd_ayu_ghost_mode(tr::now);
+			});
+			_tray.addAction(std::move(ghostText), [=] {
+				Extera::SetGhostAll(!Extera::GhostActive());
+				updateMenuText();
+			});
+		}
 	}
 
 	_tray.addAction(tr::lng_quit_from_tray(), [] { Core::Quit(); });

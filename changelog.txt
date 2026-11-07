@@ -1,3 +1,18 @@
+7.3.3.10 (07.11.26)
+- Compatibility with exteraGram plugins: Java and Android emulation, messages, notifications, files, images, plugin libraries and the Elyx format.
+- Android hooks for messages, chat, profile and chat list screens, external links and the app window.
+- AI port of Android plugins with your own API key, running in the background with a check of the result.
+- Plugin sandbox with permissions for websites and folders.
+- Plugin dependencies are installed in the background.
+- Plugin labels, plugin button in the chat header, Markdown in plugin descriptions.
+- Plugin engine on Linux and macOS: bundled Python packages and launch fixes.
+- Work on plugin compatibility continues: about 61% of exteraGram plugins work fully and 29% partially.
+- Badge window with number and rarity, badge editing.
+- Message count in chat search, Jump List actions for streamer and ghost mode.
+- Streamer mode no longer slows down the client.
+- AyuGram features are controlled by one switch, updates no longer turn them back on.
+- The installer hung while exDesktop was running in the tray.
+
 7.3.3.9 (06.11.26)
 - Plugin security check: static rules, PluginGuard vector model and optional AI arbiter, full analysis, installation block and plugin reports.
 - AyuGram features: ghost mode, saved deleted messages, edit history, deleted marks, "Keep locally" on deletion.

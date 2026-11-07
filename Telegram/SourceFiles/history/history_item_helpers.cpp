@@ -719,6 +719,12 @@ void StripEphemeralReply(
 	const auto item = session->data().message(replyTo.messageId);
 	if (item && item->isEphemeral()) {
 		replyTo.messageId = FullMsgId();
+	} else if (replyTo.messageId
+		&& session->data().exteraIsDeleted(replyTo.messageId)) {
+		replyTo.messageId = FullMsgId();
+		replyTo.quote = TextWithEntities();
+		replyTo.richQuote = nullptr;
+		replyTo.quoteOffset = 0;
 	}
 }
 

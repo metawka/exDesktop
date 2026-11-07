@@ -523,42 +523,29 @@ void RegisterSettingsHandlers(Router &router) {
 		.action = SettingsSection{ ::Settings::FoldersId() },
 	});
 
-	router.add(u"settings"_q, {
-		.path = u"extera"_q,
-		.action = SettingsSection{ ::Settings::ExteraId() },
-	});
-	router.add(u"settings"_q, {
-		.path = u"extera/general"_q,
-		.action = SettingsSection{ ::Settings::ExteraGeneralId() },
-	});
-	router.add(u"settings"_q, {
-		.path = u"extera/appearance"_q,
-		.action = SettingsSection{ ::Settings::ExteraAppearanceId() },
-	});
-	router.add(u"settings"_q, {
-		.path = u"extera/chats"_q,
-		.action = SettingsSection{ ::Settings::ExteraChatsId() },
-	});
-	router.add(u"settings"_q, {
-		.path = u"extera/plugins"_q,
-		.action = SettingsSection{ ::Settings::ExteraPluginsId() },
-	});
-	router.add(u"settings"_q, {
-		.path = u"extera/plugins/engine"_q,
-		.action = SettingsSection{ ::Settings::ExteraPluginsEngineId() },
-	});
-	router.add(u"settings"_q, {
-		.path = u"extera/navigation"_q,
-		.action = SettingsSection{ ::Settings::ExteraNavigationId() },
-	});
-	router.add(u"settings"_q, {
-		.path = u"extera/aichat"_q,
-		.action = SettingsSection{ ::Settings::ExteraAiChatId() },
-	});
-	router.add(u"settings"_q, {
-		.path = u"extera/other"_q,
-		.action = SettingsSection{ ::Settings::ExteraOtherId() },
-	});
+	const auto exdSections = std::vector<std::pair<QString, ::Settings::Type>>{
+		{ QString(), ::Settings::ExteraId() },
+		{ u"/general"_q, ::Settings::ExteraGeneralId() },
+		{ u"/appearance"_q, ::Settings::ExteraAppearanceId() },
+		{ u"/chats"_q, ::Settings::ExteraChatsId() },
+		{ u"/plugins"_q, ::Settings::ExteraPluginsId() },
+		{ u"/plugins/engine"_q, ::Settings::ExteraPluginsEngineId() },
+		{ u"/navigation"_q, ::Settings::ExteraNavigationId() },
+		{ u"/aichat"_q, ::Settings::ExteraAiChatId() },
+		{ u"/other"_q, ::Settings::ExteraOtherId() },
+		{ u"/privacy"_q, ::Settings::ExteraPrivacyId() },
+		{ u"/network"_q, ::Settings::ExteraNetworkId() },
+		{ u"/updates"_q, ::Settings::ExteraUpdatesId() },
+		{ u"/support"_q, ::Settings::ExteraSupportId() },
+	};
+	for (const auto &prefix : { u"exd"_q, u"extera"_q }) {
+		for (const auto &[suffix, id] : exdSections) {
+			router.add(u"settings"_q, {
+				.path = prefix + suffix,
+				.action = SettingsSection{ id },
+			});
+		}
+	}
 
 	router.add(u"settings"_q, {
 		.path = u"notifications"_q,

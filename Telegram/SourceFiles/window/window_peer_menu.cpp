@@ -2011,6 +2011,15 @@ void Filler::fillHistoryActions() {
 
 void Filler::fillProfileActions() {
 	addTTLSubmenu(true);
+	if (_peer) {
+		auto items = std::vector<std::pair<QString, Fn<void()>>>();
+		Extera::Plugins::AddProfileMenuItems([&](QString text, Fn<void()> handler) {
+			items.emplace_back(std::move(text), std::move(handler));
+		}, _peer);
+		for (auto &[text, handler] : items) {
+			_addAction(text, std::move(handler), &st::menuIconBotCommands);
+		}
+	}
 	addSupportInfo();
 	addNewContact();
 	addShareContact();

@@ -68,6 +68,10 @@ struct SectionShow;
 struct SeparateId;
 } // namespace Window
 
+namespace Exd {
+class PortBar;
+} // namespace Exd
+
 namespace Dialogs::Stories {
 class List;
 struct Content;
@@ -221,6 +225,7 @@ private:
 		bool slideLeft,
 		crl::time duration);
 	void setupDownloadBar();
+	void setupExdPortBar();
 	void setupShortcuts();
 	void setupStories();
 	void setupSwipeBack();
@@ -385,6 +390,7 @@ private:
 	object_ptr<BottomButton> _updateTelegram = { nullptr };
 	object_ptr<BottomButton> _loadMoreChats = { nullptr };
 	std::unique_ptr<Ui::DownloadBar> _downloadBar;
+	std::unique_ptr<Exd::PortBar> _exdPortBar;
 	std::unique_ptr<Window::ConnectionState> _connecting;
 
 	Ui::Animations::Simple _scrollToAnimation;

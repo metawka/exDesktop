@@ -169,6 +169,66 @@ constexpr auto kPreviewPostsLimit = 3;
 	return nullptr;
 }
 
+struct ExdChatCount {
+	int count = -1;
+	crl::time received = 0;
+	mtpRequestId requestId = 0;
+	rpl::event_stream<int> updates;
+};
+
+[[nodiscard]] ExdChatCount &ExdChatCountFor(not_null<PeerData*> peer) {
+	static auto cache = base::flat_map<
+		std::pair<uint64, PeerId>,
+		std::unique_ptr<ExdChatCount>>();
+	const auto key = std::make_pair(peer->session().uniqueId(), peer->id);
+	auto &result = cache[key];
+	if (!result) {
+		result = std::make_unique<ExdChatCount>();
+	}
+	return *result;
+}
+
+[[nodiscard]] rpl::producer<int> ExdChatMessagesCount(
+		not_null<PeerData*> peer) {
+	auto &entry = ExdChatCountFor(peer);
+	const auto now = crl::now();
+	const auto fresh = (entry.count >= 0)
+		&& (now - entry.received < crl::time(60000));
+	if (!fresh && !entry.requestId) {
+		const auto api = &peer->session().api();
+		const auto raw = &entry;
+		entry.requestId = api->request(MTPmessages_GetHistory(
+			peer->input(),
+			MTP_int(0),
+			MTP_int(0),
+			MTP_int(0),
+			MTP_int(1),
+			MTP_int(0),
+			MTP_int(0),
+			MTP_long(0)
+		)).done([=](const MTPmessages_Messages &result) {
+			raw->requestId = 0;
+			raw->received = crl::now();
+			raw->count = result.match([](const MTPDmessages_messages &data) {
+				return int(data.vmessages().v.size());
+			}, [](const MTPDmessages_messagesSlice &data) {
+				return data.vcount().v;
+			}, [](const MTPDmessages_channelMessages &data) {
+				return data.vcount().v;
+			}, [&](const MTPDmessages_messagesNotModified &) {
+				return std::max(raw->count, 0);
+			});
+			raw->updates.fire_copy(raw->count);
+		}).fail([=] {
+			raw->requestId = 0;
+		}).send();
+	}
+	if (entry.count >= 0) {
+		return rpl::single(entry.count) | rpl::then(entry.updates.events());
+	}
+	return entry.updates.events();
+}
+
 [[nodiscard]] object_ptr<SearchEmpty> MakeSearchEmpty(
 		QWidget *parent,
 		SearchState state,
@@ -223,10 +283,35 @@ constexpr auto kPreviewPostsLimit = 3;
 			}
 		}
 	}
+	const auto countPeer = (waiting
+		&& !hashtag
+		&& state.inChat.history()
+		&& !state.inChat.topic()
+		&& !state.inChat.sublist())
+		? state.inChat.history()->peer.get()
+		: nullptr;
+	auto textValue = rpl::producer<TextWithEntities>();
+	if (countPeer) {
+		textValue = rpl::single(text) | rpl::then(
+			ExdChatMessagesCount(countPeer
+			) | rpl::filter([](int count) {
+				return count > 0;
+			}) | rpl::map([=](int count) {
+				auto result = text;
+				result.append("\n").append(
+					tr::lng_exd_search_chat_count(
+						tr::now,
+						lt_count_decimal,
+						count));
+				return result;
+			}));
+	} else {
+		textValue = rpl::single(std::move(text));
+	}
 	auto result = object_ptr<SearchEmpty>(
 		parent,
 		icon,
-		rpl::single(std::move(text)));
+		std::move(textValue));
 	if (suggestAllChats) {
 		result->handlerActivated(
 		) | rpl::on_next(resetSearchFilters, result->lifetime());

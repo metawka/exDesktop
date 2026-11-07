@@ -536,29 +536,14 @@ TopBar::TopBar(
 				const auto supporter = (kind == Kind::Donor)
 					|| (kind == Kind::Supporter)
 					|| (kind == Kind::Custom);
-				const auto invite = supporter
-					? tr::lng_exd_badge_invite_support(tr::now)
-					: tr::lng_exd_badge_invite_get(tr::now);
-				auto full = TextWithEntities{ text };
-				full.append(QChar('\n')).append(
-					Ui::Text::Link(invite, u"tg://donate"_q));
-				controller->showToast({
-					.text = std::move(full),
-					.filter = [=](const ClickHandlerPtr &, Qt::MouseButton) {
-						::Settings::ShowExteraSupportBox(controller);
-						return false;
-					},
-					.duration = crl::time(4000),
-				});
+				::Settings::ShowExteraBadgeBox(
+					controller,
+					peer,
+					text,
+					supporter);
 			};
 			if (Extera::PluginTrust::IsTrustedChannel(peer)) {
-				controller->showToast({
-					.text = { tr::lng_exd_badge_trusted(
-						tr::now,
-						lt_name,
-						name) },
-					.duration = crl::time(4000),
-				});
+				exdToast(tr::lng_exd_badge_trusted(tr::now, lt_name, name));
 				return;
 			}
 			if (!custom.isEmpty()

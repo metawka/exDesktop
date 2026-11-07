@@ -10,6 +10,11 @@ def get_plugins_dir() -> Optional[str]:
     return extera_host.PLUGINS_DIR or None
 
 
+def pick_file(callback: Callable, title: str = "", filters: str = "", multiple: bool = False) -> str:
+    import exd_picker
+    return exd_picker.pick(callback, title, filters, multiple)
+
+
 def _mkdirs(path: str) -> str:
     os.makedirs(path, exist_ok=True)
     return path

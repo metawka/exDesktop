@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "extera/extera_feed.h"
 #include "extera/extera_navigation.h"
 #include "extera/extera_streamer.h"
+#include "extera/extera_plugins_ui.h"
 #include "core/version.h"
 
 #include "apiwrap.h"
@@ -896,18 +897,27 @@ void MainMenu::setupMenu() {
 	}, streamer->lifetime());
 	tag("streamer");
 
-	addAction(
-		tr::lng_exd_ayu_ghost_mode(),
-		{ &st::menuIconStealth }
-	)->toggleOn(
-		Extera::GhostActiveValue()
-	)->toggledChanges(
-	) | rpl::filter([](bool enabled) {
-		return enabled != Extera::GhostActive();
-	}) | rpl::on_next([](bool enabled) {
-		Extera::SetGhostAll(enabled);
-	}, lifetime());
-	tag("ghost");
+	if (Extera::Bool(u"ayu_features"_q)) {
+		addAction(
+			tr::lng_exd_ayu_ghost_mode(),
+			{ &st::menuIconStealth }
+		)->toggleOn(
+			Extera::GhostActiveValue()
+		)->toggledChanges(
+		) | rpl::filter([](bool enabled) {
+			return enabled != Extera::GhostActive();
+		}) | rpl::on_next([](bool enabled) {
+			Extera::SetGhostAll(enabled);
+		}, lifetime());
+		tag("ghost");
+	}
+
+	Extera::Plugins::AddDrawerMenuItems([&](QString text, Fn<void()> handler) {
+		addAction(
+			rpl::single(std::move(text)),
+			{ &st::menuIconBotCommands }
+		)->setClickedCallback(std::move(handler));
+	});
 
 	_nightThemeToggle = addAction(
 		tr::lng_menu_night_mode(),

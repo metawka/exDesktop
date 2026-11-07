@@ -43,6 +43,7 @@
 #include "window/window_session_controller.h"
 #include "extera/extera_plugin_trust.h"
 #include "extera/exd_plugin_guard.h"
+#include "extera/exd_plugin_porter.h"
 #include "data/data_channel.h"
 #include "data/data_peer_values.h"
 #include "boxes/translate_box.h"
@@ -65,6 +66,8 @@
 #include <QtGui/QClipboard>
 #include <QtSvg/QSvgRenderer>
 #include <QtCore/QFileInfo>
+#include <QtCore/QDir>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QJsonObject>
 
 namespace Extera::Plugins {
@@ -328,6 +331,147 @@ void FillSettings(
 	Ui::AddSkip(container);
 }
 
+[[nodiscard]] QString DesktopOsName(QString os) {
+	if (os.isEmpty()) {
+#if defined Q_OS_WIN
+		os = u"windows"_q;
+#elif defined Q_OS_MAC
+		os = u"macos"_q;
+#else
+		os = u"linux"_q;
+#endif
+	}
+	if (os == u"windows"_q) {
+		return u"Windows"_q;
+	} else if (os == u"macos"_q) {
+		return u"macOS"_q;
+	} else if (os == u"linux"_q) {
+		return u"Linux"_q;
+	}
+	return os;
+}
+
+[[nodiscard]] QString PortedLabel(const QJsonObject &meta) {
+	const auto os = meta.value(u"desktop_os"_q).toString();
+	return os.isEmpty()
+		? tr::lng_exd_plugin_ported(tr::now)
+		: tr::lng_exd_plugin_ported_os(tr::now, lt_os, DesktopOsName(os));
+}
+
+[[nodiscard]] QJsonObject PluginPermissions(const QString &id) {
+	return Call(u"permissions"_q, QJsonObject{ { u"id"_q, id } }).toObject();
+}
+
+[[nodiscard]] bool HasPermissions(const QJsonObject &permissions) {
+	return !permissions.value(u"net"_q).toArray().isEmpty()
+		|| !permissions.value(u"paths"_q).toArray().isEmpty();
+}
+
+void ShowPartialStyled(
+	not_null<Window::SessionController*> controller,
+	const QJsonObject &info,
+	const QStringList &items);
+void AddColorPill(
+	not_null<Ui::GenericBox*> box,
+	const QString &text,
+	const style::icon &icon,
+	Fn<QColor()> color);
+[[nodiscard]] not_null<Ui::RoundButton*> AddPortButton(
+	not_null<Ui::GenericBox*> box,
+	rpl::producer<QString> text,
+	bool primary,
+	bool last);
+
+void ShowPartialBox(
+		not_null<Window::SessionController*> controller,
+		const QJsonObject &info,
+		const QStringList &items) {
+	ShowPartialStyled(controller, info, items);
+}
+
+void FillPermissions(
+		not_null<Ui::VerticalLayout*> container,
+		not_null<Window::SessionController*> controller,
+		const QString &id,
+		Fn<void()> refresh) {
+	const auto permissions = PluginPermissions(id);
+	if (!HasPermissions(permissions)) {
+		return;
+	}
+	Ui::AddSkip(container);
+	Ui::AddSubsectionTitle(container, tr::lng_exd_plugin_permissions());
+	const auto revoke = [=](QString kind, QString key, QString target) {
+		controller->show(Ui::MakeConfirmBox({
+			.text = tr::lng_exd_plugin_perm_revoke_sure(
+				tr::now,
+				lt_target,
+				target),
+			.confirmed = [=](Fn<void()> close) {
+				Call(u"revoke_permission"_q, QJsonObject{
+					{ u"id"_q, id },
+					{ u"kind"_q, kind },
+					{ u"key"_q, key },
+				});
+				close();
+				refresh();
+				notifyListChanged();
+			},
+			.confirmText = tr::lng_exd_plugin_perm_reset(),
+		}));
+	};
+	for (const auto &entry : permissions.value(u"net"_q).toArray()) {
+		const auto item = entry.toObject();
+		const auto key = item.value(u"key"_q).toString();
+		const auto allowed = (item.value(u"rule"_q).toString() == u"allow"_q);
+		const auto button = Settings::AddButtonWithLabel(
+			container,
+			rpl::single(key),
+			(allowed
+				? tr::lng_exd_plugin_perm_allowed()
+				: tr::lng_exd_plugin_perm_denied()),
+			st::settingsButtonNoIcon);
+		button->setClickedCallback([=] {
+			revoke(u"net"_q, key, key);
+		});
+	}
+	for (const auto &entry : permissions.value(u"paths"_q).toArray()) {
+		const auto key = entry.toObject().value(u"key"_q).toString();
+		const auto shown = QDir::toNativeSeparators(key);
+		const auto button = Settings::AddButtonWithLabel(
+			container,
+			rpl::single(QFileInfo(key).fileName().isEmpty()
+				? shown
+				: QFileInfo(key).fileName()),
+			tr::lng_exd_plugin_perm_folder(),
+			st::settingsButtonNoIcon);
+		button->setClickedCallback([=] {
+			revoke(u"path"_q, key, shown);
+		});
+	}
+	const auto all = container->add(object_ptr<Ui::SettingsButton>(
+		container,
+		tr::lng_exd_plugin_perm_reset_all(),
+		st::settingsAttentionButton));
+	all->setClickedCallback([=] {
+		controller->show(Ui::MakeConfirmBox({
+			.text = tr::lng_exd_plugin_perm_reset_all_sure(),
+			.confirmed = [=](Fn<void()> close) {
+				Call(u"revoke_permission"_q, QJsonObject{
+					{ u"id"_q, id },
+					{ u"kind"_q, u"all"_q },
+				});
+				close();
+				refresh();
+				notifyListChanged();
+			},
+			.confirmText = tr::lng_exd_plugin_perm_reset(),
+			.confirmStyle = &st::attentionBoxButton,
+		}));
+	});
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, tr::lng_exd_plugin_perm_about());
+}
+
 [[nodiscard]] QStringList PinnedPlugins() {
 	return String(u"plugins_pinned"_q).split(',', Qt::SkipEmptyParts);
 }
@@ -418,9 +562,62 @@ constexpr auto kPuzzleSvg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 
 }
 
 [[nodiscard]] TextWithEntities WithLinks(const QString &text) {
-	return TextUtilities::ParseEntities(
+	auto result = TextUtilities::ParseEntities(
 		text,
-		TextParseLinks | TextParseMentions | TextParseHashtags);
+		TextParseLinks
+			| TextParseMentions
+			| TextParseHashtags
+			| TextParseMarkdown);
+	static const auto kLink = QRegularExpression(
+		u"\\[([^\\]\\n]+)\\]\\(((?:https?://|tg://)[^\\s)]+)\\)"_q);
+	auto matches = std::vector<QRegularExpressionMatch>();
+	auto iterator = kLink.globalMatch(result.text);
+	while (iterator.hasNext()) {
+		matches.push_back(iterator.next());
+	}
+	for (auto i = int(matches.size()) - 1; i >= 0; --i) {
+		const auto &match = matches[i];
+		const auto start = int(match.capturedStart());
+		const auto end = int(match.capturedEnd());
+		const auto label = match.captured(1);
+		const auto url = match.captured(2);
+		const auto delta = int(label.size()) - (end - start);
+		auto entities = EntitiesInText();
+		for (const auto &entity : result.entities) {
+			const auto from = entity.offset();
+			const auto till = from + entity.length();
+			if (from >= start && till <= end) {
+				continue;
+			} else if (from >= end) {
+				entities.push_back(EntityInText(
+					entity.type(),
+					from + delta,
+					entity.length(),
+					entity.data()));
+			} else if (from <= start && till >= end) {
+				entities.push_back(EntityInText(
+					entity.type(),
+					from,
+					entity.length() + delta,
+					entity.data()));
+			} else if (till <= start) {
+				entities.push_back(entity);
+			}
+		}
+		result.text.replace(start, end - start, label);
+		entities.push_back(EntityInText(
+			EntityType::CustomUrl,
+			start,
+			int(label.size()),
+			url));
+		std::sort(entities.begin(), entities.end(), [](
+				const EntityInText &a,
+				const EntityInText &b) {
+			return a.offset() < b.offset();
+		});
+		result.entities = std::move(entities);
+	}
+	return result;
 }
 
 void SetupLinks(
@@ -673,6 +870,19 @@ void ShowPluginSettings(
 			FillSettings(list, controller, id);
 			list->resizeToWidth(content->width());
 		}, box->lifetime());
+		const auto perms = content->add(
+			object_ptr<Ui::VerticalLayout>(content));
+		const auto refreshPerms = box->lifetime().make_state<Fn<void()>>();
+		*refreshPerms = [=] {
+			perms->clear();
+			FillPermissions(perms, controller, id, [=] {
+				(*refreshPerms)();
+			});
+			perms->resizeToWidth(content->width());
+		};
+		FillPermissions(perms, controller, id, [=] {
+			(*refreshPerms)();
+		});
 		box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 	}));
 }
@@ -782,16 +992,50 @@ void FillPluginsList(
 			}, icon->lifetime());
 			const auto description = info.value(u"description"_q).toString();
 			if (!description.isEmpty() && !Bool(u"plugins_compact_view"_q)) {
-				card->add(
+				const auto about = card->add(
+					object_ptr<Ui::FlatLabel>(card, st::boxLabel),
+					st::exteraPluginDescriptionPadding);
+				about->setMarkedText(WithLinks(description));
+			}
+			const auto unsupported = info.value(u"unsupported"_q).toArray();
+			const auto desktopMark = info.value(u"desktop"_q).toBool();
+			if (desktopMark || !unsupported.isEmpty()) {
+				auto items = QStringList();
+				for (const auto &value : unsupported) {
+					items.push_back(value.toString());
+				}
+				auto text = TextWithEntities();
+				if (desktopMark) {
+					text.append(info.value(u"ported_from"_q).toString().isEmpty()
+						? tr::lng_exd_plugin_desktop(tr::now)
+						: PortedLabel(info));
+				} else {
+					text.append(Ui::Text::Link(
+						tr::lng_exd_plugin_partial(tr::now)));
+				}
+				const auto marks = card->add(
 					object_ptr<Ui::FlatLabel>(
 						card,
-						rpl::single(description),
-						st::boxLabel),
+						rpl::single(text),
+						st::exteraSubtitle),
 					st::exteraPluginDescriptionPadding);
+				marks->setClickHandlerFilter([=](
+						const ClickHandlerPtr &,
+						Qt::MouseButton) {
+					ShowPartialBox(controller, info, items);
+					return false;
+				});
 			}
 			const auto error = info.value(u"error"_q).toString();
 			const auto developer = Bool(u"plugins_developer_mode"_q);
-			if (!error.isEmpty()) {
+			if (info.value(u"installing"_q).toBool()) {
+				card->add(
+					object_ptr<Ui::FlatLabel>(
+						card,
+						tr::lng_exd_plugin_installing_deps(),
+						st::exteraAbout),
+					st::exteraPluginDescriptionPadding);
+			} else if (!error.isEmpty()) {
 				const auto label = card->add(
 					object_ptr<Ui::FlatLabel>(
 						card,
@@ -839,7 +1083,13 @@ void FillPluginsList(
 					SetPluginPinned(id, !isPinned);
 					notifyListChanged();
 				});
-			if (info.value(u"has_settings"_q).toBool()) {
+			if (Exd::PluginPorter::Suggested(info)) {
+				addAction(st::menuIconTranslate, [=] {
+					Exd::PluginPorter::Start(controller, path);
+				});
+			}
+			if (info.value(u"has_settings"_q).toBool()
+				|| HasPermissions(PluginPermissions(id))) {
 				addAction(st::menuIconSettings, [=] {
 					ShowPluginSettings(controller, id);
 				});
@@ -1607,7 +1857,7 @@ void AddDescription(
 	});
 }
 
-void AddTopActions(
+Fn<void(Fn<void()>)> AddTopActions(
 		not_null<Ui::GenericBox*> box,
 		not_null<Window::SessionController*> controller,
 		const QString &path,
@@ -1623,7 +1873,7 @@ void AddTopActions(
 		p.setBrush(st::windowBgOver);
 		p.drawRoundedRect(actions->rect(), size / 2., size / 2.);
 	}, actions->lifetime());
-	const auto addButton = [&](int index, const style::icon &icon, Fn<void()> callback) {
+	const auto addButton = [=](int index, const style::icon &icon, Fn<void()> callback) {
 		const auto button = Ui::CreateChild<Ui::AbstractButton>(actions);
 		button->setGeometry(index * size, 0, size, size);
 		button->paintRequest() | rpl::on_next([=, &icon] {
@@ -1631,6 +1881,7 @@ void AddTopActions(
 			icon.paintInCenter(p, button->rect());
 		}, button->lifetime());
 		button->setClickedCallback(std::move(callback));
+		button->show();
 	};
 	auto index = 0;
 	if (!description.isEmpty()) {
@@ -1657,9 +1908,76 @@ void AddTopActions(
 		actions->raise();
 	}, actions->lifetime());
 	crl::on_main(actions, [=] { actions->raise(); });
+	const auto reported = actions->lifetime().make_state<bool>(false);
+	const auto weak = base::make_weak(actions);
+	return [=](Fn<void()> report) {
+		if (!weak || *reported) {
+			return;
+		}
+		*reported = true;
+		actions->resize(size * (count + 1), size);
+		addButton(count, st::exteraTopActionReport, std::move(report));
+		const auto width = box->width();
+		const auto &margin = st::exteraTopActionsMargin;
+		actions->moveToLeft(
+			width - margin.right() - actions->width(),
+			margin.top(),
+			width);
+		actions->update();
+		actions->raise();
+	};
 }
 
 } // namespace
+
+void AddDesktopPill(not_null<Ui::GenericBox*> box, QString ported) {
+	const auto text = tr::lng_exd_plugin_desktop(tr::now);
+	const auto &font = st::exteraInstallPillFont;
+	const auto &icon = st::exteraInstallPuzzle;
+	const auto padding = st::exteraInstallPillPadding;
+	const auto width = padding.left()
+		+ icon.width()
+		+ st::exteraInstallPillSkip
+		+ font->width(text)
+		+ padding.right();
+	const auto widget = box->addRow(
+		object_ptr<Ui::RpWidget>(box),
+		st::exteraInstallPillMargin);
+	widget->resize(width, st::exteraInstallPillHeight);
+	widget->paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(widget);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto color = st::boxTextFgGood->c;
+		auto bg = color;
+		bg.setAlphaF(0.16);
+		const auto left = (widget->width() - width) / 2;
+		const auto rect = QRect(left, 0, width, widget->height());
+		p.setPen(Qt::NoPen);
+		p.setBrush(bg);
+		p.drawRoundedRect(rect, rect.height() / 2., rect.height() / 2.);
+		const auto iconLeft = left + padding.left();
+		icon.paint(
+			p,
+			QPoint(iconLeft, (rect.height() - icon.height()) / 2),
+			widget->width(),
+			color);
+		p.setPen(color);
+		p.setFont(font);
+		p.drawText(
+			iconLeft + icon.width() + st::exteraInstallPillSkip,
+			(rect.height() - font->height) / 2 + font->ascent,
+			text);
+	}, widget->lifetime());
+	if (!ported.isEmpty()) {
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				rpl::single(ported),
+				st::exteraInstallVersion),
+			st::exteraInstallVersionPadding,
+			style::al_top);
+	}
+}
 
 void AddSourcePill(
 		not_null<Ui::GenericBox*> box,
@@ -1859,6 +2177,19 @@ public:
 			font->height + style::ConvertScale(6));
 	}
 
+	void setContent(QString text, QColor color) {
+		if (_text == text && _color == color) {
+			return;
+		}
+		_text = std::move(text);
+		_color = color;
+		const auto &font = st::normalFont;
+		resize(
+			font->width(_text) + style::ConvertScale(16),
+			font->height + style::ConvertScale(6));
+		update();
+	}
+
 protected:
 	void paintEvent(QPaintEvent *e) override {
 		auto p = QPainter(this);
@@ -1874,8 +2205,8 @@ protected:
 	}
 
 private:
-	const QString _text;
-	const QColor _color;
+	QString _text;
+	QColor _color;
 
 };
 
@@ -2279,10 +2610,19 @@ void ShowInstallBoxResolved(
 			label->setMarkedText(line, context);
 			SetupLinks(label, box);
 		}
-		AddSourcePill(box, controller, trusted);
+		if (meta.value(u"ported_from"_q).toString().isEmpty()) {
+			AddSourcePill(box, controller, trusted);
+		}
+		if (meta.value(u"desktop"_q).toBool()) {
+			AddDesktopPill(
+				box,
+				meta.value(u"ported_from"_q).toString().isEmpty()
+					? QString()
+					: PortedLabel(meta));
+		}
 
 		const auto description = meta.value(u"description"_q).toString();
-		AddTopActions(box, controller, path, description);
+		const auto addReport = AddTopActions(box, controller, path, description);
 		if (!description.isEmpty()) {
 			AddDescription(box, WithLinks(description), context);
 		}
@@ -2324,6 +2664,8 @@ void ShowInstallBoxResolved(
 				const auto high = report.ok && (report.level == u"high"_q);
 				if (high) {
 					Exd::PluginGuard::MarkBlocked(report.sha256);
+				} else if (report.ok) {
+					Exd::PluginGuard::Unblock(report.sha256);
 				}
 				if (*installButton) {
 					(*installButton)->setDisabled(high);
@@ -2334,25 +2676,10 @@ void ShowInstallBoxResolved(
 						: tr::lng_extera_plugins_install(tr::now);
 				}
 				if (high || report.level == u"medium"_q) {
-					const auto button = guardBox->add(
-						object_ptr<Ui::RoundButton>(
-							guardBox,
-							tr::lng_exd_guard_report(),
-							st::exteraInstallCancel),
-						st::exteraInstallCancelMargin);
-					button->setFullRadius(true);
-					button->setTextTransform(
-						Ui::RoundButtonTextTransform::NoTransform);
-					guardBox->widthValue() | rpl::on_next([=](int width) {
-						const auto margin = st::exteraInstallButtonMargin;
-						button->setFullWidth(
-							width - margin.left() - margin.right());
-					}, button->lifetime());
-					button->setClickedCallback([=] {
+					addReport([=] {
 						SendGuardReport(controller, path, report);
 						box->closeBox();
 					});
-					button->show();
 				}
 			});
 		};
@@ -2390,7 +2717,11 @@ void ShowInstallBoxResolved(
 					box,
 					tr::lng_close(),
 					st::exteraInstallCancel),
-				st::exteraInstallButtonMargin);
+				style::margins(
+					st::exteraInstallButtonMargin.left(),
+					st::exteraInstallButtonMargin.top(),
+					st::exteraInstallButtonMargin.right(),
+					st::exteraInstallCancelMargin.bottom()));
 			close->setFullRadius(true);
 			close->setTextTransform(
 				Ui::RoundButtonTextTransform::NoTransform);
@@ -2411,6 +2742,14 @@ void ShowInstallBoxResolved(
 				st::exteraInstallButton),
 			st::exteraInstallButtonMargin);
 		*installButton = install;
+		const auto port = Exd::PluginPorter::Suggested(meta)
+			? box->addRow(
+				object_ptr<Ui::RoundButton>(
+					box,
+					tr::lng_exd_port_action(),
+					st::exteraInstallCancel),
+				st::exteraInstallCancelMargin)
+			: nullptr;
 		const auto cancel = box->addRow(
 			object_ptr<Ui::RoundButton>(
 				box,
@@ -2421,11 +2760,28 @@ void ShowInstallBoxResolved(
 			button->setFullRadius(true);
 			button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 		}
+		if (port) {
+			port->setFullRadius(true);
+			port->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
+			port->setClickedCallback([=] {
+				const auto target = path;
+				const auto weakController = base::make_weak(controller);
+				crl::on_main([=] {
+					if (const auto strong = weakController.get()) {
+						Exd::PluginPorter::Start(strong, target);
+					}
+				});
+				box->closeBox();
+			});
+		}
 		box->widthValue() | rpl::on_next([=](int width) {
 			const auto margin = st::exteraInstallButtonMargin;
 			const auto full = width - margin.left() - margin.right();
 			install->setFullWidth(full);
 			cancel->setFullWidth(full);
+			if (port) {
+				port->setFullWidth(full);
+			}
 		}, install->lifetime());
 		cancel->setClickedCallback([=] { box->closeBox(); });
 		if (guardBox && runGuard) {
@@ -2439,10 +2795,14 @@ void ShowInstallBoxResolved(
 			const auto info = Call(u"install"_q, QJsonObject{
 				{ u"path"_q, path },
 			}).toObject();
+			const auto window = controller;
+			const auto updated = exists;
 			box->closeBox();
 			notifyListChanged();
-			controller->showToast(info.value(u"error"_q).toString().isEmpty()
-				? (exists
+			window->showToast(info.value(u"installing"_q).toBool()
+				? tr::lng_exd_plugin_installing_deps_toast(tr::now, lt_name, name)
+				: info.value(u"error"_q).toString().isEmpty()
+				? (updated
 					? tr::lng_extera_plugins_updated(tr::now, lt_name, name)
 					: tr::lng_extera_plugins_installed_name(
 						tr::now,
@@ -2516,19 +2876,6 @@ void ShowSourceBox(
 	}));
 }
 
-void ShowUnknownBlockedBox(
-		not_null<Window::SessionController*> controller) {
-	controller->show(Ui::MakeConfirmBox({
-		.text = tr::lng_exd_plugin_unknown_blocked(),
-		.confirmed = [=](Fn<void()> close) {
-			close();
-			UrlClickHandler::Open(u"tg://settings/extera/plugins"_q);
-		},
-		.confirmText = tr::lng_extera_safe_mode_open(),
-		.title = tr::lng_extera_plugins_unknown_source(),
-	}));
-}
-
 void ShowUnknownSourcesWarning(
 		not_null<Window::SessionController*> controller,
 		Fn<void(bool)> done) {
@@ -2541,14 +2888,42 @@ void ShowUnknownSourcesWarning(
 			int baseX = 0;
 		};
 		const auto state = box->lifetime().make_state<State>();
-		box->setTitle(tr::lng_extera_plugins_unknown());
+		box->setStyle(st::exteraInstallBox);
+		box->setWidth(st::exteraInstallWidth);
+		box->setNoContentMargin(true);
 		box->addRow(
 			object_ptr<Ui::FlatLabel>(
 				box,
-				tr::lng_exd_unknown_warning(tr::rich),
-				st::boxLabel),
-			st::boxRowPadding);
-		const auto confirm = box->addButton(
+				tr::lng_extera_plugins_unknown(),
+				st::exteraInstallName),
+			QMargins(22, 28, 22, 0),
+			style::al_top);
+		AddColorPill(
+			box,
+			tr::lng_extera_plugins_unknown_source(tr::now),
+			st::exteraInstallShield,
+			[] { return st::historyPeer1UserpicBg->c; });
+		AddGuardCard(
+			box,
+			tr::lng_exd_unknown_risk_title(tr::now),
+			QString(),
+			st::historyPeer1UserpicBg->c,
+			{
+				tr::lng_exd_unknown_risk_account(tr::now),
+				tr::lng_exd_unknown_risk_check(tr::now),
+			});
+		AddGuardCard(
+			box,
+			tr::lng_exd_unknown_protect_title(tr::now),
+			QString(),
+			st::boxTextFgGood->c,
+			{
+				QString::fromUtf8("\xE2\x80\xA2 ") + tr::lng_exd_unknown_protect_guard(tr::now),
+				QString::fromUtf8("\xE2\x80\xA2 ") + tr::lng_exd_unknown_protect_sandbox(tr::now),
+				QString::fromUtf8("\xE2\x80\xA2 ") + tr::lng_exd_unknown_protect_permissions(tr::now),
+			});
+		const auto confirm = AddPortButton(
+			box,
 			state->left.value() | rpl::map([](int left) {
 				return (left > 0)
 					? tr::lng_exd_unknown_allow_wait(
@@ -2557,8 +2932,8 @@ void ShowUnknownSourcesWarning(
 						QString::number(left))
 					: tr::lng_extera_plugins_unknown_allow(tr::now);
 			}),
-			[=] {},
-			st::attentionBoxButton);
+			true,
+			false);
 		confirm->setClickedCallback([=] {
 			if (state->left.current() > 0) {
 				if (!state->shake.animating()) {
@@ -2579,7 +2954,9 @@ void ShowUnknownSourcesWarning(
 			done(true);
 			box->closeBox();
 		});
-		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+		AddPortButton(box, tr::lng_cancel(), false, true)->setClickedCallback([=] {
+			box->closeBox();
+		});
 		state->timer.setCallback([=] {
 			const auto left = state->left.current() - 1;
 			state->left = std::max(left, 0);
@@ -2631,6 +3008,8 @@ void RunGuard(
 			});
 			notifyListChanged();
 			strong->showToast(tr::lng_exd_guard_disabled(tr::now));
+		} else {
+			Exd::PluginGuard::Unblock(report.sha256);
 		}
 		ShowGuardAnalysis(strong, path, report);
 	});
@@ -2640,12 +3019,25 @@ void ShowInstallBox(
 		not_null<Window::SessionController*> controller,
 		const QString &path,
 		bool trusted) {
-	if (Exd::PluginGuard::IsBlocked(Exd::PluginGuard::FileHash(path))) {
-		ShowInstallBoxResolved(
-			controller,
-			path,
-			false,
-			tr::lng_exd_guard_blocked_before(tr::now));
+	if (const auto hash = Exd::PluginGuard::FileHash(path);
+		Exd::PluginGuard::IsBlocked(hash)) {
+		const auto weak = base::make_weak(controller);
+		Exd::PluginGuard::Scan(path, [=](Exd::PluginGuard::Report report) {
+			const auto strong = weak.get();
+			if (!strong) {
+				return;
+			}
+			if (report.ok && report.level != u"high"_q) {
+				Exd::PluginGuard::Unblock(hash);
+				ShowInstallBox(strong, path, trusted);
+				return;
+			}
+			ShowInstallBoxResolved(
+				strong,
+				path,
+				false,
+				tr::lng_exd_guard_blocked_before(tr::now));
+		});
 		return;
 	}
 	const auto meta = Call(u"metadata"_q, QJsonObject{
@@ -2687,7 +3079,18 @@ void ShowInstallBox(
 		} else if (Extera::Bool(u"plugins_unknown_sources"_q)) {
 			ShowGuarded(strong, path, false);
 		} else {
-			ShowUnknownBlockedBox(strong);
+			const auto again = base::make_weak(strong);
+			ShowUnknownSourcesWarning(strong, [=](bool allowed) {
+				const auto controller = again.get();
+				if (!allowed || !controller) {
+					return;
+				}
+				Config::Instance().setBool(u"plugins_unknown_sources"_q, true);
+				Call(u"unknown_sources"_q, QJsonObject{
+					{ u"enabled"_q, true },
+				});
+				ShowGuarded(controller, path, false);
+			});
 		}
 	});
 }
@@ -2696,7 +3099,7 @@ void ChooseAndInstall(not_null<Window::SessionController*> controller) {
 	FileDialog::GetOpenPath(
 		Core::App().getFileDialogParent(),
 		tr::lng_extera_plugins_install(tr::now),
-		u"exDesktop Plugin (*.plugin);;Python (*.py)"_q,
+		u"exDesktop Plugin (*.plugin *.elyx *.eaf);;Python (*.py)"_q,
 		[=](FileDialog::OpenResult &&result) {
 			if (!result.paths.isEmpty()) {
 				ShowInstallBox(controller, result.paths.front(), false);
@@ -2721,6 +3124,37 @@ void AddChatMenuItems(
 	}
 }
 
+void AddProfileMenuItems(
+		const Fn<void(QString, Fn<void()>)> &add,
+		not_null<PeerData*> peer) {
+	if (!Started()) {
+		return;
+	}
+	const auto dialog = DialogId(peer);
+	for (const auto &item : MenuItems(u"profile_action_menu"_q)) {
+		const auto id = item.id;
+		add(item.text, [=] {
+			ClickMenuItem(id, QJsonObject{
+				{ u"peer"_q, double(dialog) },
+			});
+		});
+	}
+}
+
+void AddDrawerMenuItems(const Fn<void(QString, Fn<void()>)> &add) {
+	if (!Started()) {
+		return;
+	}
+	for (const auto type : { u"drawer_menu"_q, u"main_menu"_q }) {
+		for (const auto &item : MenuItems(type)) {
+			const auto id = item.id;
+			add(item.text, [=] {
+				ClickMenuItem(id, QJsonObject());
+			});
+		}
+	}
+}
+
 void AddMessageMenuItems(
 		not_null<Ui::PopupMenu*> menu,
 		not_null<HistoryItem*> item) {
@@ -2740,6 +3174,1211 @@ void AddMessageMenuItems(
 			});
 		}, &st::menuIconBotCommands);
 	}
+}
+
+namespace {
+
+// Port
+
+[[nodiscard]] QString PortServiceName(int provider) {
+	using Phrase = tr::phrase<>;
+	static const auto names = std::array<const Phrase*, 10>{
+		&tr::lng_exd_port_provider_none,
+		&tr::lng_exd_port_provider_openai,
+		&tr::lng_exd_port_provider_anthropic,
+		&tr::lng_exd_port_provider_openrouter,
+		&tr::lng_exd_port_provider_groq,
+		&tr::lng_exd_port_provider_deepseek,
+		&tr::lng_exd_port_provider_ollama,
+		&tr::lng_exd_port_provider_lmstudio,
+		&tr::lng_exd_port_provider_custom,
+		&tr::lng_exd_port_provider_gemini,
+	};
+	return (provider >= 0 && provider < int(names.size()))
+		? (*names[provider])(tr::now)
+		: QString();
+}
+
+[[nodiscard]] QString PortSeconds(int ms) {
+	return tr::lng_exd_port_sec(
+		tr::now,
+		lt_seconds,
+		QString::number(std::max(ms, 0) / 1000));
+}
+
+void AddColorPill(
+		not_null<Ui::GenericBox*> box,
+		const QString &text,
+		const style::icon &icon,
+		Fn<QColor()> color) {
+	const auto &font = st::exteraInstallPillFont;
+	const auto padding = st::exteraInstallPillPadding;
+	const auto width = padding.left()
+		+ icon.width()
+		+ st::exteraInstallPillSkip
+		+ font->width(text)
+		+ padding.right();
+	const auto widget = box->addRow(
+		object_ptr<Ui::RpWidget>(box),
+		st::exteraInstallPillMargin);
+	widget->resize(width, st::exteraInstallPillHeight);
+	widget->paintRequest() | rpl::on_next([=, &icon] {
+		auto p = QPainter(widget);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto fg = color();
+		auto bg = fg;
+		bg.setAlphaF(0.16);
+		const auto left = (widget->width() - width) / 2;
+		const auto rect = QRect(left, 0, width, widget->height());
+		p.setPen(Qt::NoPen);
+		p.setBrush(bg);
+		p.drawRoundedRect(rect, rect.height() / 2., rect.height() / 2.);
+		const auto iconLeft = left + padding.left();
+		icon.paint(
+			p,
+			QPoint(iconLeft, (rect.height() - icon.height()) / 2),
+			widget->width(),
+			fg);
+		p.setPen(fg);
+		p.setFont(font);
+		p.drawText(
+			iconLeft + icon.width() + st::exteraInstallPillSkip,
+			(rect.height() - font->height) / 2 + font->ascent,
+			text);
+	}, widget->lifetime());
+}
+
+void AddPortHeader(
+		not_null<Ui::GenericBox*> box,
+		not_null<Window::SessionController*> controller,
+		const QJsonObject &meta) {
+	box->setStyle(st::exteraInstallBox);
+	box->setWidth(st::exteraInstallWidth);
+	box->setNoContentMargin(true);
+	AddInstallIcon(box, controller, meta.value(u"icon"_q).toString());
+	box->addRow(
+		object_ptr<Ui::FlatLabel>(
+			box,
+			rpl::single(meta.value(u"name"_q).toString()),
+			st::exteraInstallName),
+		st::exteraInstallNamePadding,
+		style::al_top);
+	auto line = QStringList();
+	if (const auto version = meta.value(u"version"_q).toString();
+		!version.isEmpty()) {
+		line.push_back(tr::lng_extera_plugins_version(tr::now)
+			+ ' '
+			+ version);
+	}
+	if (const auto author = meta.value(u"author"_q).toString();
+		!author.isEmpty()) {
+		line.push_back(author);
+	}
+	if (!line.isEmpty()) {
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				rpl::single(line.join(QString::fromUtf8(" \xE2\x80\xA2 "))),
+				st::exteraInstallVersion),
+			st::exteraInstallVersionPadding,
+			style::al_top);
+	}
+}
+
+[[nodiscard]] not_null<Ui::RoundButton*> AddPortButton(
+		not_null<Ui::GenericBox*> box,
+		rpl::producer<QString> text,
+		bool primary,
+		bool last) {
+	const auto button = box->addRow(
+		object_ptr<Ui::RoundButton>(
+			box,
+			std::move(text),
+			primary ? st::exteraInstallButton : st::exteraInstallCancel),
+		primary
+			? st::exteraInstallButtonMargin
+			: last
+			? st::exteraInstallCancelMargin
+			: style::margins(
+				st::exteraInstallCancelMargin.left(),
+				st::exteraInstallCancelMargin.top(),
+				st::exteraInstallCancelMargin.right(),
+				0));
+	button->setFullRadius(true);
+	button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
+	box->widthValue() | rpl::on_next([=](int width) {
+		const auto margin = st::exteraInstallButtonMargin;
+		button->setFullWidth(width - margin.left() - margin.right());
+	}, button->lifetime());
+	return button;
+}
+
+void AddPortStep(
+		not_null<Ui::VerticalLayout*> card,
+		const QString &title,
+		const QString &status,
+		QColor color,
+		const QStringList &details) {
+	const auto head = card->add(
+		object_ptr<Ui::FixedHeightWidget>(card, style::ConvertScale(34)),
+		QMargins(st::exteraInstallCardPadding.left(), 4, st::exteraInstallCardPadding.left(), 0));
+	const auto label = Ui::CreateChild<Ui::FlatLabel>(
+		head,
+		title,
+		st::exteraThreatTitle);
+	const auto chip = status.isEmpty()
+		? nullptr
+		: Ui::CreateChild<GuardChip>(head, status, color);
+	head->widthValue() | rpl::on_next([=](int width) {
+		const auto chipWidth = chip ? (chip->width() + 8) : 0;
+		label->resizeToWidth(width - chipWidth);
+		label->moveToLeft(0, (head->height() - label->height()) / 2, width);
+		if (chip) {
+			chip->moveToRight(0, (head->height() - chip->height()) / 2, width);
+		}
+	}, head->lifetime());
+	label->show();
+	if (chip) {
+		chip->show();
+	}
+	head->show();
+	for (const auto &line : details) {
+		const auto text = card->add(
+			object_ptr<Ui::FlatLabel>(
+				card,
+				rpl::single(line),
+				st::exteraThreatAbout),
+			QMargins(st::exteraInstallCardPadding.left(), 0, st::exteraInstallCardPadding.left(), 4));
+		text->setSelectable(true);
+		text->show();
+	}
+}
+
+struct PortStepView {
+	GuardChip *chip = nullptr;
+	Ui::SlideWrap<Ui::FlatLabel> *details = nullptr;
+	std::shared_ptr<rpl::variable<QString>> text;
+};
+
+struct PortStepsView {
+	PortStepView prepare;
+	PortStepView model;
+	PortStepView check;
+};
+
+[[nodiscard]] PortStepView AddPortStepView(
+		not_null<Ui::VerticalLayout*> card,
+		const QString &title) {
+	auto result = PortStepView{
+		.text = std::make_shared<rpl::variable<QString>>(),
+	};
+	const auto left = st::exteraInstallCardPadding.left();
+	const auto head = card->add(
+		object_ptr<Ui::FixedHeightWidget>(card, style::ConvertScale(34)),
+		QMargins(left, 4, left, 0));
+	const auto label = Ui::CreateChild<Ui::FlatLabel>(
+		head,
+		title,
+		st::exteraThreatTitle);
+	const auto chip = Ui::CreateChild<GuardChip>(
+		head,
+		tr::lng_exd_port_step_pending(tr::now),
+		st::windowSubTextFg->c);
+	rpl::combine(
+		head->widthValue(),
+		chip->widthValue()
+	) | rpl::on_next([=](int width, int chipWidth) {
+		label->resizeToWidth(width - chipWidth - 8);
+		label->moveToLeft(0, (head->height() - label->height()) / 2, width);
+		chip->moveToRight(0, (head->height() - chip->height()) / 2, width);
+	}, head->lifetime());
+	label->show();
+	chip->show();
+	head->show();
+	const auto details = card->add(
+		object_ptr<Ui::SlideWrap<Ui::FlatLabel>>(
+			card,
+			object_ptr<Ui::FlatLabel>(
+				card,
+				result.text->value(),
+				st::exteraThreatAbout),
+			QMargins(left, 0, left, 4)));
+	details->entity()->setSelectable(true);
+	details->toggle(false, anim::type::instant);
+	result.chip = chip;
+	result.details = details;
+	return result;
+}
+
+void UpdatePortStep(
+		const PortStepView &view,
+		const QString &status,
+		QColor color,
+		const QStringList &lines) {
+	view.chip->setContent(status, color);
+	const auto text = lines.join(u"\n"_q);
+	if (view.text->current() != text) {
+		*view.text = text;
+	}
+	view.details->toggle(!text.isEmpty(), anim::type::instant);
+}
+
+void UpdatePortSteps(
+		const PortStepsView &views,
+		const Exd::PluginPorter::Progress &progress,
+		int waiting) {
+	using Stage = Exd::PluginPorter::Progress::Stage;
+	const auto good = st::boxTextFgGood->c;
+	const auto active = st::windowActiveTextFg->c;
+	const auto muted = st::windowSubTextFg->c;
+	UpdatePortStep(
+		views.prepare,
+		tr::lng_exd_port_step_done(tr::now),
+		good,
+		{ tr::lng_exd_port_step_prepare_info(
+			tr::now,
+			lt_hints,
+			QString::number(progress.hints.size()),
+			lt_sections,
+			progress.sections.isEmpty()
+				? u"0"_q
+				: progress.sections.join(u", "_q)) });
+	const auto requesting = (progress.stage == Stage::Requesting)
+		|| (progress.stage == Stage::Fixing);
+	auto model = QStringList();
+	if (progress.attempt > 0) {
+		model.push_back(tr::lng_exd_port_step_attempt(
+			tr::now,
+			lt_attempt,
+			QString::number(progress.attempt),
+			lt_total,
+			QString::number(progress.attempts)));
+	}
+	if (requesting) {
+		model.push_back(tr::lng_exd_port_step_waiting_for(
+			tr::now,
+			lt_time,
+			PortSeconds(waiting)));
+	} else if (progress.elapsed > 0) {
+		model.push_back(tr::lng_exd_port_step_answered(
+			tr::now,
+			lt_time,
+			PortSeconds(progress.elapsed)));
+	}
+	if (!progress.requested.isEmpty()) {
+		model.push_back(tr::lng_exd_port_docs_requested(
+			tr::now,
+			lt_list,
+			progress.requested.join(u", "_q)));
+	}
+	UpdatePortStep(
+		views.model,
+		requesting
+			? tr::lng_exd_port_step_active(tr::now)
+			: tr::lng_exd_port_step_done(tr::now),
+		requesting ? active : good,
+		model);
+	auto check = QStringList();
+	if (progress.fixed > 0) {
+		check.push_back(tr::lng_exd_port_fixed(
+			tr::now,
+			lt_value,
+			QString::number(progress.fixed)));
+	}
+	for (const auto &error : progress.errors.mid(0, 3)) {
+		check.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + error);
+	}
+	const auto checking = (progress.stage == Stage::Checking);
+	const auto fixing = (progress.stage == Stage::Fixing);
+	UpdatePortStep(
+		views.check,
+		checking
+			? tr::lng_exd_port_step_active(tr::now)
+			: fixing
+			? tr::lng_exd_port_step_fixing(tr::now)
+			: tr::lng_exd_port_step_pending(tr::now),
+		(checking || fixing) ? active : muted,
+		check);
+}
+
+void ShowPortResult(
+		not_null<Window::SessionController*> controller,
+		const QString &path,
+		const QJsonObject &meta,
+		const Exd::PluginPorter::Progress &progress,
+		const Exd::PluginPorter::Info &info) {
+	using Stage = Exd::PluginPorter::Progress::Stage;
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		AddPortHeader(box, controller, meta);
+		const auto good = st::boxTextFgGood->c;
+		const auto attention = st::historyPeer3UserpicBg->c;
+		const auto bad = st::historyPeer1UserpicBg->c;
+		const auto stats = tr::lng_exd_port_stats(
+			tr::now,
+			lt_attempts,
+			QString::number(std::max(progress.attempt, 1)),
+			lt_time,
+			PortSeconds(progress.total),
+			lt_model,
+			PortServiceName(info.provider)
+				+ (info.model.isEmpty() ? QString() : (u" / "_q + info.model)));
+		const auto list = [&](const QString &key) {
+			auto result = QStringList();
+			for (const auto &value : progress.report.value(key).toArray()) {
+				result.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + value.toString());
+			}
+			return result;
+		};
+		if (progress.stage == Stage::Done) {
+			AddColorPill(
+				box,
+				tr::lng_exd_plugin_ported_os(tr::now, lt_os, DesktopOsName(QString())),
+				st::exteraInstallPuzzle,
+				[] { return st::boxTextFgGood->c; });
+			AddGuardCard(
+				box,
+				tr::lng_exd_port_done(tr::now),
+				QString(),
+				good,
+				QStringList{
+					tr::lng_exd_port_done_about(tr::now),
+					stats,
+				} + (progress.library
+					? QStringList{ tr::lng_exd_port_library(tr::now) }
+					: QStringList()));
+			const auto kept = list(u"kept"_q);
+			const auto changed = list(u"changed"_q);
+			const auto dropped = list(u"dropped"_q);
+			if (!kept.isEmpty()) {
+				AddGuardCard(
+					box,
+					tr::lng_exd_port_kept(tr::now),
+					QString::number(kept.size()),
+					good,
+					kept);
+			}
+			if (!changed.isEmpty()) {
+				AddGuardCard(
+					box,
+					tr::lng_exd_port_changed(tr::now),
+					QString::number(changed.size()),
+					st::windowActiveTextFg->c,
+					changed);
+			}
+			if (!dropped.isEmpty()) {
+				AddGuardCard(
+					box,
+					tr::lng_exd_port_dropped(tr::now),
+					QString::number(dropped.size()),
+					attention,
+					dropped);
+			}
+			const auto install = AddPortButton(
+				box,
+				tr::lng_extera_plugins_install(),
+				true,
+				false);
+			const auto saved = progress.path;
+			install->setClickedCallback([=] {
+				const auto target = saved;
+				const auto weakController = base::make_weak(controller);
+				Call(u"trust"_q, QJsonObject{ { u"path"_q, target } });
+				crl::on_main([=] {
+					if (const auto strong = weakController.get()) {
+						ShowInstallBox(strong, target, false);
+					}
+				});
+				box->closeBox();
+			});
+			AddPortButton(box, tr::lng_close(), false, true)->setClickedCallback([=] {
+				box->closeBox();
+			});
+			return;
+		}
+		const auto nothing = (progress.stage == Stage::Nothing);
+		AddColorPill(
+			box,
+			nothing
+				? tr::lng_exd_port_nothing_title(tr::now)
+				: tr::lng_exd_port_failed(tr::now),
+			st::exteraInstallShield,
+			[=] { return nothing ? st::historyPeer3UserpicBg->c : st::historyPeer1UserpicBg->c; });
+		if (nothing) {
+			auto lines = QStringList{ tr::lng_exd_port_nothing(tr::now) };
+			AddGuardCard(
+				box,
+				tr::lng_exd_port_nothing_title(tr::now),
+				QString(),
+				attention,
+				lines);
+			const auto dropped = list(u"dropped"_q);
+			if (!dropped.isEmpty()) {
+				AddGuardCard(
+					box,
+					tr::lng_exd_port_dropped(tr::now),
+					QString::number(dropped.size()),
+					attention,
+					dropped);
+			}
+		} else {
+			auto lines = QStringList();
+			if (progress.limit) {
+				lines.push_back(tr::lng_exd_port_error_limit(tr::now));
+			}
+			if (!progress.error.isEmpty()) {
+				lines.push_back(progress.error.left(600));
+			}
+			if (!progress.errors.isEmpty()) {
+				lines.push_back(tr::lng_exd_port_failed_checks(tr::now));
+				for (const auto &error : progress.errors.mid(0, 8)) {
+					lines.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + error);
+				}
+			}
+			AddGuardCard(
+				box,
+				tr::lng_exd_port_failed(tr::now),
+				QString(),
+				bad,
+				lines);
+			if (info.local || progress.limit) {
+				AddGuardCard(
+					box,
+					tr::lng_exd_port_advice(tr::now),
+					QString(),
+					st::windowActiveTextFg->c,
+					{ tr::lng_exd_port_advice_text(tr::now) });
+			}
+		}
+		AddGuardCard(box, tr::lng_exd_port_service(tr::now), QString(), st::windowSubTextFg->c, { stats });
+		AddPortButton(box, tr::lng_exd_port_open_settings(), false, false)->setClickedCallback([=] {
+			box->closeBox();
+			UrlClickHandler::Open(u"tg://settings/extera/plugins/engine"_q);
+		});
+		AddPortButton(box, tr::lng_close(), false, true)->setClickedCallback([=] {
+			box->closeBox();
+		});
+	}));
+}
+
+[[nodiscard]] QString PartialArea(const QString &hook) {
+	const auto cls = hook.section('.', 0, 0);
+	const auto has = [&](std::initializer_list<const char*> names) {
+		for (const auto name : names) {
+			if (cls.contains(QString::fromLatin1(name))) {
+				return true;
+			}
+		}
+		return false;
+	};
+	if (has({ "ChatMessageCell", "ChatActionCell", "Cell" })) {
+		return tr::lng_exd_partial_area_cells(tr::now);
+	} else if (has({ "ChatActivityEnterView", "EditText" })) {
+		return tr::lng_exd_partial_area_input(tr::now);
+	} else if (has({ "ChatActivity", "ChatAvatarContainer" })) {
+		return tr::lng_exd_partial_area_chat(tr::now);
+	} else if (has({ "DialogsActivity", "Dialog" })) {
+		return tr::lng_exd_partial_area_dialogs(tr::now);
+	} else if (has({ "Profile" })) {
+		return tr::lng_exd_partial_area_profile(tr::now);
+	} else if (has({ "PhotoViewer", "Camera", "ChatAttachAlert", "Story", "Stories" })) {
+		return tr::lng_exd_partial_area_media(tr::now);
+	} else if (has({ "ActionBar", "Theme", "View", "Layout", "Drawer", "Launch" })) {
+		return tr::lng_exd_partial_area_ui(tr::now);
+	} else if (has({ "UserConfig", "MessagesController", "Controller", "Premium" })) {
+		return tr::lng_exd_partial_area_data(tr::now);
+	}
+	return tr::lng_exd_partial_area_other(tr::now);
+}
+
+void ShowPartialStyled(
+		not_null<Window::SessionController*> controller,
+		const QJsonObject &info,
+		const QStringList &items) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		AddPortHeader(box, controller, info);
+		const auto attention = st::historyPeer3UserpicBg->c;
+		AddColorPill(
+			box,
+			tr::lng_exd_plugin_partial(tr::now),
+			st::exteraInstallShield,
+			[] { return st::historyPeer3UserpicBg->c; });
+		AddGuardCard(
+			box,
+			tr::lng_exd_partial_why(tr::now),
+			QString(),
+			st::windowActiveTextFg->c,
+			{ tr::lng_exd_plugin_partial_about(tr::now) });
+		auto groups = std::vector<std::pair<QString, QStringList>>();
+		for (const auto &item : items) {
+			const auto area = PartialArea(item);
+			auto found = ranges::find(groups, area, &std::pair<QString, QStringList>::first);
+			if (found == groups.end()) {
+				groups.push_back({ area, {} });
+				found = groups.end() - 1;
+			}
+			found->second.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + item);
+		}
+		for (const auto &[area, lines] : groups) {
+			AddGuardCard(
+				box,
+				area,
+				QString::number(lines.size()),
+				attention,
+				lines);
+		}
+		auto works = QStringList();
+		if (info.value(u"has_settings"_q).toBool()) {
+			works.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + tr::lng_exd_partial_works_settings(tr::now));
+		}
+		works.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + tr::lng_exd_partial_works_api(tr::now));
+		AddGuardCard(
+			box,
+			tr::lng_exd_partial_works(tr::now),
+			QString(),
+			st::boxTextFgGood->c,
+			works);
+		const auto path = info.value(u"path"_q).toString();
+		if (Exd::PluginPorter::Suggested(info)) {
+			AddPortButton(box, tr::lng_exd_port_action(), true, false)->setClickedCallback([=] {
+				const auto target = path;
+				const auto weakController = base::make_weak(controller);
+				crl::on_main([=] {
+					if (const auto strong = weakController.get()) {
+						Exd::PluginPorter::Start(strong, target);
+					}
+				});
+				box->closeBox();
+			});
+		}
+		AddPortButton(box, tr::lng_close(), false, true)->setClickedCallback([=] {
+			box->closeBox();
+		});
+	}));
+}
+
+struct PortTask {
+	QString path;
+	QJsonObject meta;
+	Exd::PluginPorter::Info info;
+	std::shared_ptr<Exd::PluginPorter::Job> job;
+	Exd::PluginPorter::Progress progress;
+	base::weak_ptr<Window::SessionController> controller;
+	base::Timer timer;
+	crl::time requested = 0;
+	bool finished = false;
+	bool boxOpen = false;
+	rpl::event_stream<> updates;
+};
+
+[[nodiscard]] std::shared_ptr<PortTask> &CurrentPort() {
+	static auto &result = *new std::shared_ptr<PortTask>();
+	return result;
+}
+
+[[nodiscard]] rpl::variable<PortBarState> &PortBarVariable() {
+	static auto &result = *new rpl::variable<PortBarState>();
+	return result;
+}
+
+[[nodiscard]] int PortWaiting(const std::shared_ptr<PortTask> &task) {
+	return task->requested ? int(crl::now() - task->requested) : 0;
+}
+
+[[nodiscard]] QString PortTaskName(const std::shared_ptr<PortTask> &task) {
+	const auto name = task->meta.value(u"name"_q).toString();
+	return name.isEmpty() ? QFileInfo(task->path).completeBaseName() : name;
+}
+
+[[nodiscard]] float64 PortFraction(
+		const Exd::PluginPorter::Progress &progress) {
+	using Stage = Exd::PluginPorter::Progress::Stage;
+	const auto total = std::max(progress.attempts, 1);
+	const auto done = std::clamp(progress.attempt - 1, 0, total);
+	const auto part = (progress.stage == Stage::Checking) ? 0.8 : 0.3;
+	return std::clamp((done + part) / total, 0.05, 0.95);
+}
+
+void RefreshPortBar() {
+	using Stage = Exd::PluginPorter::Progress::Stage;
+	const auto task = CurrentPort();
+	if (!task) {
+		PortBarVariable() = PortBarState();
+		return;
+	}
+	const auto &progress = task->progress;
+	auto state = PortBarState{
+		.name = PortTaskName(task),
+		.active = true,
+		.finished = task->finished,
+	};
+	if (task->finished) {
+		state.failed = (progress.stage == Stage::Failed);
+		state.progress = 1.;
+		state.status = (progress.stage == Stage::Done)
+			? tr::lng_exd_port_bar_done(tr::now)
+			: (progress.stage == Stage::Nothing)
+			? tr::lng_exd_port_bar_nothing(tr::now)
+			: tr::lng_exd_port_bar_failed(tr::now);
+	} else {
+		state.progress = PortFraction(progress);
+		auto parts = QStringList();
+		if (progress.stage == Stage::Checking) {
+			parts.push_back(tr::lng_exd_port_step_check(tr::now));
+		} else {
+			if (progress.attempt > 0) {
+				parts.push_back(tr::lng_exd_port_step_attempt(
+					tr::now,
+					lt_attempt,
+					QString::number(progress.attempt),
+					lt_total,
+					QString::number(progress.attempts)));
+			}
+			if (progress.stage == Stage::Fixing) {
+				parts.push_back(tr::lng_exd_port_step_fixing(tr::now));
+			}
+			parts.push_back(PortSeconds(PortWaiting(task)));
+		}
+		state.status = parts.join(QString::fromUtf8(" \xE2\x80\xA2 "));
+	}
+	PortBarVariable() = std::move(state);
+}
+
+void ClearPort() {
+	CurrentPort() = nullptr;
+	RefreshPortBar();
+}
+
+void ShowTaskResult(
+		not_null<Window::SessionController*> controller,
+		std::shared_ptr<PortTask> task) {
+	const auto path = task->path;
+	const auto meta = task->meta;
+	const auto progress = task->progress;
+	const auto info = task->info;
+	if (CurrentPort() == task) {
+		ClearPort();
+	}
+	ShowPortResult(controller, path, meta, progress, info);
+}
+
+void FinishPort(const std::shared_ptr<PortTask> &task) {
+	task->finished = true;
+	task->timer.cancel();
+	RefreshPortBar();
+	task->updates.fire({});
+	if (!task->boxOpen) {
+		if (const auto strong = task->controller.get()) {
+			strong->showToast(tr::lng_exd_port_finished_toast(
+				tr::now,
+				lt_name,
+				PortTaskName(task)));
+		}
+	}
+}
+
+void OpenPortBox(
+		not_null<Window::SessionController*> controller,
+		std::shared_ptr<PortTask> task) {
+	if (task->finished) {
+		ShowTaskResult(controller, task);
+		return;
+	}
+	const auto meta = task->meta;
+	const auto info = task->info;
+	const auto weakTask = std::weak_ptr<PortTask>(task);
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		AddPortHeader(box, controller, meta);
+		AddColorPill(
+			box,
+			PortServiceName(info.provider)
+				+ (info.model.isEmpty() ? QString() : (u" / "_q + info.model)),
+			st::exteraInstallPuzzle,
+			[] { return st::windowActiveTextFg->c; });
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_port_title(),
+				st::exteraThreatSectionTitle),
+			st::exteraThreatSectionPadding);
+		const auto card = AddCard(box);
+		Ui::AddSkip(card, 6);
+		const auto views = std::make_shared<PortStepsView>();
+		views->prepare = AddPortStepView(
+			card,
+			tr::lng_exd_port_step_prepare(tr::now));
+		views->model = AddPortStepView(
+			card,
+			tr::lng_exd_port_step_model(tr::now));
+		views->check = AddPortStepView(
+			card,
+			tr::lng_exd_port_step_check(tr::now));
+		Ui::AddSkip(card, 8);
+		const auto hints = box->addRow(
+			object_ptr<Ui::VerticalLayout>(box),
+			style::margins());
+		if (info.local) {
+			AddGuardCard(
+				box,
+				tr::lng_exd_port_local_title(tr::now),
+				QString(),
+				st::historyPeer3UserpicBg->c,
+				{ tr::lng_exd_port_warning(tr::now) });
+		}
+		AddPortButton(
+			box,
+			tr::lng_exd_port_minimize(),
+			true,
+			false
+		)->setClickedCallback([=] {
+			box->closeBox();
+		});
+		AddPortButton(
+			box,
+			tr::lng_exd_port_cancel(),
+			false,
+			true
+		)->setClickedCallback([=] {
+			if (const auto strong = weakTask.lock()) {
+				if (CurrentPort() == strong) {
+					Exd::PluginPorter::Cancel(strong->job);
+					strong->finished = true;
+					ClearPort();
+				}
+			}
+			box->closeBox();
+		});
+		const auto hintsShown = std::make_shared<bool>(false);
+		const auto refresh = [=] {
+			const auto strong = weakTask.lock();
+			if (!strong) {
+				return;
+			}
+			UpdatePortSteps(*views, strong->progress, PortWaiting(strong));
+			if (!*hintsShown && !strong->progress.hints.isEmpty()) {
+				*hintsShown = true;
+				auto lines = QStringList();
+				for (const auto &hint : strong->progress.hints) {
+					lines.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + hint);
+				}
+				const auto inner = hints->add(
+					object_ptr<Ui::VerticalLayout>(hints),
+					st::exteraInstallCardMargin);
+				PaintCardBackground(inner);
+				AddPortStep(
+					inner,
+					tr::lng_exd_port_hints(tr::now),
+					QString::number(lines.size()),
+					st::windowActiveTextFg->c,
+					lines);
+				Ui::AddSkip(inner, 8);
+				inner->show();
+				hints->resizeToWidth(box->width());
+			}
+		};
+		task->boxOpen = true;
+		task->updates.events(
+		) | rpl::on_next([=] {
+			const auto strong = weakTask.lock();
+			if (!strong) {
+				return;
+			}
+			if (strong->finished) {
+				const auto weak = base::make_weak(controller);
+				crl::on_main([=] {
+					if (const auto window = weak.get()) {
+						if (CurrentPort() == strong) {
+							ShowTaskResult(window, strong);
+						}
+					}
+				});
+				box->closeBox();
+				return;
+			}
+			refresh();
+		}, box->lifetime());
+		box->boxClosing() | rpl::on_next([=] {
+			const auto strong = weakTask.lock();
+			if (!strong || !strong->boxOpen) {
+				return;
+			}
+			strong->boxOpen = false;
+			if (!strong->finished && CurrentPort() == strong) {
+				controller->showToast(tr::lng_exd_port_background(tr::now));
+			}
+		}, box->lifetime());
+		refresh();
+	}));
+}
+
+} // namespace
+
+void ShowPortBox(
+		not_null<Window::SessionController*> controller,
+		const QString &path) {
+	using Stage = Exd::PluginPorter::Progress::Stage;
+	if (const auto task = CurrentPort(); task && !task->finished) {
+		if (task->path != path) {
+			controller->showToast(tr::lng_exd_port_busy(tr::now));
+		}
+		OpenPortBox(controller, task);
+		return;
+	}
+	auto task = std::make_shared<PortTask>();
+	task->path = path;
+	task->meta = Call(u"metadata"_q, QJsonObject{
+		{ u"path"_q, path },
+	}).toObject();
+	task->info = Exd::PluginPorter::CurrentInfo();
+	task->controller = base::make_weak(controller);
+	const auto weak = std::weak_ptr<PortTask>(task);
+	auto error = QString();
+	task->job = Exd::PluginPorter::Run(path, [=](
+			const Exd::PluginPorter::Progress &progress) {
+		const auto strong = weak.lock();
+		if (!strong || strong->finished) {
+			return;
+		}
+		const auto restart = (progress.stage == Stage::Requesting
+			|| progress.stage == Stage::Fixing)
+			&& (progress.attempt != strong->progress.attempt
+				|| strong->progress.stage == Stage::Checking
+				|| !strong->requested);
+		strong->progress = progress;
+		if (restart) {
+			strong->requested = crl::now();
+		}
+		if (progress.stage == Stage::Done
+			|| progress.stage == Stage::Nothing
+			|| progress.stage == Stage::Failed) {
+			FinishPort(strong);
+			return;
+		}
+		RefreshPortBar();
+		strong->updates.fire({});
+	}, &error);
+	if (!task->job) {
+		controller->showToast((error == u"format"_q)
+			? tr::lng_exd_port_error_format(tr::now)
+			: (error == u"size"_q)
+			? tr::lng_exd_port_error_size(tr::now)
+			: tr::lng_extera_plugins_bad_file(tr::now));
+		return;
+	}
+	task->timer.setCallback([=] {
+		if (const auto strong = weak.lock()) {
+			RefreshPortBar();
+			strong->updates.fire({});
+		}
+	});
+	task->timer.callEach(1000);
+	CurrentPort() = task;
+	RefreshPortBar();
+	OpenPortBox(controller, task);
+}
+
+rpl::producer<PortBarState> PortBarValue() {
+	return PortBarVariable().value();
+}
+
+void OpenPortTask(not_null<Window::SessionController*> controller) {
+	if (const auto task = CurrentPort()) {
+		OpenPortBox(controller, task);
+	}
+}
+
+void ShowPortSetupBox(
+		not_null<Window::SessionController*> controller,
+		const QString &path) {
+	if (const auto task = CurrentPort(); task && !task->finished) {
+		OpenPortBox(controller, task);
+		return;
+	}
+	const auto meta = Call(u"metadata"_q, QJsonObject{
+		{ u"path"_q, path },
+	}).toObject();
+	const auto prepared = Call(u"port_prepare"_q, QJsonObject{
+		{ u"path"_q, path },
+	}).toObject();
+	if (const auto error = prepared.value(u"error"_q).toString();
+		!error.isEmpty()) {
+		controller->showToast((error == u"format"_q)
+			? tr::lng_exd_port_error_format(tr::now)
+			: (error == u"size"_q)
+			? tr::lng_exd_port_error_size(tr::now)
+			: tr::lng_extera_plugins_bad_file(tr::now));
+		return;
+	}
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		AddPortHeader(box, controller, meta);
+		AddColorPill(
+			box,
+			tr::lng_exd_plugin_ported_os(tr::now, lt_os, DesktopOsName(QString())),
+			st::exteraInstallPuzzle,
+			[] { return st::windowActiveTextFg->c; });
+
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_port_setup_plan(),
+				st::exteraThreatSectionTitle),
+			st::exteraThreatSectionPadding);
+		const auto plan = AddCard(box);
+		Ui::AddSkip(plan, 6);
+		const auto hints = prepared.value(u"hints"_q).toArray();
+		const auto sections = prepared.value(u"sections"_q).toArray();
+		auto names = QStringList();
+		for (const auto &value : sections) {
+			names.push_back(value.toString());
+		}
+		const auto size = prepared.value(u"system"_q).toString().size()
+			+ prepared.value(u"user"_q).toString().size();
+		auto lines = QStringList{
+			tr::lng_exd_port_step_prepare_info(
+				tr::now,
+				lt_hints,
+				QString::number(hints.size()),
+				lt_sections,
+				names.isEmpty() ? u"0"_q : names.join(u", "_q)),
+			tr::lng_exd_port_setup_size(
+				tr::now,
+				lt_value,
+				QString::number(std::max(1, int(size / 4000)))),
+		};
+		if (prepared.value(u"library"_q).toBool()) {
+			lines.push_back(tr::lng_exd_port_setup_library(tr::now));
+		}
+		for (const auto &hint : hints) {
+			lines.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + hint.toString());
+		}
+		AddPortStep(
+			plan,
+			tr::lng_exd_port_setup_request(tr::now),
+			QString(),
+			st::windowActiveTextFg->c,
+			lines);
+		Ui::AddSkip(plan, 8);
+
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_port_setup_service(),
+				st::exteraThreatSectionTitle),
+			st::exteraThreatSectionPadding);
+		const auto service = AddCard(box);
+		const auto provider = std::make_shared<rpl::variable<int>>(
+			std::max(Int(u"port_llm_provider"_q), 0));
+		const auto model = std::make_shared<rpl::variable<QString>>(
+			String(u"port_llm_model"_q));
+		const auto key = std::make_shared<rpl::variable<QString>>(
+			String(u"port_llm_key"_q));
+		const auto agent = std::make_shared<rpl::variable<bool>>(
+			Int(u"port_llm_mode"_q) == 0);
+		auto options = std::vector<QString>();
+		for (auto i = 1; i < Exd::PluginPorter::ProvidersCount(); ++i) {
+			options.push_back(PortServiceName(i));
+		}
+		const auto serviceButton = Settings::AddButtonWithLabel(
+			service,
+			tr::lng_exd_port_setup_provider(),
+			provider->value() | rpl::map([](int value) {
+				return value ? PortServiceName(value) : tr::lng_exd_port_provider_none(tr::now);
+			}),
+			st::settingsButtonNoIcon);
+		serviceButton->setClickedCallback([=] {
+			controller->show(Box([=](not_null<Ui::GenericBox*> inner) {
+				SingleChoiceBox(inner, {
+					.title = tr::lng_exd_port_setup_provider(),
+					.options = options,
+					.initialSelection = std::max(provider->current() - 1, 0),
+					.callback = [=](int value) {
+						if (provider->current() != value + 1) {
+							*provider = value + 1;
+							*model = QString();
+						}
+					},
+				});
+			}));
+		});
+		const auto modelButton = Settings::AddButtonWithLabel(
+			service,
+			tr::lng_exd_port_setup_model(),
+			rpl::combine(
+				provider->value(),
+				model->value()
+			) | rpl::map([](int value, const QString &name) {
+				const auto fallback = Exd::PluginPorter::DefaultModel(value);
+				return !name.isEmpty()
+					? name
+					: !fallback.isEmpty()
+					? fallback
+					: tr::lng_exd_port_setup_model_none(tr::now);
+			}),
+			st::settingsButtonNoIcon);
+		modelButton->setClickedCallback([=] {
+			const auto current = model->current().isEmpty()
+				? Exd::PluginPorter::DefaultModel(provider->current())
+				: model->current();
+			ShowInput(
+				controller,
+				tr::lng_exd_port_setup_model(tr::now),
+				current,
+				false,
+				[=](QString value) { *model = value; });
+		});
+		const auto keyButton = Settings::AddButtonWithLabel(
+			service,
+			tr::lng_exd_port_setup_key(),
+			rpl::combine(
+				provider->value(),
+				key->value()
+			) | rpl::map([](int value, const QString &text) {
+				return (value > 0 && Exd::PluginPorter::ProviderLocal(value))
+					? tr::lng_exd_port_setup_key_local(tr::now)
+					: text.isEmpty()
+					? tr::lng_exd_port_setup_key_empty(tr::now)
+					: tr::lng_exd_port_setup_key_set(tr::now);
+			}),
+			st::settingsButtonNoIcon);
+		keyButton->setClickedCallback([=] {
+			ShowInput(
+				controller,
+				tr::lng_exd_port_setup_key(tr::now),
+				key->current(),
+				false,
+				[=](QString value) { *key = value; });
+		});
+		const auto modeButton = service->add(object_ptr<Ui::SettingsButton>(
+			service,
+			tr::lng_exd_port_setup_agent(),
+			st::settingsButtonNoIcon));
+		modeButton->toggleOn(rpl::single(agent->current()));
+		modeButton->toggledChanges(
+		) | rpl::on_next([=](bool value) {
+			*agent = value;
+		}, modeButton->lifetime());
+		Ui::AddSkip(service, 8);
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_port_setup_about(),
+				st::exteraInstallVersion),
+			st::exteraInstallVersionPadding,
+			style::al_top);
+
+		AddPortButton(
+			box,
+			tr::lng_exd_port_setup_start(),
+			true,
+			false
+		)->setClickedCallback([=] {
+			auto &config = Config::Instance();
+			config.setInt(u"port_llm_provider"_q, provider->current());
+			config.setString(u"port_llm_model"_q, model->current().trimmed());
+			config.setString(u"port_llm_key"_q, key->current().trimmed());
+			config.setInt(u"port_llm_mode"_q, agent->current() ? 0 : 1);
+			if (!Exd::PluginPorter::Configured()) {
+				controller->showToast(tr::lng_exd_port_not_configured(tr::now));
+				return;
+			}
+			const auto window = controller;
+			const auto target = path;
+			box->closeBox();
+			crl::on_main(window, [=] {
+				ShowPortBox(window, target);
+			});
+		});
+		AddPortButton(
+			box,
+			tr::lng_cancel(),
+			false,
+			true
+		)->setClickedCallback([=] {
+			box->closeBox();
+		});
+	}));
+}
+
+void ShowPermissionAlert(
+		not_null<Window::SessionController*> controller,
+		const QJsonObject &data,
+		Fn<void(QJsonValue)> answer) {
+	const auto extra = data.value(u"exd"_q).toObject();
+	const auto net = (extra.value(u"kind"_q).toString() == u"net"_q);
+	const auto plugin = extra.value(u"plugin"_q).toString();
+	const auto target = extra.value(u"target"_q).toString();
+	const auto message = data.value(u"message"_q).toString();
+	auto meta = QJsonObject();
+	for (const auto &entry : Call(u"list"_q).toArray()) {
+		const auto info = entry.toObject();
+		if (info.value(u"id"_q).toString() == plugin) {
+			meta = info;
+			break;
+		}
+	}
+	if (meta.value(u"name"_q).toString().isEmpty()) {
+		meta.insert(u"name"_q, plugin);
+	}
+	auto ordered = std::vector<std::pair<int, QString>>();
+	const auto buttons = data.value(u"buttons"_q).toArray();
+	for (const auto which : { -1, -3, -2 }) {
+		for (const auto &value : buttons) {
+			const auto entry = value.toObject();
+			if (entry.value(u"which"_q).toInt() == which) {
+				ordered.emplace_back(which, entry.value(u"text"_q).toString());
+			}
+		}
+	}
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		AddPortHeader(box, controller, meta);
+		const auto color = [=] {
+			return net
+				? st::windowActiveTextFg->c
+				: st::historyPeer3UserpicBg->c;
+		};
+		AddColorPill(
+			box,
+			net
+				? tr::lng_exd_perm_request_net(tr::now)
+				: tr::lng_exd_perm_request_files(tr::now),
+			st::exteraInstallPuzzle,
+			color);
+		const auto card = AddCard(box);
+		Ui::AddSkip(card, 6);
+		AddPortStep(
+			card,
+			net
+				? tr::lng_exd_perm_domain(tr::now)
+				: tr::lng_exd_perm_folder(tr::now),
+			tr::lng_exd_perm_chip(tr::now),
+			color(),
+			{
+				net ? target : QDir::toNativeSeparators(target),
+				message,
+			});
+		Ui::AddSkip(card, 8);
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_perm_request_about(),
+				st::exteraInstallVersion),
+			st::exteraInstallVersionPadding,
+			style::al_top);
+		for (auto i = 0; i != int(ordered.size()); ++i) {
+			const auto which = ordered[i].first;
+			AddPortButton(
+				box,
+				rpl::single(ordered[i].second),
+				(i == 0),
+				(i + 1 == int(ordered.size()))
+			)->setClickedCallback([=] {
+				answer(which);
+				box->closeBox();
+			});
+		}
+		box->boxClosing() | rpl::on_next([=] {
+			answer(u"dismiss"_q);
+		}, box->lifetime());
+	}));
 }
 
 } // namespace Extera::Plugins

@@ -49,6 +49,11 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"guard_llm_provider"_q, 0 },
 		{ u"guard_llm_key"_q, QString() },
 		{ u"guard_llm_model"_q, QString() },
+		{ u"port_llm_provider"_q, 0 },
+		{ u"port_llm_key"_q, QString() },
+		{ u"port_llm_model"_q, QString() },
+		{ u"port_llm_endpoint"_q, QString() },
+		{ u"port_llm_mode"_q, 0 },
 		{ u"guard_model_check"_q, 0 },
 		{ u"guard_model_version"_q, QString() },
 		{ u"plugins_guard_blocked"_q, QString() },
@@ -178,7 +183,7 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"wizard_shown"_q, false },
 		{ u"changelog_seen"_q, 0 },
 		{ u"notify_sound"_q, QString() },
-		{ u"local_premium_emoji"_q, true },
+		{ u"local_premium_emoji"_q, false },
 		{ u"local_premium"_q, true },
 		{ u"premium_no_ads"_q, true },
 		{ u"transcribe_provider"_q, 0 },
@@ -274,8 +279,11 @@ void Config::applyInstallChoice(const QStringList &paths) {
 			continue;
 		}
 		const auto content = QString::fromUtf8(file.readAll()).trimmed();
-		if (content.isEmpty()
-			|| _values.value(u"install_conf"_q).toString() == content) {
+		const auto stored = _values.value(u"install_conf"_q).toString();
+		if (content.isEmpty() || stored == content) {
+			return;
+		} else if (stored.isEmpty() && !_values.isEmpty()) {
+			setString(u"install_conf"_q, content);
 			return;
 		}
 		for (const auto &line : content.split('\n')) {

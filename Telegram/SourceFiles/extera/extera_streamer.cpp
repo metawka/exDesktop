@@ -45,8 +45,85 @@
 namespace Extera::Streamer {
 namespace {
 
+constexpr auto kNotifyChunk = 250;
+
+struct Snapshot {
+	bool active = false;
+	bool full = false;
+	bool everywhere = false;
+	std::array<ChatHide, 4> types;
+	base::flat_set<uint64> shown;
+	base::flat_set<uint64> hidden;
+};
+
+[[nodiscard]] int TypeIndex(ChatType type) {
+	switch (type) {
+	case ChatType::Private: return 0;
+	case ChatType::Bot: return 1;
+	case ChatType::Group: return 2;
+	case ChatType::Channel: return 3;
+	}
+	return 0;
+}
+
+[[nodiscard]] QString TypeKey(ChatType type);
+
+[[nodiscard]] base::flat_set<uint64> ParseIds(const QString &key) {
+	auto result = base::flat_set<uint64>();
+	for (const auto &part : String(key).split(',', Qt::SkipEmptyParts)) {
+		result.emplace(part.toULongLong());
+	}
+	return result;
+}
+
+[[nodiscard]] Snapshot ComputeSnapshot() {
+	auto result = Snapshot();
+	result.active = Bool(u"streamer_mode"_q);
+	result.full = result.active && Bool(u"streamer_full"_q);
+	result.everywhere = result.active
+		&& (result.full || Bool(u"streamer_everywhere"_q));
+	for (const auto type : {
+			ChatType::Private,
+			ChatType::Bot,
+			ChatType::Group,
+			ChatType::Channel }) {
+		const auto prefix = u"streamer_"_q + TypeKey(type) + '_';
+		result.types[TypeIndex(type)] = result.full
+			? ChatHide{ .avatar = true, .name = true, .text = true }
+			: ChatHide{
+				.avatar = Bool(prefix + u"avatar"_q),
+				.name = Bool(prefix + u"name"_q),
+				.text = Bool(prefix + u"text"_q),
+			};
+	}
+	result.shown = ParseIds(u"streamer_shown"_q);
+	result.hidden = ParseIds(u"streamer_hidden"_q);
+	return result;
+}
+
+bool SnapshotDirty = true;
+
+[[nodiscard]] const Snapshot &Current() {
+	static auto result = Snapshot();
+	static auto subscribed = false;
+	if (!subscribed) {
+		subscribed = true;
+		Config::Instance().changes(
+		) | rpl::filter([](const QString &key) {
+			return key.startsWith(u"streamer_"_q);
+		}) | rpl::on_next([] {
+			SnapshotDirty = true;
+		}, *(new rpl::lifetime()));
+	}
+	if (SnapshotDirty) {
+		SnapshotDirty = false;
+		result = ComputeSnapshot();
+	}
+	return result;
+}
+
 [[nodiscard]] bool Full() {
-	return Active() && Bool(u"streamer_full"_q);
+	return Current().full;
 }
 
 [[nodiscard]] bool Option(const QString &key) {
@@ -425,14 +502,7 @@ bool CaptureFilter::eventFilter(QObject *object, QEvent *event) {
 }
 
 [[nodiscard]] ChatHide HideFor(ChatType type) {
-	if (Full()) {
-		return { .avatar = true, .name = true, .text = true };
-	}
-	return {
-		.avatar = Bool(PartKey(type, u"avatar"_q)),
-		.name = Bool(PartKey(type, u"name"_q)),
-		.text = Bool(PartKey(type, u"text"_q)),
-	};
+	return Current().types[TypeIndex(type)];
 }
 
 [[nodiscard]] QStringList ExceptionList(const QString &key) {
@@ -441,22 +511,49 @@ bool CaptureFilter::eventFilter(QObject *object, QEvent *event) {
 
 void SaveExceptionList(const QString &key, const QStringList &list) {
 	Config::Instance().setString(key, list.join(','));
+	SnapshotDirty = true;
+}
+
+int NotifyGeneration = 0;
+
+void NotifyChunk(
+		base::weak_ptr<Main::Session> weak,
+		std::shared_ptr<std::vector<not_null<PeerData*>>> peers,
+		int from,
+		int generation) {
+	const auto session = weak.get();
+	if (!session || generation != NotifyGeneration) {
+		return;
+	}
+	using Flag = Data::PeerUpdate::Flag;
+	const auto till = std::min(from + kNotifyChunk, int(peers->size()));
+	for (auto i = from; i != till; ++i) {
+		session->changes().peerUpdated((*peers)[i], Flag::Name | Flag::Photo);
+	}
+	if (till < int(peers->size())) {
+		crl::on_main([=] {
+			NotifyChunk(weak, peers, till, generation);
+		});
+	}
 }
 
 void Apply() {
 	using Flag = Data::PeerUpdate::Flag;
+	SnapshotDirty = true;
+	const auto generation = ++NotifyGeneration;
 	for (const auto &[index, account] : Core::App().domain().accounts()) {
 		if (const auto session = account->maybeSession()) {
-			const auto changes = &session->changes();
-			const auto notify = [&](not_null<PeerData*> peer) {
-				changes->peerUpdated(peer, Flag::Name | Flag::Photo);
+			auto peers = std::make_shared<std::vector<not_null<PeerData*>>>();
+			const auto collect = [&](not_null<PeerData*> peer) {
+				peers->push_back(peer);
 			};
-			session->data().enumerateUsers(notify);
-			session->data().enumerateGroups(notify);
+			session->data().enumerateUsers(collect);
+			session->data().enumerateGroups(collect);
 			session->data().enumerateBroadcasts([&](
 					not_null<ChannelData*> channel) {
-				notify(channel);
+				collect(channel);
 			});
+			NotifyChunk(base::make_weak(session), peers, 0, generation);
 			session->data().exteraRefreshAllViews();
 			session->changes().peerUpdated(
 				session->user(),
@@ -836,7 +933,7 @@ void ShowExceptionsBox(
 } // namespace
 
 bool Active() {
-	return Bool(u"streamer_mode"_q);
+	return Current().active;
 }
 
 bool HideName() {
@@ -914,10 +1011,11 @@ ChatType TypeOf(not_null<PeerData*> peer) {
 }
 
 Exception ExceptionFor(not_null<PeerData*> peer) {
-	const auto id = QString::number(peer->id.value);
-	if (ExceptionList(u"streamer_shown"_q).contains(id)) {
+	const auto &state = Current();
+	const auto id = uint64(peer->id.value);
+	if (state.shown.contains(id)) {
 		return Exception::Shown;
-	} else if (ExceptionList(u"streamer_hidden"_q).contains(id)) {
+	} else if (state.hidden.contains(id)) {
 		return Exception::Hidden;
 	}
 	return Exception::None;
@@ -972,7 +1070,7 @@ bool NotificationsMuted() {
 }
 
 [[nodiscard]] bool Everywhere() {
-	return Active() && (Full() || Bool(u"streamer_everywhere"_q));
+	return Current().everywhere;
 }
 
 bool HideNameOf(not_null<const PeerData*> peer) {

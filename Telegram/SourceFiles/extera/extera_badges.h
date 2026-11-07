@@ -28,6 +28,8 @@ struct TrustedSource {
 };
 
 void StartBadges();
+void RefreshBadges();
+[[nodiscard]] rpl::producer<> BadgesChanges();
 void PaintBadgeEmoji(
 	QPainter &p,
 	not_null<Ui::Text::CustomEmoji*> emoji,
@@ -35,6 +37,9 @@ void PaintBadgeEmoji(
 
 [[nodiscard]] BadgeKind BadgeKindFor(not_null<PeerData*> peer);
 [[nodiscard]] DocumentId BadgeEmoji(not_null<PeerData*> peer);
+[[nodiscard]] int BadgeNumber(not_null<PeerData*> peer);
+[[nodiscard]] int BadgeHolders(not_null<PeerData*> peer);
+[[nodiscard]] bool BadgeIsCustom(not_null<PeerData*> peer);
 [[nodiscard]] QString BadgeCustomText(not_null<PeerData*> peer);
 [[nodiscard]] DocumentId BadgeTypeEmoji(const QString &type);
 [[nodiscard]] bool IsBadgeEmoji(DocumentId id);
