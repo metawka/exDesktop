@@ -232,15 +232,28 @@ _callback_lock = threading.Lock()
 _callbacks = {}
 
 
+_callback_owners = {}
+
+
 def extera_host_register_callback(delegate) -> str:
+    import extera_host
+    owner = extera_host.owner_now()
     with _callback_lock:
         _callback_counter[0] += 1
         callback_id = f"cb{_callback_counter[0]}"
         _callbacks[callback_id] = delegate
+        _callback_owners[callback_id] = owner
     return callback_id
 
 
 def extera_host_dispatch_callback(callback_id, response, error, raw=None, code=0):
+    import extera_host
+    owner = _callback_owners.pop(callback_id, None)
+    with extera_host.owner_scope(owner):
+        return _dispatch_callback(callback_id, response, error, raw, code)
+
+
+def _dispatch_callback(callback_id, response, error, raw=None, code=0):
     delegate = _callbacks.pop(callback_id, None)
     result_type = _raw_types.pop(callback_id, None)
     name = _raw_names.pop(callback_id, "request")

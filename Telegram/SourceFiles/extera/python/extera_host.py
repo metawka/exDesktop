@@ -42,10 +42,30 @@ def current_plugin_id():
 @contextlib.contextmanager
 def _plugin_context(plugin_id):
     _plugin_stack.append(plugin_id)
+    token = None
+    push = getattr(_extera, "sbx_push", None)
+    if push is not None and plugin_id:
+        token = push(str(plugin_id))
     try:
         yield
     finally:
+        if token is not None:
+            _extera.sbx_pop(token)
         _plugin_stack.pop()
+
+
+def owner_now():
+    owner = getattr(_extera, "sbx_owner", None)
+    if owner is None:
+        return current_plugin_id() or ""
+    try:
+        return owner()
+    except Exception:
+        return "<unknown>"
+
+
+def owner_scope(owner):
+    return _plugin_context(owner if owner else "<unknown>")
 
 
 # Metadata
@@ -220,15 +240,22 @@ def _state_path():
     return os.path.join(SETTINGS_DIR, "_state.json")
 
 
+_state_cache = [None]
+_digests = {}
+
+
 def _load_state():
-    try:
-        with open(_state_path(), encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    if _state_cache[0] is None:
+        try:
+            with open(_state_path(), encoding="utf-8") as f:
+                _state_cache[0] = dict(json.load(f))
+        except Exception:
+            return {}
+    return dict(_state_cache[0])
 
 
 def _save_state(state):
+    _state_cache[0] = dict(state)
     try:
         os.makedirs(SETTINGS_DIR, exist_ok=True)
         with open(_state_path(), "w", encoding="utf-8") as f:
@@ -309,7 +336,13 @@ def _add_trusted(digest):
 
 def is_trusted_file(path):
     try:
-        return file_sha256(path) in _trusted_hashes()
+        stat = os.stat(path)
+        key = (stat.st_mtime_ns, stat.st_size)
+        cached = _digests.get(path)
+        if cached is None or cached[0] != key:
+            cached = (key, file_sha256(path))
+            _digests[path] = cached
+        return cached[1] in _trusted_hashes()
     except Exception:
         return False
 
@@ -623,7 +656,11 @@ def _menu_list(args):
         menu_type = str(getattr(data.menu_type, "value", data.menu_type))
         if menu_type.upper() != wanted:
             continue
-        text = data.text() if callable(data.text) else data.text
+        if callable(data.text):
+            with _plugin_context(plugin_id):
+                text = data.text()
+        else:
+            text = data.text
         result.append({"id": item_id, "text": str(text),
                        "subtext": str(data.subtext or ""),
                        "priority": data.priority})
@@ -848,7 +885,8 @@ def _event(args):
         payload = args.get("args") or {}
         for delegate in list(_observers.get(notification_id, [])):
             try:
-                delegate.didReceivedNotification(notification_id, account, payload)
+                with owner_scope(getattr(delegate, "_extera_plugin_id", None)):
+                    delegate.didReceivedNotification(notification_id, account, payload)
             except Exception:
                 log(f"notification delegate failed:\n{traceback.format_exc(limit=4)}")
         return True
@@ -1123,8 +1161,7 @@ def _init(args):
     exd_elyx.install_api(sys.modules[__name__])
     if not args.get("sandbox_off"):
         import exd_sandbox
-        global _sandbox_api
-        _sandbox_api = exd_sandbox.install(
+        exd_sandbox.install(
             sys.modules[__name__],
             PLUGINS_DIR,
             SETTINGS_DIR,
@@ -1198,31 +1235,9 @@ _METHODS = {
 }
 
 
-_sandbox_api = None
-
-
-def _sandbox_grant(plugin_id, path):
-    if _sandbox_api is None or len(_sandbox_api) < 3:
-        return False
-    return _sandbox_api[2](plugin_id, path)
-
-
 def _file_picked(args):
     import exd_picker
     return exd_picker.picked(args.get("token"), args.get("paths") or [])
-
-
-def _permissions(args):
-    if _sandbox_api is None:
-        return {"net": [], "paths": []}
-    return _sandbox_api[0](str(args.get("id") or ""))
-
-
-def _revoke_permission(args):
-    if _sandbox_api is None:
-        return False
-    return _sandbox_api[1](str(args.get("id") or ""), str(args.get("kind") or ""),
-                           str(args.get("key") or ""))
 
 
 def _port_prepare(args):
@@ -1275,8 +1290,6 @@ def _port_save(args):
 
 
 _METHODS.update({
-    "permissions": _permissions,
-    "revoke_permission": _revoke_permission,
     "file_picked": _file_picked,
     "port_prepare": _port_prepare,
     "port_check": _port_check,

@@ -1,4 +1,5 @@
 import ast
+import builtins
 import math
 import re
 import zipfile
@@ -358,6 +359,115 @@ def _exec_calls(tree, source):
     return remote, indirect, plain
 
 
+_ESCAPE_ATTRS = {"__closure__", "cell_contents", "__globals__", "f_back", "f_locals", "f_globals", "tb_frame",
+                 "gi_frame", "cr_frame", "ag_frame", "__subclasses__", "__builtins__"}
+_ESCAPE_NAMES = {"_extera", "_plugin_context", "_METHODS", "_records", "_imp", "_overlapped", "ProactorEventLoop",
+                 "IocpProactor", "ExtensionFileLoader", "create_dynamic", "create_builtin", "owner_scope",
+                 "owner_now", "_owners", "_sandbox_api", "FunctionType", "CodeType", "_start_new_thread"}
+_ESCAPE_MODULES = {"os", "builtins", "socket", "ssl", "threading", "_thread", "subprocess", "shutil", "io", "platform",
+                   "importlib", "ntpath", "posixpath", "pathlib", "nt", "posix", "_socket", "http", "urllib",
+                   "extera_host", "exd_sandbox", "exd_runtime", "exd_java", "exd_picker", "exd_elyx", "exd_porter",
+                   "plugin_settings", "requirements_installer", "plugin_guard", "capability_scan", "client_utils",
+                   "android_utils", "base_plugin", "tl_runtime", "tgnet_bridge", "_compat", "intents", "android_views"}
+_ESCAPE_SYS = {"modules", "meta_path", "path_hooks", "path_importer_cache", "audit", "addaudithook", "_getframe"}
+_ESCAPE_SEALED = {"nt", "posix", "_thread", "_uuid", "winreg", "_winreg", "_winapi", "msvcrt", "_overlapped", "pwd",
+                  "grp", "_imp", "PIL._imaging", "_socket", "_posixsubprocess", "_io", "_extera", "exd_sandbox"}
+_ESCAPE_CALLS = {"exec", "eval", "compile", "open", "__import__", "system", "popen", "Popen", "call", "run",
+                 "check_output", "check_call", "copyfile", "copy", "copy2", "copytree", "move", "rmtree", "remove",
+                 "startfile", "spawnl", "execv", "getattr", "setattr"}
+
+
+def _escape_root(node):
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _escape_callable(node, modules):
+    if isinstance(node, ast.Name):
+        return node.id in ("exec", "eval", "compile", "open", "__import__", "getattr", "setattr", "delattr")
+    if isinstance(node, ast.Attribute):
+        root = _escape_root(node)
+        origin = (modules.get(root) or root or "").split(".")[0]
+        return origin in ("os", "subprocess", "shutil", "builtins", "nt", "posix", "pty", "_thread")             and node.attr in _ESCAPE_CALLS
+    return False
+
+
+def _escape_patterns(tree):
+    modules = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                modules[alias.asname or alias.name.split(".")[0]] = alias.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                if node.module.split(".")[0] in _ESCAPE_MODULES:
+                    modules[alias.asname or alias.name] = node.module.split(".")[0] + "." + alias.name
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in _ESCAPE_ATTRS:
+            return node.attr, node.lineno
+        if isinstance(node, ast.Name) and node.id in _ESCAPE_NAMES:
+            return node.id, node.lineno
+        if isinstance(node, ast.Attribute) and (node.attr in _ESCAPE_NAMES or node.attr.startswith("sbx_")):
+            return node.attr, node.lineno
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            value = node.value
+            if (value in _ESCAPE_ATTRS and value != "__builtins__") or value in _ESCAPE_NAMES or value.startswith("sbx_"):
+                return value, node.lineno
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            targets = [node.target]
+        elif isinstance(node, ast.Delete):
+            targets = node.targets
+        for target in targets:
+            if isinstance(target, ast.Attribute):
+                root = _escape_root(target)
+                origin = (modules.get(root) or "").split(".")[0]
+                if root in ("builtins", "__builtins__") or origin == "builtins":
+                    if hasattr(builtins, target.attr):
+                        return "patch %s.%s" % (root, target.attr), node.lineno
+                elif origin == "threading":
+                    if target.attr in ("_start_new_thread", "start_new_thread"):
+                        return "patch %s.%s" % (root, target.attr), node.lineno
+                elif origin in _ESCAPE_MODULES:
+                    return "patch %s.%s" % (root, target.attr), node.lineno
+                if root == "sys" and target.attr in _ESCAPE_SYS:
+                    return "sys." + target.attr, node.lineno
+            if isinstance(target, ast.Subscript):
+                base = target.value
+                if isinstance(base, ast.Attribute) and base.attr in _ESCAPE_SYS and _escape_root(base) == "sys":
+                    key = target.slice
+                    if not isinstance(key, ast.Constant) or not isinstance(key.value, str) \
+                            or key.value.split(".")[0] in _ESCAPE_MODULES or key.value in _ESCAPE_SEALED:
+                        return "sys.%s[...]" % base.attr, node.lineno
+                if isinstance(base, ast.Name) and base.id == "__builtins__":
+                    return "__builtins__[...]", node.lineno
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+            if name in ("setattr", "delattr") and node.args:
+                root = _escape_root(node.args[0])
+                origin = (modules.get(root) or "").split(".")[0]
+                if origin in _ESCAPE_MODULES or root in ("builtins", "__builtins__", "sys"):
+                    return "%s(%s)" % (name, root), node.lineno
+            if name in ("partial", "methodcaller", "MethodType") and node.args and _escape_callable(node.args[0], modules):
+                return "%s(...)" % name, node.lineno
+            if name in ("Thread", "Timer", "start_new_thread", "run_on_queue", "run_on_ui_thread", "run_on_main",
+                        "submit", "call_soon", "call_later", "run_in_executor", "map", "starmap"):
+                for value in list(node.args) + [k.value for k in node.keywords if k.arg in ("target", "function", "fn")]:
+                    if _escape_callable(value, modules):
+                        return "%s(%s)" % (name, ast.unparse(value) if hasattr(ast, "unparse") else "callable"), node.lineno
+            if name in ("__import__", "import_module") and node.args and isinstance(node.args[0], ast.Constant)                     and node.args[0].value in _ESCAPE_SEALED:
+                return "%s(%s)" % (name, node.args[0].value), node.lineno
+            if name == "reload" and node.args:
+                root = _escape_root(node.args[0])
+                if (modules.get(root) or root or "").split(".")[0] in _ESCAPE_MODULES:
+                    return "reload(%s)" % root, node.lineno
+    return None
+
+
 def _rules(source, capabilities):
     findings = []
     lines = source.lower().splitlines()
@@ -389,6 +499,9 @@ def _rules(source, capabilities):
         session.append("getauthkey")
     if any(k in low for k in ("exd_sandbox", "_exd_sandbox_installed", "_sandbox.json", "addaudithook")):
         add("SANDBOX_TAMPERING", "CRITICAL", "sandbox internals")
+    escape = _escape_patterns(tree) if tree is not None else None
+    if escape is not None:
+        add("SANDBOX_TAMPERING", "CRITICAL", escape[0], escape[1])
     if _BOT_TOKEN.search(source):
         add("EMBEDDED_TELEGRAM_BOT_TOKEN", "CRITICAL", "bot token in code")
     if "api.telegram.org/bot" in low:

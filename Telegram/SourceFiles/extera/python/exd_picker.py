@@ -186,14 +186,6 @@ def picked(token, paths):
         return False
     plugin_id, callback = entry
     paths = [os.path.normpath(str(p)) for p in (paths or []) if p]
-    try:
-        import extera_host
-        grant = getattr(extera_host, "_sandbox_grant", None)
-        if grant is not None and plugin_id:
-            for path in paths:
-                grant(plugin_id, path)
-    except Exception:
-        pass
     if callback is None:
         return True
     try:

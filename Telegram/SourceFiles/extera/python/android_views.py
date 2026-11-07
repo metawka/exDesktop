@@ -88,13 +88,22 @@ def theme_color(name):
         return 0
 
 
+_owners = {}
+
+
+def _scope(view_id):
+    import extera_host
+    return extera_host.owner_scope(_owners.get(view_id))
+
+
 def dispatch_click(view_id):
     with _lock:
         view = _views.get(view_id)
     if view is None:
         return False
     from android_utils import safe_call
-    safe_call(view._click)
+    with _scope(view_id):
+        safe_call(view._click)
     return True
 
 
@@ -104,8 +113,9 @@ def dispatch_text_changed(view_id, text):
     if view is None:
         return False
     from android_utils import safe_call
-    for watcher in getattr(view, "_watchers", []):
-        safe_call(getattr(watcher, "afterTextChanged", None), str(text))
+    with _scope(view_id):
+        for watcher in getattr(view, "_watchers", []):
+            safe_call(getattr(watcher, "afterTextChanged", None), str(text))
     return True
 
 
@@ -553,6 +563,11 @@ class View(metaclass=_UiClassMeta):
 
     def __init__(self, context=None):
         self._id = _nid()
+        try:
+            import extera_host
+            _owners[self._id] = extera_host.owner_now()
+        except Exception:
+            _owners[self._id] = "<unknown>"
         with _lock:
             _views[self._id] = self
         self._children = []

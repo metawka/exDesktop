@@ -359,7 +359,7 @@ void FillSettings(
 }
 
 [[nodiscard]] QJsonObject PluginPermissions(const QString &id) {
-	return Call(u"permissions"_q, QJsonObject{ { u"id"_q, id } }).toObject();
+	return SandboxQuery(u"permissions"_q, id).toObject();
 }
 
 [[nodiscard]] bool HasPermissions(const QJsonObject &permissions) {
@@ -407,11 +407,7 @@ void FillPermissions(
 				lt_target,
 				target),
 			.confirmed = [=](Fn<void()> close) {
-				Call(u"revoke_permission"_q, QJsonObject{
-					{ u"id"_q, id },
-					{ u"kind"_q, kind },
-					{ u"key"_q, key },
-				});
+				SandboxQuery(u"revoke"_q, id, kind, key);
 				close();
 				refresh();
 				notifyListChanged();
@@ -456,10 +452,7 @@ void FillPermissions(
 		controller->show(Ui::MakeConfirmBox({
 			.text = tr::lng_exd_plugin_perm_reset_all_sure(),
 			.confirmed = [=](Fn<void()> close) {
-				Call(u"revoke_permission"_q, QJsonObject{
-					{ u"id"_q, id },
-					{ u"kind"_q, u"all"_q },
-				});
+				SandboxQuery(u"revoke"_q, id, u"all"_q);
 				close();
 				refresh();
 				notifyListChanged();

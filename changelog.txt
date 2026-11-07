@@ -1,3 +1,12 @@
+7.3.3.11 (08.11.26)
+- Reworked plugin sandbox: access decisions are made in the client core, plugins can no longer disable the protection.
+- Plugins no longer get the computer name, user name, processor model, MAC address, registry data or screen captures.
+- UDP and local network access from plugins requires permission.
+- Account requests are blocked for plugins: sign-in and sessions, two-step verification, phone change, account deletion, Passport, payments, stars and gifts.
+- Links opened by plugins require confirmation.
+- Native modules in plugin dependencies are limited to known packages.
+- PluginGuard blocks plugins that try to bypass the sandbox.
+
 7.3.3.10 (07.11.26)
 - Compatibility with exteraGram plugins: Java and Android emulation, messages, notifications, files, images, plugin libraries and the Elyx format.
 - Android hooks for messages, chat, profile and chat list screens, external links and the app window.

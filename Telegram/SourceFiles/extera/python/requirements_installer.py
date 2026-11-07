@@ -13,6 +13,14 @@ _failed = {}
 
 _NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
+_NATIVE_ALLOWED = {
+    "numpy", "pillow", "lxml", "pyyaml", "charset-normalizer", "regex", "orjson", "ujson", "msgpack",
+    "cryptography", "aiohttp", "multidict", "yarl", "frozenlist", "propcache", "brotli", "zstandard",
+    "websockets", "markupsafe", "pydantic-core", "rapidfuzz", "levenshtein", "google-crc32c", "ruamel-yaml-clib",
+    "simplejson", "xxhash", "mmh3", "bcrypt", "argon2-cffi-bindings", "pynacl", "tiktoken", "jiter", "rpds-py",
+    "wrapt", "greenlet", "cython", "pycryptodome", "pycryptodomex", "uvloop", "httptools", "lz4", "tokenizers",
+}
+
 
 def configure(target: str):
     global _target
@@ -104,6 +112,9 @@ def _install_one(spec: str, depth: int = 0):
         _failed[name] = f"no compatible wheel for {name}"
         raise RuntimeError(_failed[name])
     wheel = files[0]
+    if _wheel_score(wheel.get("filename", "")) == 4 and _normalize(name) not in _NATIVE_ALLOWED:
+        _failed[name] = f"{name} contains native code and is not allowed for plugins"
+        raise RuntimeError(_failed[name])
     request = urllib.request.Request(
         wheel["url"], headers={"User-Agent": "exDesktop"})
     with urllib.request.urlopen(request, timeout=60) as response:

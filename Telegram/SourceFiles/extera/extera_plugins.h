@@ -44,6 +44,13 @@ int ExportAll(const QString &folder);
 	const QString &method,
 	const QJsonObject &args = QJsonObject());
 
+QJsonValue SandboxQuery(
+	const QString &method,
+	const QString &first,
+	const QString &second = QString(),
+	const QString &third = QString(),
+	const QStringList &paths = QStringList());
+
 [[nodiscard]] bool Bypassing();
 [[nodiscard]] SendResult OnSendMessage(
 	not_null<History*> history,

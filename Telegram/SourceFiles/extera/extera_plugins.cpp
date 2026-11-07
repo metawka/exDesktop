@@ -12,7 +12,9 @@
 #include "api/api_text_entities.h"
 #include "apiwrap.h"
 #include "base/call_delayed.h"
+#include "base/random.h"
 #include "core/application.h"
+#include "core/click_handler_types.h"
 #include "core/file_utilities.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
@@ -48,6 +50,10 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <map>
+#include <mutex>
+#include <set>
+#include <string_view>
 #include <thread>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
@@ -459,6 +465,493 @@ PyObject *NativeToast(PyObject *self, PyObject *args) {
 	return Py_BuildValue("");
 }
 
+// Sandbox
+
+struct SandboxEntry {
+	uint64 token = 0;
+	QString owner;
+};
+
+PyObject *SandboxDecide = nullptr;
+PyObject *SandboxOwnerFn = nullptr;
+PyObject *SandboxQueryFn = nullptr;
+PyObject *SandboxAnswerFn = nullptr;
+PyObject *SandboxCreateDynamic = nullptr;
+PyObject *SandboxCreateBuiltin = nullptr;
+PyObject *SandboxPermissionError = nullptr;
+PyObject *SandboxImportError = nullptr;
+PyObject *SandboxEmptyTuple = nullptr;
+std::thread::id SandboxMain;
+std::mutex SandboxMutex;
+std::map<uint64, QString> SandboxTickets;
+thread_local int SandboxDepth = 0;
+thread_local bool SandboxMarked = false;
+thread_local std::vector<SandboxEntry> SandboxOwners;
+
+[[nodiscard]] uint64 SandboxToken() {
+	return base::RandomValue<uint64>() | 1ULL;
+}
+
+[[nodiscard]] bool SandboxWatched(std::string_view event) {
+	static const auto exact = std::set<std::string_view>{
+		"open", "os.listdir", "os.scandir", "glob.glob", "os.remove",
+		"os.rmdir", "os.mkdir", "os.chmod", "os.chown", "os.utime",
+		"os.truncate", "os.mkfifo", "os.mknod", "os.setxattr",
+		"os.removexattr", "shutil.rmtree", "shutil.chown", "os.symlink",
+		"os.link", "os.rename", "shutil.move", "shutil.copyfile",
+		"shutil.copytree", "shutil.copymode", "shutil.copystat",
+		"shutil.make_archive", "shutil.unpack_archive", "tempfile.mkstemp",
+		"tempfile.mkdtemp", "subprocess.Popen", "os.system", "os.exec",
+		"os.spawn", "os.posix_spawn", "os.startfile", "os.fork",
+		"os.forkpty", "os.kill", "os.killpg", "pty.spawn", "import",
+		"compile", "sqlite3.connect", "sqlite3.enable_load_extension",
+		"sqlite3.load_extension", "socket.getaddrinfo",
+		"socket.gethostbyname", "socket.gethostbyname_ex",
+		"socket.gethostbyaddr", "socket.getnameinfo", "socket.gethostname",
+		"socket.sethostname", "socket.connect", "socket.bind",
+		"socket.sendto", "socket.sendmsg", "urllib.Request",
+		"http.client.connect", "ftplib.connect", "smtplib.connect",
+		"poplib.connect", "imaplib.open", "nntplib.connect",
+		"telnetlib.Telnet.open", "code.__new__", "marshal.loads",
+		"marshal.load", "sys.settrace", "sys.setprofile", "gc.get_objects",
+		"gc.get_referrers", "gc.get_referents", "sys._current_frames",
+		"sys.addaudithook", "cpython.PyInterpreterState_Clear", "os.chdir",
+		"os.chroot", "os.add_dll_directory", "os.putenv", "os.unsetenv",
+	};
+	if (exact.contains(event)) {
+		return true;
+	}
+	for (const auto prefix : {
+			std::string_view("ctypes."),
+			std::string_view("winreg."),
+			std::string_view("_winapi."),
+			std::string_view("msvcrt."),
+			std::string_view("fcntl."),
+			std::string_view("exd.") }) {
+		if (event.starts_with(prefix)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+[[nodiscard]] QByteArray SandboxVerdict(const char *event, PyObject *args) {
+	if (!SandboxDecide) {
+		return QByteArray();
+	}
+	++SandboxDepth;
+	PyObject *type = nullptr;
+	PyObject *value = nullptr;
+	PyObject *trace = nullptr;
+	PyErr_Fetch(&type, &value, &trace);
+	auto result = QByteArray();
+	const auto verdict = PyObject_CallFunction(
+		SandboxDecide,
+		"sO",
+		event,
+		args ? args : SandboxEmptyTuple);
+	if (verdict) {
+		if (PyUnicode_Check(verdict)) {
+			if (const auto utf = PyUnicode_AsUTF8(verdict)) {
+				result = QByteArray(utf);
+			}
+		}
+		Py_DECREF(verdict);
+	}
+	PyErr_Clear();
+	PyErr_Restore(type, value, trace);
+	--SandboxDepth;
+	return result;
+}
+
+void SandboxRaise(const QByteArray &verdict) {
+	const auto import = verdict.startsWith("import:");
+	const auto text = import ? verdict.mid(7) : verdict;
+	PyErr_SetString(
+		import ? SandboxImportError : SandboxPermissionError,
+		text.constData());
+}
+
+int SandboxAudit(const char *event, PyObject *args, void *data) {
+	if (!SandboxDecide || SandboxDepth > 0 || !SandboxWatched(event)) {
+		return 0;
+	}
+	const auto verdict = SandboxVerdict(event, args);
+	if (verdict.isEmpty()) {
+		return 0;
+	}
+	SandboxRaise(verdict);
+	return -1;
+}
+
+[[nodiscard]] QString SandboxOwnerNow() {
+	if (!SandboxOwnerFn) {
+		return QString();
+	}
+	++SandboxDepth;
+	PyObject *type = nullptr;
+	PyObject *value = nullptr;
+	PyObject *trace = nullptr;
+	PyErr_Fetch(&type, &value, &trace);
+	auto result = QString();
+	if (const auto owner = PyObject_CallNoArgs(SandboxOwnerFn)) {
+		if (PyUnicode_Check(owner)) {
+			if (const auto utf = PyUnicode_AsUTF8(owner)) {
+				result = QString::fromUtf8(utf);
+			}
+		}
+		Py_DECREF(owner);
+	}
+	PyErr_Clear();
+	PyErr_Restore(type, value, trace);
+	--SandboxDepth;
+	return result;
+}
+
+void SandboxPushOwner(const QString &owner, uint64 token) {
+	SandboxOwners.push_back({ token, owner });
+}
+
+void SandboxPopOwner(uint64 token) {
+	for (auto i = int(SandboxOwners.size()) - 1; i >= 0; --i) {
+		if (SandboxOwners[i].token == token) {
+			SandboxOwners.resize(i);
+			return;
+		}
+	}
+}
+
+void SandboxAnswerCall(const QString &token, const QString &value) {
+	if (!SandboxAnswerFn) {
+		return;
+	}
+	auto gil = Gil();
+	++SandboxDepth;
+	const auto result = PyObject_CallFunction(
+		SandboxAnswerFn,
+		"ss",
+		token.toUtf8().constData(),
+		value.toUtf8().constData());
+	Py_XDECREF(result);
+	PyErr_Clear();
+	--SandboxDepth;
+}
+
+[[nodiscard]] QString SandboxPluginName(const QString &id) {
+	for (const auto &entry : Call(u"list"_q).toArray()) {
+		const auto info = entry.toObject();
+		if (info.value(u"id"_q).toString() == id) {
+			const auto name = info.value(u"name"_q).toString();
+			return name.isEmpty() ? id : name;
+		}
+	}
+	return id;
+}
+
+PyObject *NativeSbxInstall(PyObject *self, PyObject *args) {
+	PyObject *decide = nullptr;
+	PyObject *owner = nullptr;
+	PyObject *query = nullptr;
+	PyObject *answer = nullptr;
+	PyObject *dynamic = nullptr;
+	PyObject *builtin = nullptr;
+	PyObject *permission = nullptr;
+	PyObject *importError = nullptr;
+	if (!PyArg_ParseTuple(
+			args,
+			"OOOOOOOO",
+			&decide,
+			&owner,
+			&query,
+			&answer,
+			&dynamic,
+			&builtin,
+			&permission,
+			&importError)) {
+		return nullptr;
+	}
+	if (SandboxDecide) {
+		return PyBool_FromLong(0);
+	}
+	for (const auto object : {
+			decide, owner, query, answer, dynamic, builtin, permission, importError }) {
+		Py_INCREF(object);
+	}
+	SandboxEmptyTuple = PyTuple_New(0);
+	SandboxOwnerFn = owner;
+	SandboxQueryFn = query;
+	SandboxAnswerFn = answer;
+	SandboxCreateDynamic = dynamic;
+	SandboxCreateBuiltin = builtin;
+	SandboxPermissionError = permission;
+	SandboxImportError = importError;
+	SandboxMain = std::this_thread::get_id();
+	SandboxDecide = decide;
+	PySys_AddAuditHook(SandboxAudit, nullptr);
+	return PyBool_FromLong(1);
+}
+
+PyObject *NativeSbxState(PyObject *self, PyObject *args) {
+	const auto owner = SandboxOwners.empty()
+		? Py_BuildValue("")
+		: PyUnicode_FromString(SandboxOwners.back().owner.toUtf8().constData());
+	return Py_BuildValue(
+		"(NNN)",
+		owner,
+		PyBool_FromLong(SandboxMarked ? 1 : 0),
+		PyBool_FromLong(std::this_thread::get_id() == SandboxMain ? 1 : 0));
+}
+
+PyObject *NativeSbxPush(PyObject *self, PyObject *args) {
+	const char *owner = nullptr;
+	if (!PyArg_ParseTuple(args, "s", &owner)) {
+		return nullptr;
+	}
+	const auto value = QString::fromUtf8(owner);
+	if (value.isEmpty()) {
+		PyErr_SetString(SandboxPermissionError, "exDesktop sandbox: invalid owner");
+		return nullptr;
+	}
+	const auto token = SandboxToken();
+	SandboxPushOwner(value, token);
+	return PyLong_FromUnsignedLongLong(token);
+}
+
+PyObject *NativeSbxPop(PyObject *self, PyObject *args) {
+	unsigned long long token = 0;
+	if (!PyArg_ParseTuple(args, "K", &token)) {
+		return nullptr;
+	}
+	SandboxPopOwner(uint64(token));
+	return Py_BuildValue("");
+}
+
+PyObject *NativeSbxOwner(PyObject *self, PyObject *args) {
+	return PyUnicode_FromString(SandboxOwnerNow().toUtf8().constData());
+}
+
+PyObject *NativeSbxTicket(PyObject *self, PyObject *args) {
+	const auto owner = SandboxOwnerNow();
+	const auto token = SandboxToken();
+	{
+		std::lock_guard lock(SandboxMutex);
+		SandboxTickets[token] = owner;
+	}
+	return PyLong_FromUnsignedLongLong(token);
+}
+
+PyObject *NativeSbxThreadEntry(PyObject *self, PyObject *args) {
+	unsigned long long ticket = 0;
+	PyObject *callable = nullptr;
+	PyObject *callArgs = nullptr;
+	PyObject *callKwargs = nullptr;
+	if (!PyArg_ParseTuple(args, "KOOO", &ticket, &callable, &callArgs, &callKwargs)) {
+		return nullptr;
+	}
+	auto owner = u"<unknown>"_q;
+	{
+		std::lock_guard lock(SandboxMutex);
+		const auto i = SandboxTickets.find(uint64(ticket));
+		if (i != end(SandboxTickets)) {
+			owner = i->second;
+			SandboxTickets.erase(i);
+		}
+	}
+	SandboxMarked = true;
+	const auto token = SandboxToken();
+	SandboxPushOwner(owner, token);
+	const auto kwargs = PyDict_Check(callKwargs) ? callKwargs : nullptr;
+	const auto result = PyTuple_Check(callArgs)
+		? PyObject_Call(callable, callArgs, kwargs)
+		: PyObject_Call(callable, SandboxEmptyTuple, kwargs);
+	SandboxPopOwner(token);
+	return result;
+}
+
+PyObject *SandboxGuardedCall(const char *event, PyObject *real, PyObject *args) {
+	if (!real) {
+		PyErr_SetString(SandboxPermissionError, "exDesktop sandbox: not available");
+		return nullptr;
+	}
+	if (SandboxDepth == 0) {
+		const auto verdict = SandboxVerdict(event, args);
+		if (!verdict.isEmpty()) {
+			SandboxRaise(verdict);
+			return nullptr;
+		}
+	}
+	return PyObject_Call(real, args, nullptr);
+}
+
+PyObject *NativeSbxCreateDynamic(PyObject *self, PyObject *args) {
+	return SandboxGuardedCall("exd.create_dynamic", SandboxCreateDynamic, args);
+}
+
+PyObject *NativeSbxCreateBuiltin(PyObject *self, PyObject *args) {
+	return SandboxGuardedCall("exd.create_builtin", SandboxCreateBuiltin, args);
+}
+
+PyObject *NativeSbxPrompt(PyObject *self, PyObject *args) {
+	const char *kind = nullptr;
+	const char *plugin = nullptr;
+	const char *target = nullptr;
+	const char *message = nullptr;
+	const char *buttons = nullptr;
+	const char *token = nullptr;
+	if (!PyArg_ParseTuple(args, "ssssss", &kind, &plugin, &target, &message, &buttons, &token)) {
+		return nullptr;
+	}
+	const auto kindValue = QString::fromUtf8(kind);
+	const auto pluginValue = QString::fromUtf8(plugin);
+	const auto targetValue = QString::fromUtf8(target);
+	const auto messageValue = QString::fromUtf8(message);
+	const auto buttonsValue = QJsonDocument::fromJson(QByteArray(buttons)).array();
+	const auto tokenValue = QString::fromUtf8(token);
+	crl::on_main([=] {
+		const auto controller = ActiveController();
+		if (!controller) {
+			SandboxAnswerCall(tokenValue, u"deny"_q);
+			return;
+		}
+		auto values = std::map<int, QString>();
+		for (const auto &entry : buttonsValue) {
+			const auto object = entry.toObject();
+			values[object.value(u"which"_q).toInt()]
+				= object.value(u"value"_q).toString();
+		}
+		const auto data = QJsonObject{
+			{ u"exd"_q, QJsonObject{
+				{ u"kind"_q, kindValue },
+				{ u"plugin"_q, pluginValue },
+				{ u"target"_q, targetValue },
+			} },
+			{ u"message"_q, QString(messageValue).replace(
+				u"{name}"_q,
+				SandboxPluginName(pluginValue)) },
+			{ u"buttons"_q, buttonsValue },
+		};
+		const auto answered = std::make_shared<bool>(false);
+		ShowPermissionAlert(controller, data, [=](QJsonValue which) {
+			if (*answered) {
+				return;
+			}
+			*answered = true;
+			const auto i = which.isDouble()
+				? values.find(which.toInt())
+				: end(values);
+			SandboxAnswerCall(
+				tokenValue,
+				(i != end(values)) ? i->second : u"dismiss"_q);
+		});
+	});
+	return Py_BuildValue("");
+}
+
+PyObject *NativeSbxToast(PyObject *self, PyObject *args) {
+	const char *text = nullptr;
+	const char *plugin = nullptr;
+	if (!PyArg_ParseTuple(args, "ss", &text, &plugin)) {
+		return nullptr;
+	}
+	const auto textValue = QString::fromUtf8(text);
+	const auto pluginValue = QString::fromUtf8(plugin);
+	crl::on_main([=] {
+		ShowToast(QString(textValue).replace(
+			u"{name}"_q,
+			SandboxPluginName(pluginValue)));
+	});
+	return Py_BuildValue("");
+}
+
+[[nodiscard]] bool SandboxRequestAllowed(const QVector<mtpPrime> &primes) {
+	if (primes.isEmpty()) {
+		return false;
+	}
+	static const auto denied = base::flat_set<mtpTypeId>{
+		mtpTypeId(mtpc_auth_acceptLoginToken),
+		mtpTypeId(mtpc_auth_exportLoginToken),
+		mtpTypeId(mtpc_auth_importLoginToken),
+		mtpTypeId(mtpc_auth_exportAuthorization),
+		mtpTypeId(mtpc_auth_importAuthorization),
+		mtpTypeId(mtpc_auth_importBotAuthorization),
+		mtpTypeId(mtpc_auth_importWebTokenAuthorization),
+		mtpTypeId(mtpc_auth_logOut),
+		mtpTypeId(mtpc_auth_resetAuthorizations),
+		mtpTypeId(mtpc_auth_sendCode),
+		mtpTypeId(mtpc_auth_resendCode),
+		mtpTypeId(mtpc_auth_cancelCode),
+		mtpTypeId(mtpc_auth_signIn),
+		mtpTypeId(mtpc_auth_signUp),
+		mtpTypeId(mtpc_auth_checkPassword),
+		mtpTypeId(mtpc_auth_bindTempAuthKey),
+		mtpTypeId(mtpc_auth_dropTempAuthKeys),
+		mtpTypeId(mtpc_auth_recoverPassword),
+		mtpTypeId(mtpc_auth_requestPasswordRecovery),
+		mtpTypeId(mtpc_auth_requestFirebaseSms),
+		mtpTypeId(mtpc_auth_resetLoginEmail),
+		mtpTypeId(mtpc_account_resetAuthorization),
+		mtpTypeId(mtpc_account_getAuthorizations),
+		mtpTypeId(mtpc_account_setAuthorizationTTL),
+		mtpTypeId(mtpc_account_changeAuthorizationSettings),
+		mtpTypeId(mtpc_account_getWebAuthorizations),
+		mtpTypeId(mtpc_account_resetWebAuthorization),
+		mtpTypeId(mtpc_account_resetWebAuthorizations),
+		mtpTypeId(mtpc_account_deleteAccount),
+		mtpTypeId(mtpc_account_getPassword),
+		mtpTypeId(mtpc_account_getPasswordSettings),
+		mtpTypeId(mtpc_account_updatePasswordSettings),
+		mtpTypeId(mtpc_account_confirmPasswordEmail),
+		mtpTypeId(mtpc_account_resendPasswordEmail),
+		mtpTypeId(mtpc_account_cancelPasswordEmail),
+		mtpTypeId(mtpc_account_resetPassword),
+		mtpTypeId(mtpc_account_declinePasswordReset),
+		mtpTypeId(mtpc_account_getTmpPassword),
+		mtpTypeId(mtpc_account_changePhone),
+		mtpTypeId(mtpc_account_sendChangePhoneCode),
+		mtpTypeId(mtpc_account_sendConfirmPhoneCode),
+		mtpTypeId(mtpc_account_confirmPhone),
+		mtpTypeId(mtpc_account_sendVerifyEmailCode),
+		mtpTypeId(mtpc_account_verifyEmail),
+		mtpTypeId(mtpc_account_updateDeviceLocked),
+		mtpTypeId(mtpc_account_initTakeoutSession),
+		mtpTypeId(mtpc_account_finishTakeoutSession),
+		mtpTypeId(mtpc_account_getAuthorizationForm),
+		mtpTypeId(mtpc_account_acceptAuthorization),
+		mtpTypeId(mtpc_account_getAllSecureValues),
+		mtpTypeId(mtpc_account_getSecureValue),
+		mtpTypeId(mtpc_account_saveSecureValue),
+		mtpTypeId(mtpc_account_deleteSecureValue),
+		mtpTypeId(mtpc_messages_requestUrlAuth),
+		mtpTypeId(mtpc_messages_acceptUrlAuth),
+		mtpTypeId(mtpc_messages_sendPaidReaction),
+		mtpTypeId(mtpc_payments_sendStarsForm),
+		mtpTypeId(mtpc_payments_sendPaymentForm),
+		mtpTypeId(mtpc_payments_transferStarGift),
+		mtpTypeId(mtpc_payments_convertStarGift),
+		mtpTypeId(mtpc_payments_upgradeStarGift),
+		mtpTypeId(mtpc_payments_saveStarGift),
+		mtpTypeId(mtpc_payments_updateStarGiftPrice),
+		mtpTypeId(mtpc_payments_getStarGiftWithdrawalUrl),
+		mtpTypeId(mtpc_payments_getStarsRevenueWithdrawalUrl),
+		mtpTypeId(mtpc_payments_sendStarGiftOffer),
+		mtpTypeId(mtpc_payments_resolveStarGiftOffer),
+		mtpTypeId(mtpc_payments_craftStarGift),
+		mtpTypeId(mtpc_bots_exportBotToken),
+		mtpTypeId(mtpc_initConnection),
+		mtpTypeId(mtpc_invokeWithLayer),
+		mtpTypeId(mtpc_invokeAfterMsg),
+		mtpTypeId(mtpc_invokeAfterMsgs),
+		mtpTypeId(mtpc_invokeWithoutUpdates),
+		mtpTypeId(mtpc_invokeWithTakeout),
+		mtpTypeId(mtpc_invokeWithMessagesRange),
+		mtpTypeId(mtpc_invokeWithBusinessConnection),
+		mtpTypeId(mtpc_invokeWithGooglePlayIntegrity),
+		mtpTypeId(mtpc_invokeWithApnsSecret),
+		mtpTypeId(mtpc_invokeWithReCaptcha),
+	};
+	return !denied.contains(mtpTypeId(primes[0]));
+}
+
 PyObject *NativeOpenUrl(PyObject *self, PyObject *args) {
 	const char *text = nullptr;
 	if (!PyArg_ParseTuple(args, "s", &text)) {
@@ -467,7 +960,7 @@ PyObject *NativeOpenUrl(PyObject *self, PyObject *args) {
 	const auto value = QString::fromUtf8(text);
 	crl::on_main([=] {
 		Instance().urlFromPlugin = true;
-		UrlClickHandler::Open(value);
+		HiddenUrlClickHandler::Open(value);
 		Instance().urlFromPlugin = false;
 	});
 	return Py_BuildValue("");
@@ -484,11 +977,15 @@ PyObject *NativePickFile(PyObject *self, PyObject *args) {
 	const auto tokenValue = QString::fromUtf8(token);
 	const auto titleValue = QString::fromUtf8(title);
 	const auto filterValue = QString::fromUtf8(filter);
+	const auto owner = SandboxOwnerNow();
 	crl::on_main([=] {
 		const auto finish = [=](QStringList paths) {
 			auto list = QJsonArray();
 			for (const auto &path : paths) {
 				list.push_back(path);
+			}
+			if (!owner.isEmpty() && owner != u"<unknown>"_q && !paths.isEmpty()) {
+				SandboxQuery(u"grant"_q, owner, QString(), QString(), paths);
 			}
 			Call(u"file_picked"_q, QJsonObject{
 				{ u"token"_q, tokenValue },
@@ -562,9 +1059,17 @@ PyObject *NativeRunOnMain(PyObject *self, PyObject *args) {
 		return Py_BuildValue("");
 	}
 	Py_INCREF(callable);
+	const auto owner = SandboxOwnerNow();
 	const auto run = [=] {
 		auto gil = Gil();
+		const auto token = SandboxToken();
+		if (!owner.isEmpty()) {
+			SandboxPushOwner(owner, token);
+		}
 		const auto result = PyObject_CallNoArgs(callable);
+		if (!owner.isEmpty()) {
+			SandboxPopOwner(token);
+		}
 		if (!result) {
 			PyErr_Print();
 		}
@@ -855,6 +1360,17 @@ PyObject *NativeSendRawRequest(PyObject *self, PyObject *args) {
 	}
 	auto primes = QVector<mtpPrime>(bytes.size() / 4);
 	memcpy(primes.data(), bytes.constData(), bytes.size());
+	if (!SandboxRequestAllowed(primes)) {
+		LOG(("Plugins: blocked request %1").arg(uint32(primes[0]), 8, 16, QChar('0')));
+		crl::on_main([=] {
+			Call(u"request_callback"_q, QJsonObject{
+				{ u"id"_q, callback },
+				{ u"error"_q, u"REQUEST_BLOCKED_BY_EXDESKTOP"_q },
+				{ u"code"_q, 403 },
+			});
+		});
+		return PyLong_FromLongLong(0);
+	}
 	const auto session = &controller->session();
 	const auto id = session->api().request(
 		RawRequest(RawRequestBare(std::move(primes)))
@@ -1022,6 +1538,17 @@ PyMethodDef NativeMethods[] = {
 	{ "measure_text", NativeMeasureText, METH_VARARGS, nullptr },
 	{ "ui_metrics", NativeUiMetrics, METH_VARARGS, nullptr },
 	{ "theme_color", NativeThemeColor, METH_VARARGS, nullptr },
+	{ "sbx_install", NativeSbxInstall, METH_VARARGS, nullptr },
+	{ "sbx_state", NativeSbxState, METH_NOARGS, nullptr },
+	{ "sbx_push", NativeSbxPush, METH_VARARGS, nullptr },
+	{ "sbx_pop", NativeSbxPop, METH_VARARGS, nullptr },
+	{ "sbx_owner", NativeSbxOwner, METH_NOARGS, nullptr },
+	{ "sbx_ticket", NativeSbxTicket, METH_NOARGS, nullptr },
+	{ "sbx_thread_entry", NativeSbxThreadEntry, METH_VARARGS, nullptr },
+	{ "sbx_create_dynamic", NativeSbxCreateDynamic, METH_VARARGS, nullptr },
+	{ "sbx_create_builtin", NativeSbxCreateBuiltin, METH_VARARGS, nullptr },
+	{ "sbx_prompt", NativeSbxPrompt, METH_VARARGS, nullptr },
+	{ "sbx_toast", NativeSbxToast, METH_VARARGS, nullptr },
 	{ nullptr, nullptr, 0, nullptr },
 };
 
@@ -1400,6 +1927,53 @@ QJsonValue Call(const QString &method, const QJsonObject &args) {
 		return QJsonValue();
 	}
 	return object.value(u"result"_q);
+}
+
+QJsonValue SandboxQuery(
+		const QString &method,
+		const QString &first,
+		const QString &second,
+		const QString &third,
+		const QStringList &paths) {
+	auto &state = Instance();
+	if (!state.started || !SandboxQueryFn) {
+		return QJsonValue();
+	}
+	auto response = QByteArray();
+	{
+		auto gil = Gil();
+		++SandboxDepth;
+		const auto list = PyList_New(0);
+		for (const auto &path : paths) {
+			const auto item = PyUnicode_FromString(path.toUtf8().constData());
+			PyList_Append(list, item);
+			Py_XDECREF(item);
+		}
+		const auto result = PyObject_CallFunction(
+			SandboxQueryFn,
+			"ssssO",
+			method.toUtf8().constData(),
+			first.toUtf8().constData(),
+			second.toUtf8().constData(),
+			third.toUtf8().constData(),
+			list);
+		Py_XDECREF(list);
+		if (result && PyUnicode_Check(result)) {
+			if (const auto utf = PyUnicode_AsUTF8(result)) {
+				response = QByteArray(utf);
+			}
+		}
+		Py_XDECREF(result);
+		PyErr_Clear();
+		--SandboxDepth;
+	}
+	const auto document = QJsonDocument::fromJson(response);
+	if (document.isObject()) {
+		return document.object();
+	} else if (document.isArray()) {
+		return document.array();
+	}
+	return QJsonValue(response == "true");
 }
 
 bool Bypassing() {

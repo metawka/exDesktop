@@ -20,7 +20,7 @@
 namespace Extera::Update {
 namespace {
 
-constexpr auto kExteraBuild = 10;
+constexpr auto kExteraBuild = 11;
 constexpr auto kCheckInterval = 6 * 60 * 60 * crl::time(1000);
 constexpr auto kFirstCheckDelay = 10 * crl::time(1000);
 
