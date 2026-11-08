@@ -422,6 +422,7 @@ public:
 	[[nodiscard]] rpl::producer<not_null<HistoryItem*>> itemShowHighlightRequest() const;
 	void requestItemViewRefresh(not_null<const HistoryItem*> item);
 	void exteraRefreshAllViews();
+	void exteraReapplyPremiumEmoji();
 	[[nodiscard]] bool exteraIsDeleted(FullMsgId id) const;
 	void exteraRemember(PeerId peerId, MsgId id, const MTPMessage &message);
 	void exteraMarkDeleted(FullMsgId id);

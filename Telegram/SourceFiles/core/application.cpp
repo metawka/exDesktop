@@ -236,6 +236,18 @@ Application::Application()
 	Ui::SetMutedSwitches(Extera::Bool(u"md3_switches_muted"_q));
 	Extera::Config::Instance().changes(
 	) | rpl::filter([](const QString &key) {
+		return key == u"local_premium_emoji"_q;
+	}) | rpl::on_next([=] {
+		crl::on_main(this, [=] {
+			for (const auto &[index, account] : domain().accounts()) {
+				if (account->sessionExists()) {
+					account->session().data().exteraReapplyPremiumEmoji();
+				}
+			}
+		});
+	}, _lifetime);
+	Extera::Config::Instance().changes(
+	) | rpl::filter([](const QString &key) {
 		static const auto keys = base::flat_set<QString>{
 			u"remove_message_tail"_q,
 			u"hide_share_button"_q,

@@ -7,6 +7,7 @@
 #include "data/stickers/data_custom_emoji.h"
 #include "extera/extera_config.h"
 #include "history/history.h"
+#include "history/history_item.h"
 #include "main/main_session.h"
 #include "ui/emoji_config.h"
 
@@ -16,6 +17,13 @@ namespace Extera {
 namespace {
 
 constexpr auto kPrefix = "tg://emoji?id=";
+
+[[nodiscard]] auto &Originals() {
+	static auto result = base::flat_map<
+		not_null<const HistoryItem*>,
+		TextWithEntities>();
+	return result;
+}
 
 } // namespace
 
@@ -58,10 +66,15 @@ void ConvertPremiumEmojiForSending(
 	}
 }
 
-void ApplyLocalPremiumEmoji(TextWithEntities &text) {
+void ApplyLocalPremiumEmoji(
+		not_null<const HistoryItem*> item,
+		TextWithEntities &text) {
+	Originals().remove(item);
 	if (!Bool(u"local_premium_emoji"_q)) {
 		return;
 	}
+	const auto original = text;
+	auto changed = false;
 	static const auto pattern = QRegularExpression(
 		u"^tg://emoji\\?id=(\\d+)$"_q);
 	for (auto &entity : text.entities) {
@@ -87,6 +100,31 @@ void ApplyLocalPremiumEmoji(TextWithEntities &text) {
 			entity.offset(),
 			entity.length(),
 			Data::SerializeCustomEmojiId(DocumentId(id)));
+		changed = true;
+	}
+	if (changed) {
+		Originals().emplace(item, original);
+	}
+}
+
+void ForgetLocalPremiumEmoji(not_null<const HistoryItem*> item) {
+	Originals().remove(item);
+}
+
+void ReapplyLocalPremiumEmoji(not_null<HistoryItem*> item) {
+	const auto i = Originals().find(item);
+	if (i != end(Originals())) {
+		auto original = i->second;
+		item->setText(std::move(original));
+		return;
+	}
+	const auto &text = item->originalText();
+	for (const auto &entity : text.entities) {
+		if (entity.type() == EntityType::CustomUrl
+			&& entity.data().startsWith(QString::fromLatin1(kPrefix))) {
+			item->setText(text);
+			return;
+		}
 	}
 }
 
