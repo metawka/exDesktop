@@ -7,10 +7,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/sections/settings_chat.h"
 #include "settings/sections/settings_extera.h"
+#include "extera/extera_config.h"
 
 #include "settings/settings_common_session.h"
 
 #include "base/timer_rpl.h"
+#include "base/event_filter.h"
+#include <QtGui/QPainterPath>
 #include "settings/settings_builder.h"
 #include "settings/sections/settings_advanced.h"
 #include "settings/sections/settings_main.h"
@@ -96,6 +99,34 @@ constexpr auto kCustomColorButtonParts = 7;
 	return Window::Theme::SystemAccentColor().has_value();
 }
 
+// exDesktop / Material 3 Expressive: colour changes should not snap. A snapshot of the window is
+// laid over it and faded out while the new palette is already painted underneath.
+void CrossfadeWindow(QWidget *any) {
+	const auto window = any ? any->window() : nullptr;
+	if (!window || !window->isVisible()) {
+		return;
+	}
+	const auto shot = Ui::GrabWidget(window);
+	const auto overlay = Ui::CreateChild<Ui::RpWidget>(window);
+	overlay->setAttribute(Qt::WA_TransparentForMouseEvents);
+	overlay->setGeometry(window->rect());
+	overlay->show();
+	overlay->raise();
+	const auto fade = overlay->lifetime().make_state<Ui::Animations::Simple>();
+	overlay->paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(overlay);
+		p.setOpacity(fade->value(0.));
+		p.drawPixmap(0, 0, shot);
+	}, overlay->lifetime());
+	fade->start([=] {
+		overlay->update();
+		if (!fade->animating()) {
+			overlay->deleteLater();
+		}
+	}, 1., 0., 460, anim::easeOutCubic);
+}
+
 class ColorsPalette final {
 public:
 	using Type = Window::Theme::EmbeddedType;
@@ -129,7 +160,14 @@ private:
 		Ui::AbstractButton _widget;
 		std::vector<QColor> _colors;
 		Ui::Animations::Simple _selectedAnimation;
+		Ui::Animations::Simple _hoverAnimation;
+		Ui::Animations::Simple _pressAnimation;
+		Ui::Animations::Basic _spin;
+		double _turn = 0.;
+		crl::time _turnLast = 0;
 		bool _selected = false;
+		bool _over = false;
+		bool _down = false;
 
 	};
 
@@ -190,6 +228,57 @@ ColorsPalette::Button::Button(
 	) | rpl::on_next([=] {
 		paint();
 	}, _widget.lifetime());
+
+	_spin.init([=](crl::time now) {
+		if (_turnLast) {
+			_turn += std::min<crl::time>(now - _turnLast, 100) / 1000. * 1.6;
+		}
+		_turnLast = now;
+		_widget.update();
+		return _over || _hoverAnimation.animating();
+	});
+	base::install_event_filter(&_widget, [=](not_null<QEvent*> e) {
+		const auto type = e->type();
+		const auto setOver = [&](bool over) {
+			if (_over == over) {
+				return;
+			}
+			_over = over;
+			_hoverAnimation.start(
+				[=] { _widget.update(); },
+				_hoverAnimation.value(over ? 0. : 1.),
+				over ? 1. : 0.,
+				over ? 420 : 380,
+				over ? anim::easeOutBack : anim::easeOutCubic);
+			if (over && !_spin.animating()) {
+				_turnLast = 0;
+				_spin.start();
+			}
+		};
+		const auto setDown = [&](bool down) {
+			if (_down == down) {
+				return;
+			}
+			_down = down;
+			_pressAnimation.start(
+				[=] { _widget.update(); },
+				_pressAnimation.value(down ? 0. : 1.),
+				down ? 1. : 0.,
+				down ? 110 : 420,
+				down ? anim::easeOutCubic : anim::easeOutBack);
+		};
+		if (type == QEvent::Enter) {
+			setOver(true);
+		} else if (type == QEvent::Leave) {
+			setOver(false);
+			setDown(false);
+		} else if (type == QEvent::MouseButtonPress) {
+			setDown(true);
+		} else if (type == QEvent::MouseButtonRelease) {
+			setDown(false);
+		}
+		return base::EventFilterResult::Continue;
+	});
 }
 
 void ColorsPalette::Button::moveToLeft(int x, int y) {
@@ -236,11 +325,44 @@ void ColorsPalette::Button::paint() {
 	PainterHighQualityEnabler hq(p);
 
 	if (_colors.size() == 1) {
-		PaintRoundColorButton(
-			p,
-			st::settingsAccentColorSize,
-			_colors.front(),
-			_selectedAnimation.value(_selected ? 1. : 0.));
+		// Material 3 Expressive swatch: a circle that grows on hover, and becomes a lobed
+		// "cookie" with a check when chosen (shape tells the state, not only a ring)
+		const auto size = double(st::settingsAccentColorSize);
+		const auto sel = std::clamp(_selectedAnimation.value(_selected ? 1. : 0.), 0., 1.);
+		const auto hover = std::max(0., _hoverAnimation.value(_over ? 1. : 0.));
+		const auto press = std::clamp(_pressAnimation.value(_down ? 1. : 0.), 0., 1.);
+		const auto scale = (0.78 + 0.10 * hover + 0.12 * sel) * (1. - 0.1 * press);
+		const auto radius = size / 2. * std::min(scale, 1.0);
+		const auto depth = 0.085 * sel * (1. - 0.6 * press);
+		const auto center = QPointF(size / 2., size / 2.);
+		auto shape = QPainterPath();
+		constexpr auto kSteps = 120;
+		for (auto i = 0; i <= kSteps; ++i) {
+			const auto a = 2. * M_PI * i / kSteps;
+			const auto r = radius * (1. - depth + depth * std::cos(8. * a + _turn));
+			const auto point = center + QPointF(std::cos(a) * r, std::sin(a) * r);
+			(i == 0) ? shape.moveTo(point) : shape.lineTo(point);
+		}
+		shape.closeSubpath();
+		const auto color = _colors.front();
+		p.setPen(Qt::NoPen);
+		p.setBrush(color);
+		p.drawPath(shape);
+		if (sel > 0.) {
+			const auto light = (0.299 * color.redF() + 0.587 * color.greenF() + 0.114 * color.blueF()) > 0.62;
+			auto mark = light ? QColor(0, 0, 0, 200) : QColor(255, 255, 255, 235);
+			mark.setAlphaF(mark.alphaF() * sel);
+			const auto s = radius * 0.95;
+			const auto a = center + QPointF(-0.42 * s, 0.02 * s);
+			const auto b = center + QPointF(-0.12 * s, 0.32 * s);
+			const auto c = center + QPointF(0.45 * s, -0.30 * s);
+			auto path = QPainterPath(a);
+			path.lineTo(b);
+			path.lineTo(c);
+			p.setPen(QPen(mark, style::ConvertScaleExact(2.), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+			p.setBrush(Qt::NoBrush);
+			p.drawPath(path);
+		}
 	} else if (_colors.size() >= kCustomColorButtonParts) {
 		PaintCustomButton(p, _colors);
 	}
@@ -335,6 +457,7 @@ void ColorsPalette::show(
 			) | rpl::map([=] {
 				return _buttons[index - 1]->color();
 			}) | rpl::on_next([=](QColor color) {
+				CrossfadeWindow(inner);
 				_selected.fire_copy(color);
 			}, inner->lifetime());
 		}
@@ -2111,6 +2234,23 @@ void SetupDefaultThemes(
 		st::settingsCheckboxPadding);
 	systemAccentWrap->setDuration(0);
 
+	// exDesktop: Material You colours for the whole client
+	const auto monet = container->add(
+		object_ptr<Ui::Checkbox>(
+			container,
+			tr::lng_extera_monet(tr::now),
+			Extera::Bool(u"monet_colors"_q),
+			st::settingsCheckbox),
+		st::settingsCheckboxPadding);
+	monet->checkedChanges(
+	) | rpl::on_next([=](bool checked) {
+		if (Extera::Bool(u"monet_colors"_q) == checked) {
+			return;
+		}
+		CrossfadeWindow(container);
+		Extera::Config::Instance().setBool(u"monet_colors"_q, checked);
+	}, monet->lifetime());
+
 	const auto chosen = [] {
 		const auto &object = Background()->themeObject();
 		if (object.cloud.id) {
@@ -2149,6 +2289,7 @@ void SetupDefaultThemes(
 	const auto schemeClicked = [=](
 			const Scheme &scheme,
 			Qt::KeyboardModifiers modifiers) {
+		CrossfadeWindow(block);
 		apply(scheme);
 	};
 
@@ -2176,6 +2317,14 @@ void SetupDefaultThemes(
 			schemeClicked(scheme, result->clickModifiers());
 		});
 		weak->setUpdateCallback([=] { result->update(); });
+		base::install_event_filter(result, [=](not_null<QEvent*> e) {
+			if (e->type() == QEvent::Enter) {
+				weak->setHovered(true);
+			} else if (e->type() == QEvent::Leave) {
+				weak->setHovered(false);
+			}
+			return base::EventFilterResult::Continue;
+		});
 		checks.emplace(scheme.type, weak);
 		return result;
 	}) | ranges::to_vector;
@@ -2226,6 +2375,9 @@ void SetupDefaultThemes(
 	systemAccentWrap->entity()->checkedChanges(
 	) | rpl::on_next([=](bool checked) {
 		auto &settings = Core::App().settings();
+		if (settings.systemAccentColorEnabled() != checked) {
+			CrossfadeWindow(container);
+		}
 		if (settings.systemAccentColorEnabled() == checked) {
 			return;
 		}

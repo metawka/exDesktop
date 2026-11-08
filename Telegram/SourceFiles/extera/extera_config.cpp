@@ -27,6 +27,7 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"upload_boost"_q, false },
 		{ u"relative_last_seen"_q, false },
 		{ u"hide_phone"_q, true },
+		{ u"monet_colors"_q, true },
 		{ u"hide_phone_mode"_q, 0 },
 		{ u"ayu_features"_q, false },
 		{ u"ayu_ghost"_q, false },
