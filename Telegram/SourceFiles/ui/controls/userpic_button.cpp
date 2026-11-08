@@ -658,10 +658,10 @@ void UserpicButton::paintEvent(QPaintEvent *e) {
 	if (!uploadShown
 		&& (_role == Role::ChangePhoto || _role == Role::ChoosePhoto)) {
 		auto over = isOver() || isDown();
-		if (over) {
-			fillTranslatedShape(_userpicHasImage
-				? st::msgDateImgBg->b
-				: st::shadowFg->b);
+		// exDesktop: an empty "choose photo" circle does not darken on hover (it lifts and
+		// gets a wavy ring instead); a chosen photo still gets the scrim so the icon reads
+		if (over && _userpicHasImage) {
+			fillTranslatedShape(st::msgDateImgBg->b);
 		}
 		paintRipple(p, photoLeft, photoTop, &st::shadowFg->c);
 		if (over || !_userpicHasImage) {

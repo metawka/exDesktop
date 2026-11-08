@@ -44,6 +44,8 @@ public:
 
 protected:
 	void resizeEvent(QResizeEvent *e) override;
+	int errorTop() const override;
+	int nextTopShift() const override;
 
 private:
 	void setupQrLogin();
@@ -65,6 +67,7 @@ private:
 	object_ptr<CountryInput> _country;
 	object_ptr<Ui::CountryCodeInput> _code;
 	object_ptr<Ui::PhonePartInput> _phone;
+	Ui::RpWidget *_decor = nullptr;
 
 	QString _sentPhone;
 	mtpRequestId _sentRequest = 0;

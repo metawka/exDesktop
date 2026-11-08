@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_widget.h"
+#include "intro/intro_expressive.h"
+#include "ui/widgets/expressive_hover.h"
 
 #include "intro/intro_start.h"
 #include "intro/intro_phone.h"
@@ -96,7 +98,8 @@ Widget::Widget(
 		this,
 		account,
 		rpl::single(true))) {
-	_settings->entity()->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
+	_next->entity()->setWavy(true);
+	Ui::SetCalmHover(_settings->entity());
 	controller->setDefaultFloatPlayerDelegate(floatPlayerDelegate());
 
 	getData()->country = ComputeNewAccountCountry();
@@ -278,10 +281,14 @@ void Widget::createLanguageLink() {
 	const auto createLink = [=](
 			const QString &text,
 			const QString &languageId) {
+		if (_changeLanguage) {
+			return;
+		}
 		_changeLanguage.create(
 			this,
 			object_ptr<Ui::LinkButton>(this, text));
 		_changeLanguage->hide(anim::type::instant);
+		details::Expressive::AddWavyHover(_changeLanguage->entity(), this, st::windowActiveTextFg->c, false);
 		_changeLanguage->entity()->setClickedCallback([=] {
 			Lang::CurrentCloudManager().switchToLanguage(languageId);
 		});
@@ -293,12 +300,31 @@ void Widget::createLanguageLink() {
 
 	const auto currentId = Lang::LanguageIdOrDefault(Lang::Id());
 	const auto defaultId = Lang::DefaultLanguageId();
-	const auto suggested = Lang::CurrentCloudManager().suggestedLanguage();
+	auto suggested = Lang::CurrentCloudManager().suggestedLanguage();
+	if (suggested.isEmpty()) {
+		// the server gave no suggestion: offer the language of the system instead
+		suggested = QLocale::system().name().section('_', 0, 0);
+	}
 	if (currentId != defaultId) {
 		createLink(
 			Lang::GetOriginalValue(tr::lng_switch_to_this.base),
 			defaultId);
 	} else if (!suggested.isEmpty() && suggested != currentId && _api) {
+		// the text of the link is known for the common languages: no need to wait for the server
+		static const auto kLocalLabels = base::flat_map<QString, QString>{
+			{ u"ru"_q, u"Продолжить на русском"_q },
+			{ u"uk"_q, u"Продовжити українською"_q },
+			{ u"es"_q, u"Continuar en español"_q },
+			{ u"de"_q, u"Weiter auf Deutsch"_q },
+			{ u"fr"_q, u"Continuer en français"_q },
+			{ u"pt"_q, u"Continuar em português"_q },
+			{ u"it"_q, u"Continua in italiano"_q },
+			{ u"tr"_q, u"Türkçe devam et"_q },
+		};
+		if (const auto local = kLocalLabels.find(suggested); local != kLocalLabels.end()) {
+			createLink(local->second, suggested);
+			return;
+		}
 		_api->request(MTPlangpack_GetStrings(
 			MTP_string(Lang::CloudLangPackName()),
 			MTP_string(suggested),
@@ -309,6 +335,7 @@ void Widget::createLanguageLink() {
 			if (i != strings.end()) {
 				createLink(i->second, suggested);
 			}
+		}).fail([=](const MTP::Error &error) {
 		}).send();
 	}
 }
@@ -360,6 +387,7 @@ void Widget::setupStep() {
 			_next.create(
 				this,
 				object_ptr<Ui::RoundButton>(this, nullptr, *nextStyle));
+			_next->entity()->setWavy(true);
 			showControls();
 			updateControlsGeometry();
 			_next->toggle(wasShown, anim::type::instant);
@@ -849,7 +877,9 @@ void Widget::updateControlsGeometry() {
 	}
 	_back->moveToLeft(0, controlsTop);
 
-	auto nextTopTo = getStep()->contentTop() + st::introNextTop;
+	auto nextTopTo = getStep()->contentTop()
+		+ st::introNextTop
+		+ getStep()->nextTopShift();
 	auto nextTop = anim::interpolate(_nextTopFrom, nextTopTo, shown);
 	const auto shownAmount = _nextShownAnimation.value(_nextShown ? 1. : 0.);
 	const auto realNextTop = anim::interpolate(

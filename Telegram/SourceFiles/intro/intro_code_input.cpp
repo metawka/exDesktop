@@ -10,6 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "ui/abstract_button.h"
 #include "ui/effects/shake_animation.h"
+#include "styles/palette.h"
+#include <algorithm>
 #include "ui/painter.h"
 #include "ui/rect.h"
 #include "ui/widgets/popup_menu.h"
@@ -75,8 +77,10 @@ protected:
 private:
 	Shaker _shaker;
 	Ui::Animations::Simple _animation;
+	Ui::Animations::Simple _focusAnimation;
 	int _dataDigit = kDigitNone;
 	int _viewDigit = kDigitNone;
+	bool _focused = false;
 
 	QPen _borderPen;
 
@@ -101,10 +105,10 @@ void CodeDigit::setDigit(int digit) {
 				if (!value) {
 					_viewDigit = digit;
 				}
-			}, 1., 0., st::universalDuration);
+			}, 1., 0., 220, anim::easeOutCubic);
 		} else {
 			_viewDigit = digit;
-			_animation.start([=] { update(); }, 0, 1., st::universalDuration);
+			_animation.start([=] { update(); }, 0, 1., 380, anim::easeOutBack);
 		}
 	}
 }
@@ -115,6 +119,16 @@ int CodeDigit::digit() const {
 
 void CodeDigit::setBorderColor(const QBrush &brush) {
 	_borderPen = QPen(brush, st::introCodeDigitBorderWidth);
+	const auto focused = (brush.color() == st::windowActiveTextFg->c);
+	if (focused != _focused) {
+		_focused = focused;
+		_focusAnimation.start(
+			[=] { update(); },
+			_focusAnimation.value(focused ? 0. : 1.),
+			focused ? 1. : 0.,
+			focused ? 360 : 260,
+			focused ? anim::easeOutBack : anim::easeOutCubic);
+	}
 	update();
 }
 
@@ -124,35 +138,46 @@ void CodeDigit::shake() {
 
 void CodeDigit::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
+	auto hq = PainterHighQualityEnabler(p);
 
-	auto clipPath = QPainterPath();
-	clipPath.addRoundedRect(rect(), st::boxRadius, st::boxRadius);
-	p.setClipPath(clipPath);
-
-	p.fillRect(rect(), st::windowBgOver);
-	{
-		auto hq = PainterHighQualityEnabler(p);
-		p.strokePath(clipPath, _borderPen);
-	}
+	// Material 3 Expressive code cell: tonal surface with a thin outline; the active cell grows,
+	// rounds up and takes the accent outline; a filled cell turns tonal; digits pop in
+	const auto focus = std::max(0., _focusAnimation.value(_focused ? 1. : 0.));
+	const auto hiding = (_dataDigit == kDigitNone);
+	const auto progress = _animation.value(1.);
+	const auto filled = (_viewDigit == kDigitNone)
+		? 0.
+		: hiding
+		? std::clamp(progress, 0., 1.)
+		: std::clamp(progress, 0., 1.);
+	const auto inset = style::ConvertScaleExact(3.) * (1. - std::min(1., focus));
+	const auto box = QRectF(rect()).marginsRemoved(QMarginsF(inset, inset, inset, inset));
+	const auto radius = style::ConvertScaleExact(14. + 8. * focus);
+	const auto fill = anim::color(st::windowBgOver, st::lightButtonBg, filled);
+	const auto width = style::ConvertScaleExact(1.) + style::ConvertScaleExact(1.) * std::min(1., focus);
+	const auto border = anim::color(st::inputBorderFg, st::windowBgActive, std::min(1., focus));
+	p.setPen(QPen(border, width));
+	p.setBrush(fill);
+	const auto half = width / 2.;
+	p.drawRoundedRect(box.marginsRemoved(QMarginsF(half, half, half, half)), radius, radius);
 
 	if (_viewDigit == kDigitNone) {
 		return;
 	}
-	const auto hiding = (_dataDigit == kDigitNone);
-	const auto progress = _animation.value(1.);
-
+	const auto center = QPointF(rect().center()) + QPointF(0.5, 0.5);
 	if (hiding) {
-		p.setOpacity(progress * progress);
-		const auto center = rect().center();
-		p.setTransform(QTransform()
-			.translate(center.x(), center.y())
-			.scale(progress, progress)
-			.translate(-center.x(), -center.y()));
+		const auto k = std::clamp(progress, 0., 1.);
+		p.setOpacity(k * k);
+		p.translate(center);
+		p.scale(0.6 + 0.4 * k, 0.6 + 0.4 * k);
+		p.translate(-center);
 	} else {
-		p.setOpacity(progress);
-		constexpr auto kSlideDistanceRatio = 0.2;
-		const auto distance = rect().height() * kSlideDistanceRatio;
-		p.translate(0, (distance * (1. - progress)));
+		p.setOpacity(std::clamp(progress * 1.5, 0., 1.));
+		const auto distance = rect().height() * 0.22;
+		p.translate(center + QPointF(0., distance * (1. - progress)));
+		const auto scale = 0.5 + 0.5 * progress;
+		p.scale(scale, scale);
+		p.translate(-center);
 	}
 	p.setFont(st::introCodeDigitFont);
 	p.setPen(st::windowFg);

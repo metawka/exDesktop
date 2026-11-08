@@ -56,7 +56,24 @@ void CountryInput::paintEvent(QPaintEvent *e) {
 
 	p.setFont(_st.style.font);
 	p.setPen(_st.textFg);
-	p.drawText(rect().marginsRemoved(_st.textMargins), _text, _st.textAlign);
+	const auto area = rect().marginsRemoved(_st.textMargins);
+	if (_textChange.animating()) {
+		const auto t = _textChange.value(1.);
+		const auto distance = style::ConvertScaleExact(10.);
+		p.save();
+		p.setClipRect(rect());
+		p.setOpacity(1. - t);
+		p.translate(0., -distance * t);
+		p.drawText(area, _previousText, _st.textAlign);
+		p.restore();
+		p.save();
+		p.setOpacity(t);
+		p.translate(0., distance * (1. - t));
+		p.drawText(area, _text, _st.textAlign);
+		p.restore();
+	} else {
+		p.drawText(area, _text, _st.textAlign);
+	}
 }
 
 void CountryInput::mouseMoveEvent(QMouseEvent *e) {
@@ -194,8 +211,21 @@ rpl::producer<QString> CountryInput::codeChanged() const {
 }
 
 void CountryInput::setText(const QString &newText) {
-	_text = _st.style.font->elided(
+	const auto text = _st.style.font->elided(
 		newText,
 		width() - _st.textMargins.left() - _st.textMargins.right());
+	if (text == _text) {
+		return;
+	}
+	// Material 3 Expressive: the name does not snap, the old one rises away and the new one
+	// rises in from below
+	_previousText = _text;
+	_text = text;
+	if (isVisible() && !_previousText.isEmpty()) {
+		_textChange.start([=] { update(); }, 0., 1., 320, anim::easeOutCubic);
+	} else {
+		_textChange.stop();
+	}
+	update();
 	accessibilityNameChanged();
 }

@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_signup.h"
+#include "intro/intro_expressive.h"
+#include "styles/palette.h"
 
 #include "boxes/abstract_box.h"
 #include "intro/intro_widget.h"
@@ -36,6 +38,8 @@ SignupWidget::SignupWidget(
 , _last(this, st::introName, tr::lng_signup_lastname())
 , _invertOrder(langFirstNameGoesSecond()) {
 	_photo->showCustomOnChosen();
+	Expressive::AddWavyHover(_photo.data(), this, st::windowBgActive->c, true);
+	Expressive::AddLiftHover(_photo.data());
 
 	Lang::Updated(
 	) | rpl::on_next([=] {

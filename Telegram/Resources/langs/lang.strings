@@ -391,7 +391,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_edit_caption_attach" = "Sorry, you can't attach new media while editing a message.";
 "lng_edit_caption_voice" = "Sorry, you can't edit messages when you have an unsent voice message.";
 
-"lng_intro_about" = "Unofficial Windows client based on Telegram Desktop.\nMaintained independently.";
+"lng_intro_about" = "Unofficial desktop client based on Telegram Desktop.\nMaintained independently.";
 "lng_start_msgs" = "Start Messaging";
 
 "lng_intro_next" = "Next";
@@ -9324,6 +9324,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_passcode_strength_advice_fine" = "This passcode is hard to guess.";
 
 "lng_extera_title" = "exDesktop Settings";
+"lng_extera_monet" = "Monet colors from the system accent";
 "lng_extera_categories" = "Categories";
 "lng_extera_links" = "Links";
 "lng_extera_general" = "General";

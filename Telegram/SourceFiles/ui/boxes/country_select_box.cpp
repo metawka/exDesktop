@@ -8,6 +8,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/boxes/country_select_box.h"
 
 #include "base/event_filter.h"
+#include "base/flat_map.h"
+#include <memory>
+#include <QtGui/QPainterPath>
 #include "base/invoke_queued.h"
 #include "countries/countries_instance.h"
 #include "lang/lang_keys.h"
@@ -107,6 +110,10 @@ private:
 
 	int _selected = -1;
 	int _pressed = -1;
+	int _previousSelected = -1;
+	Ui::Animations::Simple _selectedShown;
+	// every row that loses the highlight fades out on its own, so a fast sweep stays smooth
+	base::flat_map<int, std::unique_ptr<Ui::Animations::Simple>> _rowFades;
 	QString _filter;
 	bool _mouseSelection = false;
 
@@ -317,7 +324,38 @@ void CountrySelectBox::Inner::setSelected(int index, Announce announce) {
 	const auto changed = (_selected != index);
 	if (changed) {
 		updateSelectedRow();
+		if (_selected >= 0) {
+			const auto from = std::clamp(_selectedShown.value(1.), 0., 1.);
+			auto &fade = _rowFades[_selected];
+			if (!fade) {
+				fade = std::make_unique<Ui::Animations::Simple>();
+			}
+			const auto row = _selected;
+			fade->start([=] {
+				update();
+				const auto i = _rowFades.find(row);
+				if (i != _rowFades.end() && !i->second->animating()) {
+					crl::on_main(this, [=] {
+						const auto j = _rowFades.find(row);
+						if (j != _rowFades.end() && !j->second->animating()) {
+							_rowFades.erase(j);
+						}
+					});
+				}
+			}, from, 0., 300, anim::easeOutCubic);
+		}
+		_previousSelected = -1;
 		_selected = index;
+		if (_selected >= 0) {
+			const auto i = _rowFades.find(_selected);
+			const auto from = (i != _rowFades.end())
+				? i->second->value(0.)
+				: 0.;
+			if (i != _rowFades.end()) {
+				_rowFades.erase(i);
+			}
+			_selectedShown.start([=] { update(); }, from, 1., 320, anim::easeOutCubic);
+		}
 		updateSelectedRow();
 	}
 	const auto shouldAnnounce = (announce == Announce::Always)
@@ -372,17 +410,53 @@ void CountrySelectBox::Inner::paintEvent(QPaintEvent *e) {
 	const auto &nameFont = st::countryRowNameFont;
 	const auto &codeFont = st::countryRowCodeFont;
 	for (auto i = from; i != till; ++i) {
-		const auto selected = (i == (_pressed >= 0 ? _pressed : _selected));
+		const auto active = (_pressed >= 0 ? _pressed : _selected);
+		const auto selected = (i == active);
 		const auto y = rowTop(i);
 		const auto row = QRect(0, y, width(), _rowHeight);
 
-		p.fillRect(row, selected ? st::countryRowBgOver : st::countryRowBg);
+		// Material 3 Expressive rows: the active row rises on a rounded plate with a soft
+		// shadow; while searching it is tonal (the best match), under the mouse a state layer
+		p.fillRect(row, st::boxBg);
+		const auto fade = _rowFades.find(i);
+		const auto shown = selected
+			? _selectedShown.value(1.)
+			: (fade != _rowFades.end())
+			? fade->second->value(0.)
+			: 0.;
+		const auto lift = style::ConvertScaleExact(1.5) * std::clamp(shown, 0., 1.);
+		auto plate = QPainterPath();
+		if (shown > 0.) {
+			const auto k = std::clamp(shown, 0., 1.);
+			const auto insetX = style::ConvertScaleExact(8.) + style::ConvertScaleExact(4.) * (1. - k);
+			const auto plateRect = QRectF(row).marginsRemoved(QMarginsF(
+				insetX,
+				style::ConvertScaleExact(2.),
+				insetX + st::boxScroll.width,
+				style::ConvertScaleExact(2.))).translated(0., -lift);
+			const auto radius = style::ConvertScaleExact(14.);
+			plate.addRoundedRect(plateRect, radius, radius);
+			PainterHighQualityEnabler hq(p);
+			auto shadow = QPainterPath();
+			shadow.addRoundedRect(plateRect.translated(0., lift + style::ConvertScaleExact(1.)), radius, radius);
+			p.fillPath(shadow, QColor(0, 0, 0, int(70 * k)));
+			auto color = _mouseSelection ? st::windowBgOver->c : st::lightButtonBg->c;
+			color.setAlphaF(color.alphaF() * k);
+			p.fillPath(plate, color);
+		}
 		if (i < int(_ripples.size()) && _ripples[i]) {
+			p.save();
+			if (!plate.isEmpty()) {
+				p.setClipPath(plate, Qt::IntersectClip);
+			}
 			_ripples[i]->paint(p, 0, y, width());
+			p.restore();
 			if (_ripples[i]->empty()) {
 				_ripples[i].reset();
 			}
 		}
+		p.save();
+		p.translate(0., -lift);
 
 		const auto code = u"+"_q + list[i].code;
 		const auto codeWidth = codeFont->width(code);
@@ -414,6 +488,7 @@ void CountrySelectBox::Inner::paintEvent(QPaintEvent *e) {
 				width(),
 				code);
 		}
+		p.restore();
 	}
 }
 
@@ -522,7 +597,12 @@ void CountrySelectBox::Inner::updateFilter(QString filter) {
 		}
 	}
 	refresh();
+	// the most relevant result (the first one) is highlighted while searching
+	_previousSelected = -1;
+	_rowFades.clear();
 	_selected = current().empty() ? -1 : 0;
+	_mouseSelection = false;
+	_selectedShown.start([=] { update(); }, 0., 1., 320, anim::easeOutCubic);
 	update();
 }
 

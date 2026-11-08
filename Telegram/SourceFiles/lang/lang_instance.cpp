@@ -210,15 +210,9 @@ QString PluralCodeForCustom(
 
 [[nodiscard]] QString Rebrand(ushort index, QString value) {
 	if (index == tr::lng_intro_about.base) {
-#ifdef Q_OS_WIN
 		return IsCyrillic(value)
-			? QString::fromUtf16(u"exDesktop - \u043D\u0435\u043E\u0444\u0438\u0446\u0438\u0430\u043B\u044C\u043D\u044B\u0439 \u043A\u043B\u0438\u0435\u043D\u0442 Telegram \u0434\u043B\u044F Windows.")
+			? QString::fromUtf16(u"exDesktop - \u043D\u0435\u043E\u0444\u0438\u0446\u0438\u0430\u043B\u044C\u043D\u044B\u0439 \u043A\u043B\u0438\u0435\u043D\u0442 Telegram \u0434\u043B\u044F \u043A\u043E\u043C\u043F\u044C\u044E\u0442\u0435\u0440\u0430.")
 			: GetOriginalValue(index);
-#else
-		return IsCyrillic(value)
-			? QString::fromUtf16(u"exDesktop - \u043D\u0435\u043E\u0444\u0438\u0446\u0438\u0430\u043B\u044C\u043D\u044B\u0439 \u043A\u043B\u0438\u0435\u043D\u0442 Telegram \u0434\u043B\u044F Linux.")
-			: GetOriginalValue(index);
-#endif
 	} else if (index == tr::lng_about_text1.base) {
 		return GetOriginalValue(index);
 	}

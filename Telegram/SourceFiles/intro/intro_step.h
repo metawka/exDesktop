@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace style {
 struct RoundButton;
+struct FlatLabel;
 } // namespace style;
 
 namespace Main {
@@ -92,6 +93,10 @@ public:
 	virtual void finished();
 
 	virtual void submit() = 0;
+	// Extra room a step wants above the "Next" button (e.g. supporting text).
+	[[nodiscard]] virtual int nextTopShift() const {
+		return 0;
+	}
 	[[nodiscard]] virtual rpl::producer<QString> nextButtonText() const;
 	[[nodiscard]] virtual auto nextButtonStyle() const
 		-> rpl::producer<const style::RoundButton*>;
@@ -108,6 +113,9 @@ public:
 
 protected:
 	void paintEvent(QPaintEvent *e) override;
+	void mouseMoveEvent(QMouseEvent *e) override;
+	void leaveEventHook(QEvent *e) override;
+	void setBannerWavy(bool wavy);
 	void resizeEvent(QResizeEvent *e) override;
 
 	void setTitleText(rpl::producer<QString> titleText);
@@ -167,6 +175,9 @@ protected:
 	}
 
 	virtual int errorTop() const;
+	void setErrorStyle(const style::FlatLabel *st) {
+		_errorStyle = st;
+	}
 
 private:
 	struct CoverAnimation {
@@ -222,6 +233,7 @@ private:
 	object_ptr<Ui::FadeWrap<Ui::FlatLabel>> _description;
 
 	bool _errorCentered = false;
+	const style::FlatLabel *_errorStyle = nullptr;
 	rpl::variable<QString> _errorText;
 	object_ptr<Ui::FadeWrap<Ui::FlatLabel>> _error = { nullptr };
 
@@ -229,6 +241,12 @@ private:
 	CoverAnimation _coverAnimation;
 	std::unique_ptr<Ui::SlideAnimation> _slideAnimation;
 	QPixmap _coverMask;
+	Ui::Animations::Basic _expressiveAnimation;
+	double _badgeAngle = 0.;
+	QRectF _bannerLogo;
+	bool _bannerWavy = false;
+	Ui::Animations::Simple _bannerWavyAnimation;
+	crl::time _badgeLast = 0;
 
 };
 
