@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/multi_select.h"
 #include "ui/widgets/scroll_area.h"
 #include "ui/painter.h"
+#include "intro/material_shapes.h"
 #include "ui/screen_reader_mode.h"
 #include "ui/ui_utility.h"
 #include "styles/style_country_select_box.h"
@@ -102,6 +103,8 @@ private:
 	void scrollToRow(int index);
 	void setPressed(int pressed);
 	void setSelected(int index, Announce announce);
+	void refreshBestWave();
+	void updateBestRow();
 	[[nodiscard]] int rowTop(int index) const;
 	[[nodiscard]] const std::vector<Entry> &current() const;
 
@@ -116,6 +119,13 @@ private:
 	base::flat_map<int, std::unique_ptr<Ui::Animations::Simple>> _rowFades;
 	QString _filter;
 	bool _mouseSelection = false;
+	// while searching, the most relevant row keeps a tonal plate; hovering it
+	// makes the plate's edge wavy instead of swapping it for the hover layer
+	int _bestMatch = -1;
+	bool _bestWaving = false;
+	Ui::Animations::Simple _bestShown;
+	Ui::Animations::Simple _bestWave;
+	Ui::Animations::Basic _waveTicker;
 
 	std::vector<std::unique_ptr<RippleAnimation>> _ripples;
 
@@ -271,6 +281,12 @@ CountrySelectBox::Inner::Inner(
 CountrySelectBox::Inner::~Inner() = default;
 
 void CountrySelectBox::Inner::init() {
+	_waveTicker.init([=] {
+		updateBestRow();
+		if (!_bestWaving && !_bestWave.animating()) {
+			_waveTicker.stop();
+		}
+	});
 	const auto &byISO2 = Countries::Instance().byISO2();
 
 	const auto extractEntries = [&](const Countries::Info &info) {
@@ -358,11 +374,41 @@ void CountrySelectBox::Inner::setSelected(int index, Announce announce) {
 		}
 		updateSelectedRow();
 	}
+	refreshBestWave();
 	const auto shouldAnnounce = (announce == Announce::Always)
 		|| (announce == Announce::OnChange && changed);
 	if (shouldAnnounce && _selected >= 0) {
 		accessibilityChildNameChanged(_selected);
 		accessibilityChildFocused(_selected);
+	}
+}
+
+// The lifted, wavy plate reaches a few pixels past its row: the neighbours are
+// repainted too, or old wave crests would stay on screen above and below.
+void CountrySelectBox::Inner::updateBestRow() {
+	if (_bestMatch < 0) {
+		return;
+	}
+	const auto extra = style::ConvertScale(6);
+	update(0, rowTop(_bestMatch) - extra, width(), _rowHeight + 2 * extra);
+}
+
+void CountrySelectBox::Inner::refreshBestWave() {
+	const auto waving = (_bestMatch >= 0)
+		&& _mouseSelection
+		&& (_selected == _bestMatch);
+	if (waving == _bestWaving) {
+		return;
+	}
+	_bestWaving = waving;
+	_bestWave.start(
+		[=] { updateBestRow(); },
+		_bestWave.value(waving ? 0. : 1.),
+		waving ? 1. : 0.,
+		waving ? 520 : 300,
+		waving ? anim::easeOutBack : anim::easeOutCubic);
+	if (!_waveTicker.animating()) {
+		_waveTicker.start();
 	}
 }
 
@@ -424,10 +470,14 @@ void CountrySelectBox::Inner::paintEvent(QPaintEvent *e) {
 			: (fade != _rowFades.end())
 			? fade->second->value(0.)
 			: 0.;
-		const auto lift = style::ConvertScaleExact(1.5) * std::clamp(shown, 0., 1.);
+		const auto best = (i == _bestMatch);
+		const auto bestShown = best
+			? std::clamp(_bestShown.value(1.), 0., 1.)
+			: 0.;
+		const auto k = std::max(bestShown, std::clamp(shown, 0., 1.));
+		const auto lift = style::ConvertScaleExact(1.5) * k;
 		auto plate = QPainterPath();
-		if (shown > 0.) {
-			const auto k = std::clamp(shown, 0., 1.);
+		if (k > 0.) {
 			const auto insetX = style::ConvertScaleExact(8.) + style::ConvertScaleExact(4.) * (1. - k);
 			const auto plateRect = QRectF(row).marginsRemoved(QMarginsF(
 				insetX,
@@ -435,12 +485,26 @@ void CountrySelectBox::Inner::paintEvent(QPaintEvent *e) {
 				insetX + st::boxScroll.width,
 				style::ConvertScaleExact(2.))).translated(0., -lift);
 			const auto radius = style::ConvertScaleExact(14.);
-			plate.addRoundedRect(plateRect, radius, radius);
+			const auto wave = best
+				? std::max(0., _bestWave.value(_bestWaving ? 1. : 0.))
+				: 0.;
+			if (wave > 0.03) {
+				plate = Ui::MaterialShapes::WavyRoundedRect(
+					plateRect,
+					radius,
+					style::ConvertScaleExact(1.6) * wave,
+					crl::now() / 1000. * 4.4);
+			} else {
+				plate.addRoundedRect(plateRect, radius, radius);
+			}
 			PainterHighQualityEnabler hq(p);
 			auto shadow = QPainterPath();
 			shadow.addRoundedRect(plateRect.translated(0., lift + style::ConvertScaleExact(1.)), radius, radius);
 			p.fillPath(shadow, QColor(0, 0, 0, int(70 * k)));
-			auto color = _mouseSelection ? st::windowBgOver->c : st::lightButtonBg->c;
+			// the best match stays tonal whatever the mouse does
+			auto color = (best || !_mouseSelection)
+				? st::lightButtonBg->c
+				: st::windowBgOver->c;
 			color.setAlphaF(color.alphaF() * k);
 			p.fillPath(plate, color);
 		}
@@ -522,6 +586,7 @@ void CountrySelectBox::Inner::leaveEventHook(QEvent *e) {
 	_mouseSelection = false;
 	setMouseTracking(false);
 	setSelected(-1, Announce::No);
+	refreshBestWave();
 }
 
 void CountrySelectBox::Inner::mouseMoveEvent(QMouseEvent *e) {
@@ -603,6 +668,13 @@ void CountrySelectBox::Inner::updateFilter(QString filter) {
 	_selected = current().empty() ? -1 : 0;
 	_mouseSelection = false;
 	_selectedShown.start([=] { update(); }, 0., 1., 320, anim::easeOutCubic);
+	const auto best = (!_filter.isEmpty() && !current().empty()) ? 0 : -1;
+	if (best != _bestMatch) {
+		_bestMatch = best;
+		_bestShown.start([=] { update(); }, 0., 1., 320, anim::easeOutCubic);
+	}
+	_bestWaving = false;
+	_bestWave.stop();
 	update();
 }
 

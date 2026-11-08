@@ -9,6 +9,7 @@ Licensed under GPLv3, like the rest of the project.
 #include "base/event_filter.h"
 #include "styles/style_widgets.h"
 #include "ui/expressive_fonts.h"
+#include "intro/material_shapes.h"
 
 #include <QtGui/QFont>
 #include <QtGui/QFontMetrics>
@@ -39,45 +40,6 @@ QColor Mixed(const QColor &a, const QColor &b, double share) {
 		a.greenF() + (b.greenF() - a.greenF()) * share,
 		a.blueF() + (b.blueF() - a.blueF()) * share,
 		a.alphaF() + (b.alphaF() - a.alphaF()) * share);
-}
-
-// A stadium (fully rounded rect) whose edge waves along the normal. Walked
-// analytically (two straight edges and two half circles), so it is cheap to
-// rebuild every frame; the wave count is whole, so the outline closes cleanly.
-QPainterPath WavyPill(const QRectF &rect, double amplitude, double phase) {
-	const auto r = rect.height() / 2.;
-	const auto straight = std::max(0., rect.width() - rect.height());
-	const auto arc = M_PI * r;
-	const auto perimeter = 2. * straight + 2. * arc;
-	const auto waves = std::max(6., std::round(perimeter / 22.));
-	const auto steps = std::max(48, int(perimeter / 2.5));
-	const auto cy = rect.center().y();
-	const auto lx = rect.left() + r;
-	const auto rx = rect.right() - r;
-	auto result = QPainterPath();
-	for (auto i = 0; i <= steps; ++i) {
-		const auto s = perimeter * i / steps;
-		auto x = 0., y = 0., nx = 0., ny = 0.;
-		if (s < straight) { // top, to the right
-			x = lx + s; y = rect.top(); ny = -1.;
-		} else if (s < straight + arc) { // right half circle, top to bottom
-			const auto a = -M_PI / 2. + (s - straight) / r;
-			nx = std::cos(a); ny = std::sin(a);
-			x = rx + r * nx; y = cy + r * ny;
-		} else if (s < 2. * straight + arc) { // bottom, to the left
-			x = rx - (s - straight - arc); y = rect.bottom(); ny = 1.;
-		} else { // left half circle, bottom to top
-			const auto a = M_PI / 2. + (s - 2. * straight - arc) / r;
-			nx = std::cos(a); ny = std::sin(a);
-			x = lx + r * nx; y = cy + r * ny;
-		}
-		const auto push = amplitude
-			* std::sin(2. * M_PI * waves * s / perimeter - phase);
-		const auto point = QPointF(x + nx * push, y + ny * push);
-		(i == 0) ? result.moveTo(point) : result.lineTo(point);
-	}
-	result.closeSubpath();
-	return result;
 }
 
 // A rectangle with its own radius at every corner.
@@ -372,7 +334,11 @@ void PaintBanner(
 					if (amplitude < 0.05) {
 						p.drawRoundedRect(pill, pill.height() / 2., pill.height() / 2.);
 					} else {
-						p.drawPath(WavyPill(pill, amplitude, seconds * 4.4 + row));
+						p.drawPath(Ui::MaterialShapes::WavyRoundedRect(
+							pill,
+							pill.height() / 2.,
+							amplitude,
+							seconds * 4.4 + row));
 					}
 					auto strong = accent;
 					strong.setAlphaF(row % 2 ? 0.8 : 1.);

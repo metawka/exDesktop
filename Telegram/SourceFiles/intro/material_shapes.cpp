@@ -7,6 +7,7 @@ Licensed under GPLv3, like the rest of the project.
 #include <QtCore/QRandomGenerator>
 #include <QtCore/QtMath>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <vector>
@@ -249,6 +250,78 @@ Shape RandomSoft(Shape avoid) {
 	while (result == avoid) {
 		result = kSoft[QRandomGenerator::global()->bounded(int(kSoft.size()))];
 	}
+	return result;
+}
+
+QPainterPath WavyRoundedRect(
+		const QRectF &rect,
+		double radius,
+		double amplitude,
+		double phase,
+		double wavelength) {
+	const auto r = std::clamp(
+		radius,
+		0.,
+		std::min(rect.width(), rect.height()) / 2.);
+	const auto horizontal = rect.width() - 2. * r;
+	const auto vertical = rect.height() - 2. * r;
+	const auto arc = M_PI * r / 2.;
+	// clockwise from the top-left end of the top edge
+	struct Segment {
+		double length = 0.;
+		bool straight = true;
+		QPointF from; // straight: start; arc: centre
+		QPointF direction; // straight: unit direction; arc: (start angle, 0)
+	};
+	const auto l = rect.left(), t = rect.top();
+	const auto rt = rect.right(), b = rect.bottom();
+	const auto segments = std::array<Segment, 8>{ {
+		{ horizontal, true, { l + r, t }, { 1., 0. } },
+		{ arc, false, { rt - r, t + r }, { -M_PI / 2., 0. } },
+		{ vertical, true, { rt, t + r }, { 0., 1. } },
+		{ arc, false, { rt - r, b - r }, { 0., 0. } },
+		{ horizontal, true, { rt - r, b }, { -1., 0. } },
+		{ arc, false, { l + r, b - r }, { M_PI / 2., 0. } },
+		{ vertical, true, { l, b - r }, { 0., -1. } },
+		{ arc, false, { l + r, t + r }, { M_PI, 0. } },
+	} };
+	auto perimeter = 0.;
+	for (const auto &segment : segments) {
+		perimeter += segment.length;
+	}
+	auto result = QPainterPath();
+	if (perimeter <= 0.) {
+		return result;
+	}
+	const auto waves = std::max(6., std::round(perimeter / wavelength));
+	const auto steps = std::max(64, int(perimeter / 2.5));
+	auto segment = 0;
+	auto passed = 0.;
+	for (auto i = 0; i <= steps; ++i) {
+		const auto s = std::min(perimeter * i / steps, perimeter);
+		while (segment < 7 && s > passed + segments[segment].length) {
+			passed += segments[segment].length;
+			++segment;
+		}
+		const auto &current = segments[segment];
+		const auto local = s - passed;
+		auto point = QPointF();
+		auto normal = QPointF();
+		if (current.straight) {
+			point = current.from + current.direction * local;
+			// outward normal of a clockwise walk (y down): (dy, -dx)
+			normal = QPointF(current.direction.y(), -current.direction.x());
+		} else {
+			const auto angle = current.direction.x() + (r > 0. ? local / r : 0.);
+			normal = QPointF(std::cos(angle), std::sin(angle));
+			point = current.from + normal * r;
+		}
+		const auto push = amplitude
+			* std::sin(2. * M_PI * waves * s / perimeter - phase);
+		const auto at = point + normal * push;
+		(i == 0) ? result.moveTo(at) : result.lineTo(at);
+	}
+	result.closeSubpath();
 	return result;
 }
 

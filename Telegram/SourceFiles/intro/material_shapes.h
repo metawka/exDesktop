@@ -23,4 +23,15 @@ enum class Shape : int {
 // A random shape that reads well when small (no thin spikes), never equal to `avoid`.
 [[nodiscard]] Shape RandomSoft(Shape avoid = Shape::Count);
 
+// A rounded rectangle whose edge waves along its normal by `amplitude`; `phase`
+// moves the wave around. Walked analytically (edges and corner arcs), so it is
+// cheap to rebuild every frame; the wave count is whole, so it closes cleanly.
+// A radius of half the height gives a wavy pill.
+[[nodiscard]] QPainterPath WavyRoundedRect(
+	const QRectF &rect,
+	double radius,
+	double amplitude,
+	double phase,
+	double wavelength = 22.);
+
 } // namespace Ui::MaterialShapes
