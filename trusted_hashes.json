@@ -1,5 +1,5 @@
 {
-  "offset": 354810036,
+  "offset": 354810046,
   "hashes": [
     {
       "sha256": "f03663d02e67a69e61a8b06bd9c8f89afcfbe59734d0ece18eb9ca166ecd9cfd",
@@ -2994,6 +2994,60 @@
       "channel": 3914431400,
       "message": 7,
       "name": "clawd_pet.plugin"
+    },
+    {
+      "sha256": "800f16d639715bae847a0c772ec626df29edf392414d68699dc1feaf20960d1f",
+      "channel": 2189715950,
+      "message": 1228,
+      "name": "color_inspector.plugin"
+    },
+    {
+      "sha256": "e1f40350ab166f78191becca683081bc1ef578061f86e3e7345bde4be9ae59a9",
+      "channel": 2189715950,
+      "message": 1229,
+      "name": "femboys_music_stats.plugin"
+    },
+    {
+      "sha256": "8932cb10f354f17ca32faf78e828e4615c63f7c2a39857be81ed8c9c6ef7c712",
+      "channel": 2189715950,
+      "message": 1230,
+      "name": "music_editor.plugin"
+    },
+    {
+      "sha256": "80b6ff13bd3e42af67c49a4b9c438920132b531e8e670ac9b504907526d9c2bf",
+      "channel": 2189715950,
+      "message": 1231,
+      "name": "Combined_Custom_Banner.plugin"
+    },
+    {
+      "sha256": "489f4e980b0b2f42a9e0d43e07554305c23d6a9901747fe5e7597f728586d8bb",
+      "channel": 2189715950,
+      "message": 1232,
+      "name": "QuickCloseButton.plugin"
+    },
+    {
+      "sha256": "4ae525e4066a3efff5eec90467f77e1d0142ffabd1cc4eb8c43757e394bcfdd1",
+      "channel": 2189715950,
+      "message": 1234,
+      "name": "equalizer.plugin"
+    },
+    {
+      "sha256": "5db655285fc58f17e5f12237771e7c54dd50e5b05f185327943231d102195316",
+      "channel": 2189715950,
+      "message": 1235,
+      "name": "mini_app_float.plugin"
+    },
+    {
+      "sha256": "7fc0d5a642328d4becf2e7072e1a0f67611adf6b224080816c934c5af6b876a0",
+      "channel": 2189715950,
+      "message": 1236,
+      "name": "md3_loader.plugin"
+    },
+    {
+      "sha256": "374febeb26abac545d21fb2535a5ff0bc54ac21500ee05a8511e9cbb6eef9283",
+      "channel": 2189715950,
+      "message": 1237,
+      "name": "music_tab.plugin"
     }
   ],
   "scanned": {
