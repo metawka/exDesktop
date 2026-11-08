@@ -1485,6 +1485,12 @@ PRIVATE
     intro/intro_qr.h
     intro/intro_signup.cpp
     intro/intro_signup.h
+    intro/intro_expressive.cpp
+    ui/expressive_fonts.cpp
+    ui/expressive_fonts.h
+    intro/material_shapes.cpp
+    intro/material_shapes.h
+    intro/intro_expressive.h
     intro/intro_start.cpp
     intro/intro_start.h
     intro/intro_step.cpp
@@ -2558,6 +2564,7 @@ PRIVATE
     qrc/telegram/picker.qrc
     qrc/telegram/telegram.qrc
     qrc/telegram/sounds.qrc
+    qrc/telegram/exdesktop_fonts.qrc
     winrc/Telegram.rc
     winrc/Telegram.manifest
     langs/lang.strings

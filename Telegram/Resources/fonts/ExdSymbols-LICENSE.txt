@@ -1,0 +1,5 @@
+ExdSymbols.ttf is a subset of "Material Symbols Rounded" by Google
+(https://github.com/google/material-design-icons), renamed to "exDesktop Symbols".
+
+Licensed under the Apache License, Version 2.0:
+https://www.apache.org/licenses/LICENSE-2.0
