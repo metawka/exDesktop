@@ -381,7 +381,7 @@ settingsTheme: Checkbox(defaultCheckbox) {
 
 settingsThemePreviewSize: size(80px, 92px);
 settingsThemeBubbleSize: size(40px, 14px);
-settingsThemeBubbleRadius: 2px;
+settingsThemeBubbleRadius: 7px;
 settingsThemeBubblePosition: point(6px, 8px);
 settingsThemeBubbleSkip: 6px;
 settingsThemeRadioBottom: 12px;
@@ -817,6 +817,26 @@ passkeyCableHintLabel: FlatLabel(boxDividerLabel) {
 }
 passkeyCableQrCenter: size(64px, 64px);
 passkeyCableQrSize: 260px;
+passkeyCableQrRadius: 24px;
+passkeyCableHeroSize: 88px;
+passkeyCableHeroMargin: margins(0px, 24px, 0px, 14px);
+passkeyCableTitle: FlatLabel(boxTitle) {
+	align: align(top);
+	minWidth: 256px;
+}
+passkeyCableTitleMargin: margins(22px, 0px, 22px, 12px);
+passkeyCableStatusMargin: margins(22px, 4px, 22px, 8px);
+passkeyCableStatusPadding: margins(14px, 14px, 18px, 14px);
+passkeyCableStatusBadge: 40px;
+passkeyCableStatusSkip: 14px;
+passkeyCableStatusRadius: 20px;
+passkeyCableStatusLabel: FlatLabel(boxLabel) {
+	minWidth: 120px;
+}
+passkeyCablePrimaryButton: RoundButton(defaultActiveButton) {
+	height: 44px;
+	textTop: 12px;
+}
 
 settingsAgeVerifyBox: Box(filterInviteBox) {
 	buttonPadding: margins(24px, 24px, 24px, 24px);

@@ -61,6 +61,8 @@ public:
 
 	void setColors(const Colors &colors);
 	void setEmoji(EmojiPtr emoji);
+	// exDesktop: hover state for the Expressive tile (tonal layer, rounder corners)
+	void setHovered(bool hovered);
 
 private:
 	void paintNotSupported(QPainter &p, int left, int top, int outerWidth);
@@ -77,6 +79,8 @@ private:
 	QImage _backgroundFull;
 	QImage _backgroundCache;
 	int _backgroundCacheWidth = -1;
+	Ui::Animations::Simple _hoverAnimation;
+	bool _hovered = false;
 
 };
 

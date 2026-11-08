@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "ui/painter.h"
 #include "ui/rect.h"
+#include "ui/round_rect.h"
 #include "base/timer.h"
 #include "base/weak_qptr.h"
 #include "base/platform/base_platform_info.h"
@@ -381,33 +382,48 @@ void MediaSlider::paintEvent(QPaintEvent *e) {
 				anim::easeOutCubic);
 		}
 		const auto pressed = _materialPress.value(down ? 1. : 0.);
+		// Material 3 Expressive slider: 16 px track, 4 x 44 px handle that narrows to 2 px,
+		// 6 px gaps, 2 px corners where a track meets the handle, a 4 px stop at the far end
 		const auto handle = style::ConvertScale(4)
 			- pressed * style::ConvertScale(2);
-		const auto handleHeight = std::min(height(), style::ConvertScale(26));
-		const auto gap = style::ConvertScale(5);
-		const auto track = std::min(height(), style::ConvertScale(14));
-		const auto radius = track / 2.;
+		const auto handleHeight = std::min(height(), style::ConvertScale(44));
+		const auto gap = style::ConvertScale(6);
+		const auto track = std::min(height(), style::ConvertScale(16));
+		const auto outer = track / 2;
+		const auto inner = style::ConvertScale(2);
 		const auto available = width() - handle;
 		const auto mid = handle / 2. + value * available;
 		const auto top = (height() - track) / 2;
 		const auto disabled = isDisabled();
 		p.setPen(Qt::NoPen);
 		p.setBrush(disabled ? _st.activeFgDisabled : _st.activeFg);
-		const auto activeRight = mid - handle / 2. - gap;
+		const auto activeRight = int(std::round(mid - handle / 2. - gap));
 		if (activeRight > 0) {
-			p.drawRoundedRect(
-				QRectF(0, top, activeRight, track),
-				std::min(radius, activeRight / 2.),
-				std::min(radius, activeRight / 2.));
+			p.drawPath(ComplexRoundedRectPath(
+				QRect(0, top, activeRight, track),
+				std::min(outer, activeRight / 2),
+				std::min(inner, activeRight / 2),
+				std::min(outer, activeRight / 2),
+				std::min(inner, activeRight / 2)));
 		}
-		p.setBrush(disabled ? _st.inactiveFgDisabled : _st.inactiveFg);
-		const auto inactiveLeft = mid + handle / 2. + gap;
+		const auto inactiveLeft = int(std::round(mid + handle / 2. + gap));
 		if (inactiveLeft < width()) {
 			const auto w = width() - inactiveLeft;
-			p.drawRoundedRect(
-				QRectF(inactiveLeft, top, w, track),
-				std::min(radius, w / 2.),
-				std::min(radius, w / 2.));
+			p.setBrush(disabled ? _st.inactiveFgDisabled : _st.inactiveFg);
+			p.drawPath(ComplexRoundedRectPath(
+				QRect(inactiveLeft, top, w, track),
+				std::min(inner, w / 2),
+				std::min(outer, w / 2),
+				std::min(inner, w / 2),
+				std::min(outer, w / 2)));
+			// the stop at the far end of the track (only when there is room for it)
+			const auto stop = style::ConvertScaleExact(4.);
+			if (w > track * 2) {
+				p.setBrush(disabled ? _st.activeFgDisabled : _st.activeFg);
+				p.drawEllipse(QPointF(
+					width() - (track - stop) / 2. - stop / 2.,
+					height() / 2.), stop / 2., stop / 2.);
+			}
 		}
 		p.setBrush(disabled ? _st.activeFgDisabled : _st.activeFg);
 		p.drawRoundedRect(

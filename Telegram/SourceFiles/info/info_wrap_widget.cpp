@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/info_wrap_widget.h"
+#include "ui/widgets/expressive_close_button.h"
 
 #include "info/profile/info_profile_widget.h"
 #include "info/profile/info_profile_values.h"
@@ -416,7 +417,7 @@ void WrapWidget::createTopBar() {
 	}, _topBar->lifetime());
 	if (wrapValue == Wrap::Layer) {
 		auto close = _topBar->addButton(
-			base::make_unique_q<Ui::IconButton>(
+			base::make_unique_q<Ui::ExpressiveCloseButton>(
 				_topBar,
 				st::infoLayerTopBarClose));
 		close->setAccessibleName(tr::lng_sr_close_panel(tr::now));

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/language_box.h"
+#include <QtGui/QPainterPath>
 
 #include "base/platform/base_platform_info.h"
 #include "boxes/abstract_box.h"
@@ -996,12 +997,32 @@ void Rows::paintEvent(QPaintEvent *e) {
 		const auto guard = gsl::finally([&] { p.translate(0, -row.top); });
 
 		const auto selected = (selectedIndex == i);
-		if (selected && !row.removed) {
-			p.fillRect(0, 0, width(), row.height, st::windowBgOver);
+		// Material 3 Expressive list: rounded plates inset from the edges instead of
+		// full-width rectangles; the chosen language keeps a tonal plate
+		const auto inset = style::ConvertScaleExact(8.);
+		const auto plateRadius = style::ConvertScaleExact(16.);
+		auto plate = QPainterPath();
+		plate.addRoundedRect(
+			QRectF(inset, style::ConvertScaleExact(2.), width() - 2. * inset, row.height - style::ConvertScaleExact(4.)),
+			plateRadius,
+			plateRadius);
+		{
+			PainterHighQualityEnabler hq(p);
+			if (row.check->checked() && !row.removed) {
+				p.fillPath(plate, st::lightButtonBg);
+			}
+			if (selected && !row.removed) {
+				auto over = st::windowFg->c;
+				over.setAlphaF(0.08);
+				p.fillPath(plate, over);
+			}
 		}
 
 		if (row.ripple) {
+			p.save();
+			p.setClipPath(plate);
 			row.ripple->paint(p, 0, 0, width());
+			p.restore();
 			if (row.ripple->empty()) {
 				row.ripple.reset();
 			}
