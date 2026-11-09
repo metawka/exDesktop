@@ -169,8 +169,26 @@ private:
 			x += step;
 			++index;
 		}
+		// the caret starts where the text starts (in line with the label) and
+		// glides after the last visible shape as they appear and go
+		auto visible = 0;
+		for (const auto &shape : _shapes) {
+			if (!shape->removing) ++visible;
+		}
+		const auto caretTarget = (visible == 0)
+			? double(margins.left())
+			: std::min(
+				margins.left() + r - scroll + step * (visible - 1) + r + style::ConvertScaleExact(6.),
+				double(width() - margins.right()));
+		if (_caretTarget != caretTarget) {
+			const auto from = (_caretTarget < 0.)
+				? caretTarget
+				: _caretMove.value(_caretTarget);
+			_caretTarget = caretTarget;
+			_caretMove.start([=] { update(); }, from, caretTarget, 180, anim::easeOutCubic);
+		}
 		if (_field->hasFocus() && _caretShown) {
-			const auto cx = std::max(double(margins.left()), x - step + r + style::ConvertScaleExact(6.)) - (_shapes.empty() ? r : 0.);
+			const auto cx = _caretMove.value(_caretTarget);
 			p.setPen(QPen(st::windowBgActive, style::ConvertScaleExact(2.), Qt::SolidLine, Qt::RoundCap));
 			p.drawLine(QPointF(cx, cy - r * 1.3), QPointF(cx, cy + r * 1.3));
 		}
@@ -182,6 +200,8 @@ private:
 	bool _focused = false;
 	base::Timer _blink;
 	bool _caretShown = true;
+	double _caretTarget = -1.;
+	Ui::Animations::Simple _caretMove;
 
 };
 
