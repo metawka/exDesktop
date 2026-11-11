@@ -4,6 +4,7 @@
 #include "data/data_document.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
+#include "data/data_user.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "extera/extera_config.h"
 #include "history/history.h"
@@ -33,7 +34,7 @@ void ConvertPremiumEmojiForSending(
 	const auto peer = history->peer;
 	if (!Bool(u"local_premium_emoji"_q)
 		|| peer->isSelf()
-		|| history->session().premium()) {
+		|| history->session().user()->isPremiumReal()) {
 		return;
 	}
 	const auto owner = &history->owner();

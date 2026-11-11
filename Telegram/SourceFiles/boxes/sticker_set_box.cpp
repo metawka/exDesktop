@@ -1047,7 +1047,7 @@ void StickerSetBox::updateButtons() {
 			});
 		}();
 		if (_inner->notInstalled()) {
-			if (!_session->premium()
+			if (!_session->premiumEmoji()
 				&& _session->premiumPossible()
 				&& _inner->premiumEmojiSet()) {
 				const auto &st = st::premiumPreviewDoubledLimitsBox;

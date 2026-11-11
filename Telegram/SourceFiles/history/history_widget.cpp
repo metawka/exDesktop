@@ -2610,7 +2610,7 @@ void HistoryWidget::fileChosen(ChatHelpers::FileChosen &&data) {
 	if (const auto info = data.document->sticker()
 		; info && info->setType == Data::StickersType::Emoji) {
 		if (data.document->isPremiumEmoji()
-			&& !session().premium()
+			&& !session().premiumEmoji()
 			&& (!_peer
 				|| !Data::AllowEmojiWithoutPremium(
 					_peer,
