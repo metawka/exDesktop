@@ -1,5 +1,5 @@
 {
-  "offset": 354810055,
+  "offset": 354810066,
   "hashes": [
     {
       "sha256": "f03663d02e67a69e61a8b06bd9c8f89afcfbe59734d0ece18eb9ca166ecd9cfd",
@@ -3048,6 +3048,48 @@
       "channel": 2189715950,
       "message": 1237,
       "name": "music_tab.plugin"
+    },
+    {
+      "sha256": "6c196b5b0b5094bf59c7b67054eb74f7609925643350ce2d0518feeed055fcc0",
+      "channel": 2189715950,
+      "message": 1239,
+      "name": "chat_storage.plugin"
+    },
+    {
+      "sha256": "9bd2c5ffa93e6a866212a4e0fd263b6216dc10080bbd55c79f40625e8942f8e5",
+      "channel": 2189715950,
+      "message": 1240,
+      "name": "sand_box.plugin"
+    },
+    {
+      "sha256": "69076df05ba89c804d0b9e944c1ecc17ed6b69e9eb0f9051c7c57ffef6722792",
+      "channel": 2189715950,
+      "message": 1241,
+      "name": "profile_info.plugin"
+    },
+    {
+      "sha256": "1587ac095f2153074a4fee8fa135e4af135f6948935cd5172bff44aca5074d25",
+      "channel": 2189715950,
+      "message": 1242,
+      "name": "subtitles_plus.plugin"
+    },
+    {
+      "sha256": "4535dc52fc4eb168757aa9bcd255574aadf8cc3d2e6e8dd613208f52675df0f1",
+      "channel": 2189715950,
+      "message": 1243,
+      "name": "spekgram.plugin"
+    },
+    {
+      "sha256": "b6262bd834468557094900b0db9b3acfedc2d2c6e7b2a50509bab33813c487e2",
+      "channel": 2189715950,
+      "message": 1244,
+      "name": "ayu_lyrics_sources.plugin"
+    },
+    {
+      "sha256": "620bc93f39e0e5663c63d8875789a65c8a13dfcedec93f46c042dd4d4b5a65cd",
+      "channel": 2189715950,
+      "message": 1245,
+      "name": "music_player_actions_cactus.plugin"
     }
   ],
   "scanned": {
