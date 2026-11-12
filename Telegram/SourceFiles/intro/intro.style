@@ -48,7 +48,7 @@ introCoverDescriptionTop: 174px;
 introTitle: FlatLabel(defaultFlatLabel) {
 	textFg: introTitleFg;
 	style: TextStyle(defaultTextStyle) {
-		font: font(17px semibold);
+		font: font(24px semibold);
 	}
 }
 introTitleTop: 1px;
@@ -59,7 +59,7 @@ introDescription: FlatLabel(defaultFlatLabel) {
 		lineHeight: 20px;
 	}
 }
-introDescriptionTop: 34px;
+introDescriptionTop: 44px;
 
 introLink: defaultLinkButton;
 
@@ -79,7 +79,7 @@ introCoverDuration: 200;
 introNextButton: RoundButton(defaultActiveButton) {
 	width: 300px;
 	height: 42px;
-	radius: 6px;
+	radius: 21px;
 	textTop: 11px;
 	style: TextStyle(semiboldTextStyle) {
 		font: font(boxFontSize semibold);
@@ -93,11 +93,17 @@ introFragmentButton: RoundButton(introNextButton) {
 	iconPosition: point(-10px, 9px);
 }
 
-introStepFieldTop: 96px;
+introStepFieldTop: 112px;
+introTextInset: 4px;
 introPhoneTop: 6px;
 introLinkTop: 24px;
 introCountry: InputField(defaultInputField) {
-	textMargins: margins(3px, 27px, 3px, 6px);
+	textMargins: margins(16px, 22px, 16px, 11px);
+	placeholderShift: -15px;
+	placeholderMargins: margins(0px, 0px, 0px, 0px);
+	borderRadius: 16px;
+	textBg: transparent;
+	textBgActive: transparent;
 	style: TextStyle(defaultTextStyle) {
 		font: font(16px);
 	}
@@ -107,16 +113,40 @@ introCountry: InputField(defaultInputField) {
 introCountryCode: InputField(introCountry) {
 	width: 64px;
 	textAlign: align(top);
+	textMargins: margins(3px, 27px, 3px, 6px);
+	borderRadius: 0px;
+	textBg: transparent;
+	textBgActive: transparent;
+	border: 0px;
+	borderActive: 0px;
 }
 introPhone: InputField(introCountry) {
-	textMargins: margins(12px, 27px, 12px, 6px);
+	textMargins: margins(14px, 27px, 12px, 6px);
+	borderRadius: 0px;
 	width: 225px;
+	textBg: transparent;
+	textBgActive: transparent;
+	border: 0px;
+	borderActive: 0px;
+}
+introCountrySelect: InputField(introCountry) {
+	borderRadius: 0px;
+	textMargins: margins(20px, 27px, 44px, 6px);
+	textBg: transparent;
+	textBgActive: transparent;
+	border: 0px;
+	borderActive: 0px;
 }
 introQrLoginLinkTop: 368px;
 introName: introCountry;
 introPassword: introCountry;
-introPasswordTop: 74px;
-introPasswordHintTop: 151px;
+introPasswordShapes: InputField(introCountry) {
+	textFg: transparent;
+	border: 0px;
+	borderActive: 0px;
+}
+introPasswordTop: 90px;
+introPasswordHintTop: 167px;
 
 introCodeDigitFont: font(20px);
 introCodeDigitHeight: 50px;
@@ -144,13 +174,25 @@ introTermsLabel: FlatLabel(defaultFlatLabel) {
 introTermsBottom: 20px;
 
 introCountryIcon: icon {{ "intro_country_dropdown", menuIconFg }};
-introCountryIconPosition: point(8px, 37px);
+introCountryIconPosition: point(16px, 32px);
 
 introErrorTop: 235px;
 introErrorBelowLinkTop: 220px;
 
 introError: FlatLabel(introDescription) {
 }
+// Material supporting text under the phone field: small, error colour,
+// starts where the field's text starts and wraps inside the field.
+introPhoneError: FlatLabel(introError) {
+	textFg: attentionButtonFg;
+	style: TextStyle(defaultTextStyle) {
+		font: font(12px);
+		lineHeight: 16px;
+	}
+}
+introPhoneErrorSkip: 6px;
+introPhoneErrorInset: 16px;
+introPhoneNextShift: 22px;
 introErrorCentered: FlatLabel(introError) {
 	align: align(center);
 }
@@ -167,11 +209,12 @@ introBackButton: IconButton(defaultIconButton) {
 	ripple: defaultRippleAnimationBgOver;
 }
 
-introQrTop: -18px;
+introQrTop: -34px;
 introQrPixel: 50px; // large enough
 introQrMaxSize: 180px;
-introQrBackgroundSkip: 12px;
-introQrBackgroundRadius: 8px;
+introQrBackgroundSkip: 14px;
+introQrBackgroundRadius: 28px;
+introQrOutlineSpace: 10px;
 introQrLabelsWidth: 292px;
 introQrTitleWidth: 320px;
 introQrTitle: FlatLabel(defaultFlatLabel) {
@@ -179,16 +222,30 @@ introQrTitle: FlatLabel(defaultFlatLabel) {
 	align: align(top);
 	minWidth: introQrTitleWidth;
 	style: TextStyle(defaultTextStyle) {
-		font: font(20px semibold);
+		font: font(24px semibold);
 	}
 }
-introQrErrorTop: 336px;
-introQrTitleTop: 196px;
+introQrErrorTop: 368px;
+introQrTitleTop: 206px;
 introQrStep: FlatLabel(defaultFlatLabel) {
 	minWidth: 200px;
 }
-introQrStepsTop: 232px;
-introQrStepMargins: margins(20px, 8px, 0px, 0px);
-introQrSkipTop: 360px;
+introQrStepsTop: 248px;
+introQrStepMargins: margins(34px, 10px, 0px, 0px);
+introQrSkipTop: 372px;
+introQrStepBadge: 22px;
+introQrStepBadgeSkip: 12px;
+introQrButtonsSkip: 8px;
+introQrPhoneButton: RoundButton(defaultLightButton) {
+	width: -56px;
+	height: 40px;
+	textTop: 11px;
+	radius: 20px;
+	style: semiboldTextStyle;
+}
+introQrPasskeyButton: RoundButton(introQrPhoneButton) {
+	textBg: transparent;
+	textBgOver: lightButtonBgOver;
+}
 introQrCenterSize: 44px;
 introQrPlane: icon {{ "intro_qr_plane", activeButtonFg }};

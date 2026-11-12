@@ -6,6 +6,12 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/settings_intro.h"
+#include <algorithm>
+#include <QtGui/QPainterPath>
+#include "styles/palette.h"
+#include "ui/painter.h"
+#include "ui/widgets/box_content_divider.h"
+#include "ui/widgets/expressive_close_button.h"
 
 #include "settings/sections/settings_advanced.h"
 #include "settings/sections/settings_main.h"
@@ -112,6 +118,7 @@ object_ptr<Ui::RpWidget> CreateIntroSettings(
 	)->addClickHandler([] {
 		OpenFaq(nullptr);
 	});
+	Ui::AddSkip(result); // the last card gets the same padding below as above
 
 	return result;
 }
@@ -296,7 +303,7 @@ void IntroWidget::createTopBar(not_null<Window::Controller*> window) {
 	_topBar.create(this, st::infoLayerTopBar);
 	_topBar->setTitle(tr::lng_menu_settings());
 	auto close = _topBar->addButton(
-		base::make_unique_q<Ui::IconButton>(
+		base::make_unique_q<Ui::ExpressiveCloseButton>(
 			_topBar,
 			st::infoLayerTopBarClose));
 	close->setAccessibleName(tr::lng_close(tr::now));
@@ -309,6 +316,97 @@ void IntroWidget::createTopBar(not_null<Window::Controller*> window) {
 	_topBar->show();
 }
 
+namespace {
+
+// exDesktop / Material 3 Expressive settings: every section is a rounded card on the page
+// (like Android 16 settings) instead of rows separated by lines. Sections are the runs of
+// content between the dividers; the dividers themselves become plain gaps.
+void SetupSettingsCards(not_null<Ui::RpWidget*> wrap, not_null<QWidget*> content) {
+	wrap->setProperty("exdCards", true);
+	content->setProperty("exdCards", true);
+	wrap->paintRequest(
+	) | rpl::on_next([=](QRect clip) {
+		auto p = QPainter(wrap);
+		PainterHighQualityEnabler hq(p);
+		auto dividers = std::vector<QRect>();
+		for (const auto child : content->findChildren<QWidget*>()) {
+			const auto divider = dynamic_cast<Ui::BoxContentDivider*>(child);
+			if (divider && divider->isVisibleTo(content) && divider->height() > 0) {
+				dividers.push_back(QRect(divider->mapTo(wrap, QPoint()), divider->size()));
+			}
+		}
+		std::sort(dividers.begin(), dividers.end(), [](const QRect &a, const QRect &b) {
+			return a.y() < b.y();
+		});
+		const auto inset = style::ConvertScaleExact(12.);
+		const auto radius = style::ConvertScaleExact(24.);
+		const auto gap = style::ConvertScaleExact(3.);
+		// Rows that hold content (not dividers), in wrap coordinates.
+		auto rows = std::vector<QRect>();
+		for (const auto object : content->children()) {
+			const auto child = qobject_cast<QWidget*>(object);
+			if (!child
+				|| !child->isVisibleTo(content)
+				|| child->height() <= 0
+				|| dynamic_cast<Ui::BoxContentDivider*>(child)
+				|| typeid(*child) == typeid(Ui::FixedHeightWidget) // AddSkip()
+				|| ranges::any_of(child->findChildren<QWidget*>(), [](QWidget *w) {
+					return dynamic_cast<Ui::BoxContentDivider*>(w) != nullptr;
+				})) {
+				continue;
+			}
+			rows.push_back(QRect(child->mapTo(wrap, QPoint()), child->size()));
+		}
+		// Cards are centred on their rows: the thinner padding grows to match
+		// the thicker one as long as the neighbouring gap allows it.
+		const auto card = [&](int from, int till, int lowest, int highest) {
+			auto first = till, last = from;
+			for (const auto &row : rows) {
+				if (row.y() >= from && row.y() + row.height() <= till) {
+					first = std::min(first, row.y());
+					last = std::max(last, row.y() + row.height());
+				}
+			}
+			if (first < last) {
+				const auto above = first - from;
+				const auto below = till - last;
+				// Grow the thinner side; where there is no room, trim the thicker one.
+				if (below < above) {
+					const auto grown = std::min(till + (above - below), highest);
+					from += (above - below) - (grown - till);
+					till = grown;
+				} else if (above < below) {
+					const auto grown = std::max(from - (below - above), lowest);
+					till -= (below - above) - (from - grown);
+					from = grown;
+				}
+			}
+			if (till - from < style::ConvertScale(16)) {
+				return;
+			}
+			auto path = QPainterPath();
+			path.addRoundedRect(
+				QRectF(inset, from + gap, wrap->width() - 2. * inset, till - from - 2. * gap),
+				radius,
+				radius);
+			p.fillPath(path, st::boxDividerBg);
+		};
+		const auto top = content->mapTo(wrap, QPoint()).y();
+		auto start = top;
+		auto lowest = 0;
+		for (auto i = 0; i != int(dividers.size()); ++i) {
+			const auto &divider = dividers[i];
+			const auto middle = divider.y() + divider.height() / 2;
+			card(start, divider.y(), lowest, middle);
+			lowest = middle;
+			start = std::max(start, divider.y() + divider.height());
+		}
+		card(start, top + content->height(), lowest, wrap->height());
+	}, wrap->lifetime());
+}
+
+} // namespace
+
 void IntroWidget::setInnerWidget(object_ptr<Ui::RpWidget> content) {
 	using namespace rpl::mappers;
 
@@ -318,6 +416,7 @@ void IntroWidget::setInnerWidget(object_ptr<Ui::RpWidget> content) {
 			std::move(content),
 			_innerWrap ? _innerWrap->padding() : style::margins()));
 	_innerWrap->move(0, 0);
+	SetupSettingsCards(_innerWrap, _innerWrap->entity());
 
 	rpl::combine(
 		_scroll->scrollTopValue(),

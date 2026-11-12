@@ -23,6 +23,7 @@ void ApplyRussian(Fn<void(const QByteArray&, const QByteArray&)> apply) {
 		{ "lng_extera_badge_developer", u"{name} - \u0440\u0430\u0437\u0440\u0430\u0431\u043E\u0442\u0447\u0438\u043A exDesktop." },
 		{ "lng_extera_badge_resource", u"{name} - \u043E\u0444\u0438\u0446\u0438\u0430\u043B\u044C\u043D\u044B\u0439 \u0440\u0435\u0441\u0443\u0440\u0441 exDesktop." },
 		{ "lng_extera_port", u"exDesktop" },
+		{ "lng_extera_monet", u"\u0426\u0432\u0435\u0442\u0430 Monet \u0438\u0437 \u0441\u0438\u0441\u0442\u0435\u043C\u043D\u043E\u0433\u043E \u0430\u043A\u0446\u0435\u043D\u0442\u0430" },
 		{ "lng_extera_port_developer", u"\u0420\u0430\u0437\u0440\u0430\u0431\u043E\u0442\u0447\u0438\u043A" },
 		{ "lng_extera_translate_messages", u"\u041F\u0435\u0440\u0435\u0432\u043E\u0434 \u0441\u043E\u043E\u0431\u0449\u0435\u043D\u0438\u0439" },
 		{ "lng_extera_translate_button", u"\u041A\u043D\u043E\u043F\u043A\u0430 \u00AB\u041F\u0435\u0440\u0435\u0432\u0435\u0441\u0442\u0438\u00BB" },

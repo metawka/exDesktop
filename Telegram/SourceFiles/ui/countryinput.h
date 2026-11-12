@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "ui/rp_widget.h"
+#include "ui/effects/animations.h"
 
 namespace style {
 struct InputField;
@@ -60,6 +61,8 @@ private:
 	const style::InputField &_st;
 	bool _active = false;
 	QString _text;
+	QString _previousText;
+	Ui::Animations::Simple _textChange;
 	QString _chosenIso;
 
 	rpl::event_stream<QString> _codeChanged;

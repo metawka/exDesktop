@@ -6,6 +6,14 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_password_check.h"
+#include "intro/material_shapes.h"
+#include <cmath>
+#include <algorithm>
+#include <QtGui/QPainterPath>
+#include "styles/palette.h"
+#include "base/timer.h"
+#include "base/event_filter.h"
+#include "ui/painter.h"
 
 #include "intro/intro_widget.h"
 #include "core/core_cloud_password.h"
@@ -26,13 +34,186 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Intro {
 namespace details {
 
+namespace {
+
+// exDesktop: every typed character of the cloud password is a Material 3 Expressive shape, popping
+// in with a spring and a turn (like the PIN entry on Pixel phones); deleting shrinks it away.
+// The field keeps its text and caret logic; its text is transparent and this layer draws.
+class PasswordShapes final : public Ui::RpWidget {
+public:
+	PasswordShapes(QWidget *parent, not_null<Ui::PasswordInput*> field)
+	: RpWidget(parent)
+	, _field(field)
+	, _blink([=] { _caretShown = !_caretShown; update(); }) {
+		setAttribute(Qt::WA_TransparentForMouseEvents);
+		QObject::connect(field, &QLineEdit::textChanged, this, [=](const QString &text) {
+			setCount(text.size());
+		});
+		base::install_event_filter(this, field, [=](not_null<QEvent*> e) {
+			const auto type = e->type();
+			if (type == QEvent::Move || type == QEvent::Resize) {
+				reposition();
+			} else if (type == QEvent::Show || type == QEvent::ShowToParent) {
+				reposition();
+				show();
+			} else if (type == QEvent::Hide || type == QEvent::HideToParent) {
+				hide();
+			} else if (type == QEvent::FocusIn || type == QEvent::FocusOut) {
+				const auto focused = _field->hasFocus();
+				_caretShown = true;
+				focused ? _blink.callEach(530) : _blink.cancel();
+				_focus.start(
+					[=] { update(); },
+					_focus.value(focused ? 0. : 1.),
+					focused ? 1. : 0.,
+					focused ? 320 : 260,
+					focused ? anim::easeOutBack : anim::easeOutCubic);
+				_focused = focused;
+				update();
+			}
+			return base::EventFilterResult::Continue;
+		});
+		reposition();
+		setVisible(field->isVisible());
+		setCount(field->getLastText().size());
+	}
+
+private:
+	struct Shape {
+		Ui::Animations::Simple appear;
+		Ui::MaterialShapes::Shape kind = Ui::MaterialShapes::Shape::Circle;
+		bool removing = false;
+	};
+
+	void reposition() {
+		setGeometry(_field->geometry());
+		raise();
+	}
+
+	void setCount(int count) {
+		const auto alive = int(std::count_if(_shapes.begin(), _shapes.end(), [](const auto &s) {
+			return !s->removing;
+		}));
+		_caretShown = true;
+		if (count > alive) {
+			for (auto i = alive; i != count; ++i) {
+				auto shape = std::make_unique<Shape>();
+				shape->kind = Ui::MaterialShapes::RandomSoft(_shapes.empty()
+					? Ui::MaterialShapes::Shape::Count
+					: _shapes.back()->kind);
+				shape->appear.start([=] { update(); }, 0., 1., 440, anim::easeOutBack);
+				_shapes.push_back(std::move(shape));
+			}
+		} else if (count < alive) {
+			auto toRemove = alive - count;
+			for (auto i = int(_shapes.size()) - 1; i >= 0 && toRemove > 0; --i) {
+				if (_shapes[i]->removing) {
+					continue;
+				}
+				--toRemove;
+				const auto raw = _shapes[i].get();
+				raw->removing = true;
+				raw->appear.start([=] {
+					update();
+					if (!raw->appear.animating()) {
+						crl::on_main(this, [=] {
+							const auto j = std::find_if(_shapes.begin(), _shapes.end(), [&](const auto &s) {
+								return s.get() == raw;
+							});
+							if (j != _shapes.end()) {
+								_shapes.erase(j);
+								update();
+							}
+						});
+					}
+				}, raw->appear.value(1.), 0., 200, anim::easeOutCubic);
+			}
+		}
+		update();
+	}
+
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		PainterHighQualityEnabler hq(p);
+		{
+			// Material 3 outlined field, accent and thicker when focused
+			const auto focus = std::max(0., _focus.value(_focused ? 1. : 0.));
+			const auto width = style::ConvertScaleExact(1.) + style::ConvertScaleExact(1.) * std::min(1., focus);
+			const auto half = width / 2.;
+			p.setPen(QPen(anim::color(st::inputBorderFg, st::windowBgActive, std::min(1., focus)), width));
+			p.setBrush(Qt::NoBrush);
+			const auto radius = style::ConvertScaleExact(16.);
+			p.drawRoundedRect(QRectF(rect()).marginsRemoved(QMarginsF(half, half, half, half)), radius, radius);
+		}
+		const auto &margins = st::introPasswordShapes.textMargins;
+		const auto r = style::ConvertScaleExact(8.);
+		const auto step = style::ConvertScaleExact(22.);
+		const auto cy = margins.top() + (height() - margins.top() - margins.bottom()) / 2.;
+		const auto available = width() - margins.left() - margins.right() - step;
+		const auto total = step * _shapes.size();
+		const auto scroll = std::max(0., total - available);
+		auto x = margins.left() + r - scroll;
+		p.setPen(Qt::NoPen);
+		auto index = 0;
+		for (const auto &shape : _shapes) {
+			const auto t = shape->appear.value(shape->removing ? 0. : 1.);
+			if (t > 0.01 && x > margins.left() - r) {
+				p.save();
+				p.translate(x, cy + (1. - std::min(1., t)) * style::ConvertScaleExact(6.));
+				p.rotate((1. - t) * -70.);
+				p.scale(t, t);
+				p.setBrush(st::windowBgActive);
+				p.drawPath(Ui::MaterialShapes::Path(shape->kind, QRectF(-r, -r, 2 * r, 2 * r)));
+				p.restore();
+			}
+			x += step;
+			++index;
+		}
+		// the caret starts where the text starts (in line with the label) and
+		// glides after the last visible shape as they appear and go
+		auto visible = 0;
+		for (const auto &shape : _shapes) {
+			if (!shape->removing) ++visible;
+		}
+		const auto caretTarget = (visible == 0)
+			? double(margins.left())
+			: std::min(
+				margins.left() + r - scroll + step * (visible - 1) + r + style::ConvertScaleExact(6.),
+				double(width() - margins.right()));
+		if (_caretTarget != caretTarget) {
+			const auto from = (_caretTarget < 0.)
+				? caretTarget
+				: _caretMove.value(_caretTarget);
+			_caretTarget = caretTarget;
+			_caretMove.start([=] { update(); }, from, caretTarget, 180, anim::easeOutCubic);
+		}
+		if (_field->hasFocus() && _caretShown) {
+			const auto cx = _caretMove.value(_caretTarget);
+			p.setPen(QPen(st::windowBgActive, style::ConvertScaleExact(2.), Qt::SolidLine, Qt::RoundCap));
+			p.drawLine(QPointF(cx, cy - r * 1.3), QPointF(cx, cy + r * 1.3));
+		}
+	}
+
+	const not_null<Ui::PasswordInput*> _field;
+	std::vector<std::unique_ptr<Shape>> _shapes;
+	Ui::Animations::Simple _focus;
+	bool _focused = false;
+	base::Timer _blink;
+	bool _caretShown = true;
+	double _caretTarget = -1.;
+	Ui::Animations::Simple _caretMove;
+
+};
+
+} // namespace
+
 PasswordCheckWidget::PasswordCheckWidget(
 	QWidget *parent,
 	not_null<Main::Account*> account,
 	not_null<Data*> data)
 : Step(parent, account, data)
 , _passwordState(getData()->pwdState)
-, _pwdField(this, st::introPassword, tr::lng_signin_password())
+, _pwdField(this, st::introPasswordShapes, tr::lng_signin_password())
 , _pwdHint(this, st::introPasswordHint)
 , _codeField(this, st::introPassword, tr::lng_signin_code())
 , _toRecover(this, tr::lng_signin_recover(tr::now))
@@ -47,6 +228,7 @@ PasswordCheckWidget::PasswordCheckWidget(
 	_toRecover->addClickHandler([=] { toRecover(); });
 	_toPassword->addClickHandler([=] { toPassword(); });
 	connect(_pwdField, &Ui::PasswordInput::changed, [=] { hideError(); });
+	Ui::CreateChild<PasswordShapes>(this, _pwdField.data())->show();
 	_codeField->changes(
 	) | rpl::on_next([=] {
 		hideError();
@@ -101,11 +283,11 @@ void PasswordCheckWidget::resizeEvent(QResizeEvent *e) {
 
 void PasswordCheckWidget::updateControlsGeometry() {
 	_pwdField->moveToLeft(contentLeft(), contentTop() + st::introPasswordTop);
-	_pwdHint->moveToLeft(contentLeft() + st::buttonRadius, contentTop() + st::introPasswordHintTop);
+	_pwdHint->moveToLeft(contentLeft() + st::introTextInset, contentTop() + st::introPasswordHintTop);
 	_codeField->moveToLeft(contentLeft(), contentTop() + st::introStepFieldTop);
 	auto linkTop = _codeField->y() + _codeField->height() + st::introLinkTop;
-	_toRecover->moveToLeft(contentLeft() + st::buttonRadius, linkTop);
-	_toPassword->moveToLeft(contentLeft() + st::buttonRadius, linkTop);
+	_toRecover->moveToLeft(contentLeft() + st::introTextInset, linkTop);
+	_toPassword->moveToLeft(contentLeft() + st::introTextInset, linkTop);
 }
 
 void PasswordCheckWidget::setInnerFocus() {

@@ -11,6 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/components/passkeys.h"
 #include "data/data_passkey_deserialize.h"
 #include "intro/intro_phone.h"
+#include "intro/intro_expressive.h"
+#include <QtGui/QPainterPath>
 #include "intro/intro_widget.h"
 #include "intro/intro_password_check.h"
 #include "lang/lang_keys.h"
@@ -18,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/labels.h"
 #include "ui/wrap/fade_wrap.h"
 #include "ui/wrap/vertical_layout.h"
+#include "ui/wrap/padding_wrap.h"
 #include "ui/effects/radial_animation.h"
 #include "ui/text/text_utilities.h"
 #include "ui/image/image_prepare.h"
@@ -37,23 +40,64 @@ namespace Intro {
 namespace details {
 namespace {
 
-[[nodiscard]] QImage TelegramQrExact(const Qr::Data &data, int pixel) {
-	return Qr::Generate(data, pixel, Qt::black);
-}
-
+// exDesktop / Material 3 Expressive QR: round modules, rounded finder squares, and a clear
+// middle for the badge. Drawn in the palette's colours on a transparent background.
 [[nodiscard]] QImage TelegramQr(const Qr::Data &data, int pixel, int max = 0) {
 	Expects(data.size > 0);
 
 	if (max > 0 && data.size * pixel > max) {
 		pixel = std::max(max / data.size, 1);
 	}
-	const auto qr = TelegramQrExact(data, pixel * style::DevicePixelRatio());
-	auto result = QImage(qr.size(), QImage::Format_ARGB32_Premultiplied);
-	result.fill(Qt::white);
-	{
-		auto p = QPainter(&result);
-		p.drawImage(QRect(QPoint(), qr.size()), qr);
+	const auto ratio = style::DevicePixelRatio();
+	const auto unit = double(pixel * ratio);
+	const auto n = data.size;
+	auto result = QImage(
+		QSize(n * pixel, n * pixel) * ratio,
+		QImage::Format_ARGB32_Premultiplied);
+	result.fill(Qt::transparent);
+	const auto fg = st::windowFgActive->c;
+	auto p = QPainter(&result);
+	p.setRenderHint(QPainter::Antialiasing);
+	p.setPen(Qt::NoPen);
+	p.setBrush(fg);
+
+	const auto finder = [&](int x, int y) {
+		return (x < 7 && y < 7) || (x >= n - 7 && y < 7) || (x < 7 && y >= n - 7);
+	};
+	const auto middle = std::max(5, n / 4);
+	const auto inMiddle = [&](int x, int y) {
+		const auto c = n / 2.;
+		return std::abs(x + 0.5 - c) < middle / 2. && std::abs(y + 0.5 - c) < middle / 2.;
+	};
+	for (auto y = 0; y != n; ++y) {
+		for (auto x = 0; x != n; ++x) {
+			if (!data.values[y * n + x] || finder(x, y) || inMiddle(x, y)) {
+				continue;
+			}
+			const auto d = unit * 0.86;
+			p.drawEllipse(QRectF(
+				x * unit + (unit - d) / 2.,
+				y * unit + (unit - d) / 2.,
+				d,
+				d));
+		}
 	}
+	const auto drawFinder = [&](int fx, int fy) {
+		const auto outer = QRectF(fx * unit, fy * unit, 7 * unit, 7 * unit);
+		auto ring = QPainterPath();
+		ring.addRoundedRect(outer, unit * 2.2, unit * 2.2);
+		auto hole = QPainterPath();
+		hole.addRoundedRect(outer.marginsRemoved(QMarginsF(unit, unit, unit, unit)), unit * 1.5, unit * 1.5);
+		p.drawPath(ring.subtracted(hole));
+		p.drawRoundedRect(
+			outer.marginsRemoved(QMarginsF(unit * 2, unit * 2, unit * 2, unit * 2)),
+			unit * 1.1,
+			unit * 1.1);
+	};
+	drawFinder(0, 0);
+	drawFinder(n - 7, 0);
+	drawFinder(0, n - 7);
+	p.end();
 	return result;
 }
 
@@ -75,6 +119,9 @@ namespace {
 		QImage center;
 		Ui::Animations::Simple shown;
 		Ui::InfiniteRadialAnimation waiting;
+		Ui::Animations::Basic clock;
+		double angle = 0.;
+		crl::time last = 0;
 	};
 	auto qrs = std::move(
 		codes
@@ -100,7 +147,17 @@ namespace {
 	const auto state = result->lifetime().make_state<State>(
 		[=] { result->update(); });
 	state->waiting.start();
-	const auto size = st::introQrMaxSize + 2 * st::introQrBackgroundSkip;
+	state->clock.init([=](crl::time now) {
+		if (state->last) {
+			state->angle += std::min<crl::time>(now - state->last, 100) / 1000. * 0.32;
+		}
+		state->last = now;
+		result->update();
+		return true;
+	});
+	state->clock.start();
+	const auto outline = st::introQrOutlineSpace;
+	const auto size = st::introQrMaxSize + 2 * st::introQrBackgroundSkip + 2 * outline;
 	result->resize(size, size);
 	rpl::combine(
 		std::move(qrs),
@@ -158,13 +215,46 @@ namespace {
 			size.height());
 		const auto radius = st::introQrBackgroundRadius;
 		const auto skip = st::introQrBackgroundSkip;
+		const auto seconds = crl::now() / 1000.;
 		auto hq = PainterHighQualityEnabler(p);
+		const auto card = QRectF(qr.marginsAdded({ skip, skip, skip, skip }));
+
+		// a slow wavy outline around the card
+		{
+			const auto gap = style::ConvertScaleExact(6.);
+			auto base = QPainterPath();
+			base.addRoundedRect(card.marginsAdded({ gap, gap, gap, gap }), radius + gap, radius + gap);
+			const auto length = base.length();
+			const auto steps = std::max(120, int(length / 2.));
+			const auto waves = std::max(10., std::round(length / 30.));
+			const auto amplitude = style::ConvertScaleExact(1.6);
+			auto wavy = QPainterPath();
+			for (auto i = 0; i <= steps; ++i) {
+				const auto t = double(i) / steps;
+				const auto at = base.pointAtPercent(t);
+				const auto ahead = base.pointAtPercent(std::fmod(t + 0.001, 1.));
+				auto nx = ahead.y() - at.y(), ny = -(ahead.x() - at.x());
+				const auto len = std::hypot(nx, ny);
+				if (len > 0.) {
+					nx /= len;
+					ny /= len;
+				}
+				const auto push = amplitude * std::sin(t * waves * 2. * M_PI - seconds * 1.4);
+				const auto point = QPointF(at.x() + nx * push, at.y() + ny * push);
+				(i == 0) ? wavy.moveTo(point) : wavy.lineTo(point);
+			}
+			wavy.closeSubpath();
+			auto color = st::windowBgActive->c;
+			color.setAlphaF(color.alphaF() * 0.45);
+			p.setPen(QPen(color, style::ConvertScaleExact(1.6)));
+			p.setBrush(Qt::NoBrush);
+			p.drawPath(wavy);
+		}
+
+		// the tonal card (light enough for any phone camera)
 		p.setPen(Qt::NoPen);
-		p.setBrush(Qt::white);
-		p.drawRoundedRect(
-			qr.marginsAdded({ skip, skip, skip, skip }),
-			radius,
-			radius);
+		p.setBrush(st::windowBgActive);
+		p.drawRoundedRect(card, radius, radius);
 		if (!state->qr.isNull()) {
 			if (shown == 1.) {
 				state->previous = QImage();
@@ -180,12 +270,20 @@ namespace {
 			(result->height() - st::introQrCenterSize) / 2,
 			st::introQrCenterSize,
 			st::introQrCenterSize);
-		p.drawImage(rect, state->center);
+		Expressive::PaintSunBadge(
+			p,
+			QPointF(rect.center()) + QPointF(0.5, 0.5),
+			st::introQrCenterSize * 0.92,
+			st::windowFgActive->c,
+			st::windowBgActive->c,
+			anim::color(st::windowBgActive, st::windowFgActive, 0.35),
+			state->angle,
+			seconds);
 		if (!anim::Disabled() && state->waiting.animating()) {
 			auto hq = PainterHighQualityEnabler(p);
 			const auto line = st::radialLine;
 			const auto radial = state->waiting.computeState();
-			auto pen = QPen(QrActiveColor());
+			auto pen = QPen(st::windowFgActive->c);
 			pen.setWidth(line);
 			pen.setCapStyle(Qt::RoundCap);
 			p.setOpacity(radial.shown * (1. - shown));
@@ -333,19 +431,34 @@ void QrWidget::setupControls() {
 				text(tr::rich),
 				st::introQrStep),
 			st::introQrStepMargins);
-		const auto number = Ui::CreateChild<Ui::FlatLabel>(
-			steps,
-			rpl::single(tr::semibold(QString::number(++index) + ".")),
-			st::defaultFlatLabel);
+		// Material 3: numbered steps as small tonal circles
+		const auto number = Ui::CreateChild<Ui::RpWidget>(steps);
+		const auto digit = QString::number(++index);
+		const auto badge = st::introQrStepBadge;
+		number->resize(badge, badge);
+		number->paintRequest(
+		) | rpl::on_next([=] {
+			auto p = QPainter(number);
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::lightButtonBg);
+			p.drawEllipse(QRectF(0, 0, badge, badge));
+			p.setPen(st::lightButtonFg);
+			p.setFont(st::semiboldFont);
+			p.drawText(QRect(0, 0, badge, badge), Qt::AlignCenter, digit);
+		}, number->lifetime());
 		rpl::combine(
-			number->widthValue(),
-			label->positionValue()
-		) | rpl::on_next([=](int width, QPoint position) {
+			label->positionValue(),
+			label->heightValue()
+		) | rpl::on_next([=](QPoint position, int) {
+			const auto line = st::introQrStep.style.font->height;
 			number->moveToLeft(
-				position.x() - width - st::normalFont->spacew,
-				position.y());
+				position.x() - badge - st::introQrStepBadgeSkip,
+				position.y() + (line - badge) / 2);
 		}, number->lifetime());
 	}
+	// leave room under the last step for its round number badge
+	steps->add(object_ptr<Ui::FixedHeightWidget>(steps, st::introQrStepBadge / 2));
 	steps->resizeToWidth(st::introQrLabelsWidth);
 	rpl::combine(
 		sizeValue(),
@@ -356,9 +469,11 @@ void QrWidget::setupControls() {
 			contentTop() + st::introQrStepsTop);
 	}, steps->lifetime());
 
-	_skip = Ui::CreateChild<Ui::LinkButton>(
+	_skip = Ui::CreateChild<Ui::RoundButton>(
 		this,
-		tr::lng_intro_qr_phone(tr::now));
+		tr::lng_intro_qr_phone(),
+		st::introQrPhoneButton);
+	_skip->setWavy(true);
 	rpl::combine(
 		sizeValue(),
 		_skip->widthValue()
@@ -378,9 +493,11 @@ void QrWidget::setupPasskeyLink() {
 		|| !Platform::WebAuthn::IsSupported()) {
 		return;
 	}
-	_passkey = Ui::CreateChild<Ui::LinkButton>(
+	_passkey = Ui::CreateChild<Ui::RoundButton>(
 		this,
-		tr::lng_intro_qr_passkey(tr::now));
+		tr::lng_intro_qr_passkey(),
+		st::introQrPasskeyButton);
+	_passkey->setWavy(true);
 	_passkey->show();
 	rpl::combine(
 		sizeValue(),
@@ -390,7 +507,8 @@ void QrWidget::setupPasskeyLink() {
 			(size.width() - passkeyWidth) / 2,
 			(contentTop()
 				+ st::introQrSkipTop
-				+ 1.5 * st::normalFont->height));
+				+ st::introQrPhoneButton.height
+				+ st::introQrButtonsSkip));
 	}, _passkey->lifetime());
 
 	_passkey->setClickedCallback([=] {

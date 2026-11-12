@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/exd/fonts">
+    <file alias="Unbounded.ttf">../../fonts/Unbounded.ttf</file>
+    <file alias="ExdSymbols.ttf">../../fonts/ExdSymbols.ttf</file>
+  </qresource>
+</RCC>

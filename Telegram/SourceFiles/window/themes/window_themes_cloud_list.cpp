@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/themes/window_themes_cloud_list.h"
+#include <algorithm>
+#include <QtGui/QPainterPath>
 
 #include "base/call_delayed.h"
 #include "ui/emoji_config.h"
@@ -32,6 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "core/application.h"
 #include "styles/style_settings.h"
+#include "styles/palette.h"
 #include "styles/style_window.h"
 #include "styles/style_boxes.h"
 #include "styles/style_chat_helpers.h"
@@ -258,6 +261,19 @@ CloudListCheck::CloudListCheck(bool checked)
 , _radio(st::defaultRadio, checked, [=] { update(); }) {
 }
 
+void CloudListCheck::setHovered(bool hovered) {
+	if (_hovered == hovered) {
+		return;
+	}
+	_hovered = hovered;
+	_hoverAnimation.start(
+		[=] { update(); },
+		_hoverAnimation.value(hovered ? 0. : 1.),
+		hovered ? 1. : 0.,
+		hovered ? 380 : 320,
+		hovered ? anim::easeOutBack : anim::easeOutCubic);
+}
+
 void CloudListCheck::setEmoji(EmojiPtr emoji) {
 	_emoji = emoji;
 	update();
@@ -327,9 +343,6 @@ void CloudListCheck::validateBackgroundCache(int width) {
 			0,
 			imageWidth,
 			_backgroundFull.height());
-	_backgroundCache = Images::Round(
-		std::move(_backgroundCache),
-		ImageRoundRadius::Large);
 	_backgroundCache.setDevicePixelRatio(style::DevicePixelRatio());
 }
 
@@ -354,7 +367,7 @@ void CloudListCheck::paintNotSupported(
 
 	const auto height = getSize().height();
 	const auto rect = QRect(0, 0, outerWidth, height);
-	const auto radius = st::roundRadiusLarge;
+	const auto radius = style::ConvertScaleExact(14.);
 	p.drawRoundedRect(rect, radius, radius);
 	st::settingsThemeNotSupportedIcon.paintInCenter(p, rect);
 }
@@ -367,9 +380,43 @@ void CloudListCheck::paintWithColors(
 	Expects(_colors.has_value());
 
 	validateBackgroundCache(outerWidth);
-	p.drawImage(
-		QRect(0, 0, outerWidth, getSize().height()),
-		_backgroundCache);
+
+	// Material 3 Expressive tile: 14 px corners, the chosen one rounds up to 24 px and gets an
+	// accent outline (shape and colour both say "selected")
+	const auto t = std::clamp(currentAnimationValue(), 0., 1.);
+	const auto hover = std::max(0., _hoverAnimation.value(_hovered ? 1. : 0.));
+	const auto radius = style::ConvertScaleExact(14. + 10. * t + 8. * hover * (1. - t));
+	const auto height = getSize().height();
+	{
+		const auto ratio = style::DevicePixelRatio();
+		auto rounded = QImage(
+			QSize(outerWidth, height) * ratio,
+			QImage::Format_ARGB32_Premultiplied);
+		rounded.fill(Qt::transparent);
+		{
+			auto texture = _backgroundCache;
+			texture.setDevicePixelRatio(1.);
+			auto q = QPainter(&rounded);
+			q.setRenderHint(QPainter::Antialiasing);
+			q.setPen(Qt::NoPen);
+			q.setBrush(QBrush(texture));
+			q.drawRoundedRect(
+				QRectF(0, 0, outerWidth * ratio, height * ratio),
+				radius * ratio,
+				radius * ratio);
+		}
+		rounded.setDevicePixelRatio(ratio);
+		p.drawImage(QRect(0, 0, outerWidth, height), rounded);
+	}
+	if (hover > 0.) {
+		// Material 3 hover: an 8% state layer of the content colour over the tile
+		auto layer = st::windowFg->c;
+		layer.setAlphaF(0.08 * std::min(1., hover));
+		auto path = QPainterPath();
+		path.addRoundedRect(QRectF(0, 0, outerWidth, height), radius, radius);
+		PainterHighQualityEnabler hq(p);
+		p.fillPath(path, layer);
+	}
 
 	const auto received = QRect(
 		st::settingsThemeBubblePosition,
@@ -379,15 +426,15 @@ void CloudListCheck::paintWithColors(
 		received.y() + received.height() + st::settingsThemeBubbleSkip,
 		received.width(),
 		received.height());
-	const auto radius = st::settingsThemeBubbleRadius;
+	const auto bubble = st::settingsThemeBubbleRadius;
 
 	PainterHighQualityEnabler hq(p);
 	p.setPen(Qt::NoPen);
 
 	p.setBrush(_colors->received);
-	p.drawRoundedRect(style::rtlrect(received, outerWidth), radius, radius);
+	p.drawRoundedRect(style::rtlrect(received, outerWidth), bubble, bubble);
 	p.setBrush(_colors->sent);
-	p.drawRoundedRect(style::rtlrect(sent, outerWidth), radius, radius);
+	p.drawRoundedRect(style::rtlrect(sent, outerWidth), bubble, bubble);
 
 	if (_emoji) {
 		paintEmoji(p, outerWidth);
@@ -400,6 +447,21 @@ void CloudListCheck::paintWithColors(
 		(outerWidth - radio.width()) / 2,
 		getSize().height() - radio.height() - st::settingsThemeRadioBottom,
 		outerWidth);
+
+	if (t > 0.) {
+		const auto width = style::ConvertScaleExact(3.);
+		const auto inset = width / 2.;
+		auto color = st::windowBgActive->c;
+		color.setAlphaF(color.alphaF() * t);
+		auto pen = QPen(color);
+		pen.setWidthF(width);
+		p.setPen(pen);
+		p.setBrush(Qt::NoBrush);
+		p.drawRoundedRect(
+			QRectF(0, 0, outerWidth, height).adjusted(inset, inset, -inset, -inset),
+			radius - inset,
+			radius - inset);
+	}
 }
 
 void CloudListCheck::paintEmoji(QPainter &p, int outerWidth) {
@@ -423,7 +485,7 @@ void CloudListCheck::paintOutline(QPainter &p, int outerWidth) {
 	}
 	const auto width = float64(st::settingsThemeOutlineWidth);
 	const auto inset = width / 2.;
-	const auto radius = st::roundRadiusLarge - inset;
+	const auto radius = style::ConvertScaleExact(24.) - inset;
 	auto pen = QPen(_colors->radiobuttonActive);
 	pen.setWidthF(width);
 	p.setPen(pen);

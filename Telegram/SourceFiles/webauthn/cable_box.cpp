@@ -16,7 +16,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
+#include "ui/wrap/padding_wrap.h"
 #include "ui/painter.h"
+#include "ui/effects/animations.h"
+#include "intro/material_shapes.h"
+#include "ui/expressive_fonts.h"
 #include "lottie/lottie_icon.h"
 #include "qr/qr_generate.h"
 #include "base/unique_qptr.h"
@@ -80,6 +84,122 @@ namespace {
 	return image;
 }
 
+using Ui::ExpressiveFonts::Symbols;
+constexpr auto kGlyphPasskey = Ui::ExpressiveFonts::kPasskey;
+constexpr auto kGlyphBluetooth = Ui::ExpressiveFonts::kBluetooth;
+constexpr auto kGlyphBluetoothOff = Ui::ExpressiveFonts::kBluetoothOff;
+constexpr auto kGlyphError = Ui::ExpressiveFonts::kError;
+
+[[nodiscard]] QColor WithAlpha(QColor color, double alpha) {
+	color.setAlphaF(color.alphaF() * alpha);
+	return color;
+}
+
+[[nodiscard]] double EaseOutBack(double t) {
+	constexpr auto c1 = 1.70158;
+	constexpr auto c3 = c1 + 1.;
+	const auto u = t - 1.;
+	return 1. + c3 * u * u * u + c1 * u * u;
+}
+
+// A slowly turning Material cookie with a glyph inside; pops in with a spring.
+void AddHero(not_null<Ui::VerticalLayout*> content, char16_t glyph) {
+	const auto side = st::passkeyCableHeroSize;
+	// full width, painted in the middle: the layout keeps it centred at any width
+	const auto hero = content->add(
+		object_ptr<Ui::RpWidget>(content),
+		st::passkeyCableHeroMargin);
+	hero->resize(side, side);
+	const auto started = crl::now();
+	const auto animation = hero->lifetime().make_state<Ui::Animations::Basic>(
+		[=] { hero->update(); });
+	if (!anim::Disabled()) {
+		animation->start();
+	}
+	hero->paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(hero);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto seconds = anim::Disabled()
+			? 10.
+			: (crl::now() - started) / 1000.;
+		const auto pop = std::clamp(seconds / 0.5, 0., 1.);
+		const auto scale = 0.6 + 0.4 * EaseOutBack(pop);
+		const auto r = side / 2.;
+		p.translate(hero->width() / 2., r);
+		p.scale(scale, scale);
+		p.save();
+		p.rotate(seconds * 9.);
+		const auto shape = Ui::MaterialShapes::Path(
+			Ui::MaterialShapes::Shape::Cookie9,
+			QRectF(-r, -r, 2 * r, 2 * r));
+		p.fillPath(shape, WithAlpha(st::windowBgActive->c, 0.22));
+		p.restore();
+		p.setPen(st::windowActiveTextFg);
+		p.setFont(Symbols(side * 0.44, true));
+		p.drawText(
+			QRectF(-r, -r, 2 * r, 2 * r),
+			Qt::AlignCenter,
+			QString(QChar(glyph)));
+	}, hero->lifetime());
+}
+
+// A tonal card with a round glyph badge and text, for status lines and errors.
+void AddStatusCard(
+		not_null<Ui::VerticalLayout*> content,
+		rpl::producer<QString> text,
+		char16_t glyph,
+		bool alert) {
+	const auto card = content->add(
+		object_ptr<Ui::RpWidget>(content),
+		st::passkeyCableStatusMargin);
+	const auto label = Ui::CreateChild<Ui::FlatLabel>(
+		card,
+		std::move(text),
+		st::passkeyCableStatusLabel);
+	const auto padding = st::passkeyCableStatusPadding;
+	const auto badge = st::passkeyCableStatusBadge;
+	const auto skip = st::passkeyCableStatusSkip;
+	const auto layout = [=](int width) {
+		label->resizeToWidth(std::max(
+			width - padding.left() - badge - skip - padding.right(),
+			1));
+		const auto inner = std::max(label->height(), badge);
+		label->moveToLeft(
+			padding.left() + badge + skip,
+			padding.top() + (inner - label->height()) / 2);
+		card->resize(width, padding.top() + inner + padding.bottom());
+	};
+	card->widthValue(
+	) | rpl::on_next(layout, card->lifetime());
+	label->heightValue(
+	) | rpl::on_next([=] {
+		layout(card->width());
+	}, card->lifetime());
+	card->paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(card);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto radius = st::passkeyCableStatusRadius;
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::boxSearchBg);
+		p.drawRoundedRect(card->rect(), radius, radius);
+		const auto color = alert
+			? st::attentionButtonFg->c
+			: st::windowActiveTextFg->c;
+		const auto circle = QRectF(
+			padding.left(),
+			(card->height() - badge) / 2.,
+			badge,
+			badge);
+		p.setBrush(WithAlpha(color, 0.16));
+		p.drawEllipse(circle);
+		p.setPen(color);
+		p.setFont(Symbols(badge * 0.55, true));
+		p.drawText(circle, Qt::AlignCenter, QString(QChar(glyph)));
+	}, card->lifetime());
+}
+
 } // namespace
 
 void ShowCableToast(const QString &text) {
@@ -103,7 +223,7 @@ bool ShowCableBox(BoxContent &&content) {
 	const auto cancelled = content.cancelled;
 	show->show(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setStyle(st::passkeyCableBox);
-		box->setTitle(state->sheet.value(
+		auto titleText = (state->sheet.value(
 		) | rpl::map([=](Sheet sheet) -> rpl::producer<QString> {
 			switch (sheet) {
 			case Sheet::Qr:
@@ -119,6 +239,8 @@ bool ShowCableBox(BoxContent &&content) {
 			}
 			Unexpected("Sheet value in cable box title.");
 		}) | rpl::flatten_latest());
+		const auto titleValue = box->lifetime().make_state<
+			rpl::variable<QString>>(std::move(titleText));
 
 		state->closeRequests.events() | rpl::on_next([=] {
 			box->closeBox();
@@ -132,6 +254,24 @@ bool ShowCableBox(BoxContent &&content) {
 			const auto content = outer->add(
 				object_ptr<Ui::VerticalLayout>(outer));
 			current->reset(content);
+
+			// Material 3 dialog with a hero icon: shape on top, centred headline.
+			if (sheet == Sheet::Qr || sheet == Sheet::Error) {
+				AddHero(content, (sheet == Sheet::Error)
+					? kGlyphError
+					: kGlyphPasskey);
+			} else {
+				content->add(object_ptr<Ui::FixedHeightWidget>(
+					content,
+					st::passkeyCableHeroMargin.top()));
+			}
+			content->add(
+				object_ptr<Ui::FlatLabel>(
+					content,
+					titleValue->value(),
+					st::passkeyCableTitle),
+				st::passkeyCableTitleMargin,
+				style::al_top);
 
 			const auto addDescription = [&](rpl::producer<QString> text) {
 				content->add(
@@ -148,7 +288,7 @@ bool ShowCableBox(BoxContent &&content) {
 					object_ptr<Ui::RoundButton>(
 						content,
 						std::move(text),
-						st::defaultLightButton),
+						st::passkeyCablePrimaryButton),
 					style::margins(
 						st::boxRowPadding.left(),
 						2 * st::boxLittleSkip,
@@ -156,6 +296,7 @@ bool ShowCableBox(BoxContent &&content) {
 						2 * st::boxLittleSkip),
 					style::al_justify);
 				button->setFullRadius(true);
+				button->setWavy(true);
 				button->setClickedCallback(std::move(callback));
 			};
 			box->clearButtons();
@@ -167,6 +308,7 @@ bool ShowCableBox(BoxContent &&content) {
 						: tr::lng_cancel()),
 					st::defaultLightButton);
 				bottom->setFullRadius(true);
+				bottom->setWavy(true);
 				bottom->resizeToWidth(st::boxWidth
 					- st::passkeyCableBox.buttonPadding.left()
 					- st::passkeyCableBox.buttonPadding.right());
@@ -186,7 +328,7 @@ bool ShowCableBox(BoxContent &&content) {
 					const auto size = qrImage->width()
 						/ style::DevicePixelRatio();
 					const auto skip = st::introQrBackgroundSkip;
-					const auto radius = st::introQrBackgroundRadius;
+					const auto radius = st::passkeyCableQrRadius;
 					const auto full = size + 2 * skip;
 					const auto qr = content->add(
 						object_ptr<Ui::RpWidget>(content),
@@ -210,15 +352,17 @@ bool ShowCableBox(BoxContent &&content) {
 						p.drawImage(x + skip, skip, *qrImage);
 					}, qr->lifetime());
 
-					content->add(
-						object_ptr<Ui::FlatLabel>(
-							content,
-							tr::lng_passkey_cable_bluetooth(),
-							st::passkeyCableHintLabel),
-						st::boxRowPadding,
-						style::al_top);
+					AddStatusCard(
+						content,
+						tr::lng_passkey_cable_bluetooth(),
+						kGlyphBluetooth,
+						false);
 				} else {
-					addDescription(tr::lng_passkey_cable_no_bluetooth());
+					AddStatusCard(
+						content,
+						tr::lng_passkey_cable_no_bluetooth(),
+						kGlyphBluetoothOff,
+						true);
 				}
 
 				addPill(tr::lng_passkey_method_key(), [=] {
@@ -293,7 +437,7 @@ bool ShowCableBox(BoxContent &&content) {
 			} break;
 
 			case Sheet::Error: {
-				addDescription(state->error.value());
+				AddStatusCard(content, state->error.value(), kGlyphError, true);
 			} break;
 			}
 

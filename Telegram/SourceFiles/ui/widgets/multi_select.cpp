@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/widgets/multi_select.h"
+#include "styles/palette.h"
 
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/fields/input_field.h"
@@ -844,7 +845,21 @@ void MultiSelect::Inner::paintEvent(QPaintEvent *e) {
 	Painter p(this);
 
 	auto paintRect = e->rect();
-	p.fillRect(paintRect, _st.bg);
+	// Material 3 search field: a full pill on the dialog surface instead of a flat band
+	p.fillRect(paintRect, st::boxBg);
+	{
+		PainterHighQualityEnabler hq(p);
+		const auto inset = QMarginsF(
+			style::ConvertScaleExact(4.),
+			style::ConvertScaleExact(2.),
+			style::ConvertScaleExact(4.),
+			style::ConvertScaleExact(2.));
+		const auto pill = QRectF(rect()).marginsRemoved(inset);
+		const auto radius = std::min(pill.height() / 2., style::ConvertScaleExact(22.));
+		p.setPen(Qt::NoPen);
+		p.setBrush(_st.bg);
+		p.drawRoundedRect(pill, radius, radius);
+	}
 
 	auto offset = QPoint(
 		style::RightToLeft() ? _st.padding.right() : _st.padding.left(),

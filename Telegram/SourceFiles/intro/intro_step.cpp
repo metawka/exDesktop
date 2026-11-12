@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "intro/intro_widget.h"
 #include "intro/intro_signup.h"
+#include "intro/intro_expressive.h"
+#include "ui/painter.h"
 #include "storage/localstorage.h"
 #include "storage/storage_account.h"
 #include "lang/lang_keys.h"
@@ -78,6 +80,7 @@ Step::Step(
 			? st::introCoverDescription
 			: st::introDescription)) {
 	hide();
+	setMouseTracking(true); // the banner reacts to the logo being hovered
 	style::PaletteChanged(
 	) | rpl::on_next([=] {
 		if (!_coverMask.isNull()) {
@@ -276,16 +279,23 @@ void Step::updateLabelsPosition() {
 		_title->moveToLeft((width() - _title->width()) / 2, contentTop() + st::introCoverTitleTop);
 		_description->moveToLeft((width() - _description->width()) / 2, contentTop() + st::introCoverDescriptionTop);
 	} else {
-		_title->moveToLeft(contentLeft() + st::buttonRadius, contentTop() + st::introTitleTop);
+		_title->moveToLeft(contentLeft() + st::introTextInset, contentTop() + st::introTitleTop);
 		_description->resizeToWidth(st::introDescription.minWidth);
-		_description->moveToLeft(contentLeft() + st::buttonRadius, contentTop() + st::introDescriptionTop);
+		_description->moveToLeft(contentLeft() + st::introTextInset, contentTop() + st::introDescriptionTop);
 	}
 	if (_error) {
 		if (_errorCentered) {
 			_error->entity()->resizeToWidth(width());
+		} else if (_errorStyle) {
+			_error->entity()->resizeToWidth(
+				st::introCountry.width - 2 * st::introPhoneErrorInset);
 		}
 		Ui::SendPendingMoveResizeEvents(_error->entity());
-		auto errorLeft = _errorCentered ? 0 : (contentLeft() + st::buttonRadius);
+		auto errorLeft = _errorCentered
+			? 0
+			: _errorStyle
+			? (contentLeft() + st::introPhoneErrorInset)
+			: (contentLeft() + st::introTextInset);
 		_error->moveToLeft(errorLeft, errorTop());
 	}
 }
@@ -440,6 +450,30 @@ void Step::prepareCoverMask() {
 	_coverMask = Ui::PixmapFromImage(std::move(mask));
 }
 
+void Step::setBannerWavy(bool wavy) {
+	if (_bannerWavy == wavy) {
+		return;
+	}
+	_bannerWavy = wavy;
+	// springy on the way in, quick and calm on the way out
+	_bannerWavyAnimation.start(
+		[=] { update(); },
+		wavy ? 0. : 1.,
+		wavy ? 1. : 0.,
+		wavy ? 520 : 320,
+		wavy ? anim::easeOutBack : anim::easeOutCubic);
+}
+
+void Step::mouseMoveEvent(QMouseEvent *e) {
+	setBannerWavy(!_bannerLogo.isEmpty() && _bannerLogo.contains(e->pos()));
+	RpWidget::mouseMoveEvent(e);
+}
+
+void Step::leaveEventHook(QEvent *e) {
+	setBannerWavy(false);
+	RpWidget::leaveEventHook(e);
+}
+
 void Step::paintCover(QPainter &p, int top) {
 	auto coverHeight = top + st::introCoverHeight;
 	if (coverHeight > 0) {
@@ -453,37 +487,43 @@ void Step::paintCover(QPainter &p, int top) {
 				coverHeight * style::DevicePixelRatio()));
 	}
 
-	auto left = 0;
-	auto right = 0;
-	if (width() < st::introCoverMaxWidth) {
-		auto iconsMaxSkip = st::introCoverMaxWidth - st::introCoverLeft.width() - st::introCoverRight.width();
-		auto iconsSkip = st::introCoverIconsMinSkip + (iconsMaxSkip - st::introCoverIconsMinSkip) * (width() - st::introStepWidth) / (st::introCoverMaxWidth - st::introStepWidth);
-		auto outside = iconsSkip + st::introCoverLeft.width() + st::introCoverRight.width() - width();
-		left = -outside / 2;
-		right = -outside - left;
+	// exDesktop / Material 3 Expressive: words banner instead of the clouds and the plane
+	const auto seconds = crl::now() / 1000.;
+	const auto bannerRect = QRect(0, 0, width(), std::max(0, coverHeight));
+	const auto hasBadge = _hasCover && top == 0;
+	const auto diameter = 92.;
+	const auto centerY = std::max(
+		double(coverHeight) - 6.,
+		double(_title->y()) - 34. - diameter / 2.);
+	// the badge turns at a steady speed: the angle is accumulated, never recomputed
+	const auto now = crl::now();
+	if (_badgeLast != 0) {
+		_badgeAngle += std::min<crl::time>(now - _badgeLast, 100) / 1000. * 0.32;
 	}
-	if (top < 0) {
-		auto shown = float64(coverHeight) / st::introCoverHeight;
-		const auto leftFull = left + st::introCoverLeft.width();
-		auto leftShown = int(base::SafeRound(shown * leftFull));
-		left = leftShown - st::introCoverLeft.width();
-		const auto rightFull = right + st::introCoverRight.width();
-		auto rightShown = int(base::SafeRound(shown * rightFull));
-		right = rightShown - st::introCoverRight.width();
+	_badgeLast = now;
+	if (coverHeight > 0) {
+		Expressive::PaintBanner(
+			p,
+			bannerRect,
+			st::introCoverTopBg->c,
+			seconds,
+			hasBadge ? int(centerY - diameter / 2.) - 10 : coverHeight,
+			st::introCoverHeight,
+			_bannerWavyAnimation.value(_bannerWavy ? 1. : 0.),
+			&_bannerLogo);
 	}
-	st::introCoverLeft.paint(p, left, coverHeight - st::introCoverLeft.height(), width());
-	st::introCoverRight.paint(p, width() - right - st::introCoverRight.width(), coverHeight - st::introCoverRight.height(), width());
-
-	auto planeLeft = (width() - st::introCoverIcon.width()) / 2 - st::introCoverIconLeft;
-	auto planeTop = top + st::introCoverIconTop;
-	if (top < 0 && !_hasCover) {
-		const auto ratio = float64(st::introPlaneWidth / st::introPlaneHeight);
-		auto deltaLeft = -int(base::SafeRound(ratio * top));
-//		auto deltaTop = top;
-		planeLeft += deltaLeft;
-	//	planeTop += top;
+	if (_hasCover && top == 0) {
+		// the sun badge sits right above the title; it spins up while the mouse is over the window
+		Expressive::PaintSunBadge(
+			p,
+			QPointF(width() / 2., centerY),
+			diameter,
+			anim::color(st::windowBgActive, QColor(0, 0, 0), 0.38),
+			QColor(246, 250, 253),
+			QColor(168, 200, 226),
+			_badgeAngle,
+			seconds);
 	}
-	st::introCoverIcon.paint(p, planeLeft, planeTop, width());
 }
 
 int Step::contentLeft() const {
@@ -523,7 +563,9 @@ void Step::refreshError(const QString &text) {
 				this,
 				object_ptr<Ui::FlatLabel>(
 					this,
-					_errorCentered
+					_errorStyle
+						? *_errorStyle
+						: _errorCentered
 						? st::introErrorCentered
 						: st::introError));
 			_error->hide(anim::type::instant);
@@ -645,6 +687,15 @@ bool Step::hasBack() const {
 }
 
 void Step::activate() {
+	if (_hasCover && !_expressiveAnimation.animating()) {
+		_expressiveAnimation.init([=](crl::time) {
+			if (isVisible()) {
+				update(QRect(0, 0, width(), _title->y() + 4));
+			}
+			return true;
+		});
+		_expressiveAnimation.start();
+	}
 	_title->show();
 	_description->show(anim::type::instant);
 	if (!_errorText.current().isEmpty()) {

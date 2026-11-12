@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Ui {
 class LinkButton;
+class RoundButton;
 } // namespace Ui
 
 namespace Intro {
@@ -56,8 +57,8 @@ private:
 
 	rpl::event_stream<QByteArray> _qrCodes;
 	rpl::event_stream<bool> _qrActive;
-	Ui::LinkButton *_skip = nullptr;
-	Ui::LinkButton *_passkey = nullptr;
+	Ui::RoundButton *_skip = nullptr;
+	Ui::RoundButton *_passkey = nullptr;
 	base::Timer _refreshTimer;
 	mtpRequestId _requestId = 0;
 	bool _forceRefresh = false;
