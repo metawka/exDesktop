@@ -525,7 +525,6 @@ public:
 		return _selectSt;
 	}
 	const style::PeerList &computeListSt() const;
-	const style::MultiSelect &computeSelectSt() const;
 
 	virtual Main::Session &session() const = 0;
 
@@ -559,6 +558,15 @@ public:
 	}
 	virtual bool rowTrackPressSkipMouseSelection() {
 		return false;
+	}
+
+	virtual bool rowDragSelectStart(not_null<PeerListRow*> row) {
+		return false;
+	}
+	virtual void rowDragSelectUpdate(
+			const std::vector<not_null<PeerListRow*>> &rows) {
+	}
+	virtual void rowDragSelectFinish() {
 	}
 
 	virtual void loadMoreRows() {
@@ -727,7 +735,6 @@ public:
 	PeerListRowId updateFromParentDrag(QPoint globalPosition);
 	void dragLeft();
 
-	void setIgnoreHiddenRowsOnSearch(bool value);
 	void setShowSectionHeaders(bool shown);
 
 	struct SectionLetter {
@@ -938,6 +945,10 @@ private:
 	void clearAllContent();
 	void handleMouseMove(QPoint globalPosition);
 	void mousePressReleased(Qt::MouseButton button);
+	void updateDragSelect(QPoint globalPosition);
+	void finishDragSelect();
+	[[nodiscard]] int dragSelectIndexAt(QPoint globalPosition) const;
+	[[nodiscard]] int dragSelectScrollDelta(QPoint globalPosition) const;
 	void initDecorateWidget(Ui::RpWidget *widget);
 
 	const style::PeerList &_st;
@@ -957,6 +968,7 @@ private:
 	std::optional<QPoint> _lastMousePosition;
 	Qt::MouseButton _pressButton = Qt::LeftButton;
 	std::optional<QPoint> _trackPressStart;
+	std::optional<PeerListRowId> _dragSelectFrom;
 
 	rpl::event_stream<Ui::ScrollToRequest> _scrollToRequests;
 
@@ -976,7 +988,6 @@ private:
 	int _aboveHeight = 0;
 	int _belowHeight = 0;
 	bool _hideEmpty = false;
-	bool _ignoreHiddenRowsOnSearch = false;
 	object_ptr<Ui::RpWidget> _aboveWidget = { nullptr };
 	object_ptr<Ui::RpWidget> _aboveSearchWidget = { nullptr };
 	object_ptr<Ui::RpWidget> _belowWidget = { nullptr };

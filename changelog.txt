@@ -1,3 +1,24 @@
+7.4.3.1 (13.11.26)
+- Updated to Telegram Desktop 7.4.3: search for apps, channels, posts and media in search tabs, HTML widgets in bots, camera and microphone access in mini apps, many fixes.
+- The version number now follows the Telegram Desktop version.
+- macOS builds for Intel and Apple Silicon.
+- Plugins connect to the Internet without requests. Sending protected data is paused with a choice to deny, allow once, allow always or disable the plugin: session keys, login codes, account phone number, contact phone numbers, seed phrases, private keys, browser data, hardware addresses.
+- Optional protection of bot tokens and API keys sent by plugins.
+- Folders outside the user profile are requested once per folder, local network and UDP still require permission.
+- Plugin menu section with permissions and an activity log: Internet, clipboard, notifications, links without confirmation, connections, folders and blocked actions.
+- PluginGuard reports fewer false alarms.
+- Chats open faster with plugins installed.
+- Ghost mode: groups load after long inactivity, read marks update without a reply.
+- Full member list in groups.
+- Ad hiding covers search results and "Proxy sponsor" channels and works without client restrictions.
+- A reply to a deleted message adds a quote with the author and text.
+- "Keep locally" is remembered for each chat.
+- Album cover in the profile music button.
+- Avatars with a custom corner radius in reaction menus and gifts.
+- Screen capture protection for media from protected chats is a setting, off by default.
+- Deleted mark previews in the selection window.
+- Client restrictions are off by default and are turned off once after the update, the Premium star is shown only with real Premium.
+
 7.3.3.11 (08.11.26)
 - Reworked plugin sandbox: access decisions are made in the client core, plugins can no longer disable the protection.
 - Plugins no longer get the computer name, user name, processor model, MAC address, registry data or screen captures.

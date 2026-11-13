@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/controls/text_copied_toast.h"
 
+#include "extera/extera_config.h"
+
 #include "base/timer.h"
 #include "lang/lang_keys.h"
 #include "ui/effects/animations.h"
@@ -108,6 +110,9 @@ void TextCopiedToastPending::State::expandTo(float64 progress) {
 }
 
 void ShowTextCopiedToast(const std::shared_ptr<Show> &show) {
+	if (Extera::Bool(u"hide_copy_toast"_q)) {
+		return;
+	}
 	auto icon = MakeIconSlot();
 	AddCopyIcon(icon.data());
 	show->showToast({

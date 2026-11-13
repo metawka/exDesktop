@@ -406,10 +406,14 @@ Fn<void(
 		};
 		if (const auto chat = peer->asChatNotMigrated()) {
 			const auto saveChatAdmin = [&](bool isAdmin) {
-				SaveChatAdmin(show, chat, user, isAdmin, done, onFail);
-				if (rank) {
-					SaveMemberRank(show, chat, user, *rank, [] {}, [] {});
-				}
+				// Sent together, the server can reject or undo either change.
+				SaveChatAdmin(show, chat, user, isAdmin, [=] {
+					if (rank) {
+						SaveMemberRank(show, chat, user, *rank, done, done);
+					} else {
+						done();
+					}
+				}, onFail);
 			};
 			if (strippedNewRights.flags
 				== chat->defaultAdminRights(user).flags) {
@@ -1818,7 +1822,6 @@ void ParticipantsBoxController::loadMoreRows() {
 		MTP_long(participantsHash)
 	)).done([=](const MTPchannels_ChannelParticipants &result) {
 		auto added = false;
-		auto exdReceived = 0;
 		const auto firstLoad = !_offset;
 		_loadRequestId = 0;
 
@@ -1830,7 +1833,6 @@ void ParticipantsBoxController::loadMoreRows() {
 			const auto &[availableCount, list] = wasRecentRequest
 				? Api::ChatParticipants::ParseRecent(channel, data)
 				: Api::ChatParticipants::Parse(channel, data);
-			exdReceived = int(list.size());
 			for (const auto &data : list) {
 				if (const auto participant = _additional.applyParticipant(
 						data)) {
@@ -1856,13 +1858,12 @@ void ParticipantsBoxController::loadMoreRows() {
 			&& Extera::Bool(u"full_members"_q)
 			&& firstLoad
 			&& (exdHidden
-				|| (channel->flags() & ChannelDataFlag::ParticipantsHidden)
-				|| (exdReceived < perPage
-					&& channel->membersCount() > exdReceived));
+				|| (channel->flags() & ChannelDataFlag::ParticipantsHidden));
 		if (exdPartial) {
 			if (exdAppendAuthors()) {
 				added = true;
 			}
+			exdLoadAuthors(0, 0);
 			_allLoaded = true;
 		}
 		if (_offset > 0 && _role == Role::Admins && channel->isMegagroup()) {
@@ -1895,6 +1896,67 @@ void ParticipantsBoxController::refreshDescription() {
 		: (delegate()->peerListFullRowsCount() > 0)
 		? QString()
 		: tr::lng_blocked_list_not_found(tr::now));
+}
+
+void ParticipantsBoxController::exdLoadAuthors(MsgId offsetId, int page) {
+	const auto channel = _peer->asMegagroup();
+	if (!channel || page >= 5) {
+		return;
+	}
+	_api.request(MTPmessages_GetHistory(
+		channel->input(),
+		MTP_int(offsetId),
+		MTP_int(0),
+		MTP_int(0),
+		MTP_int(100),
+		MTP_int(0),
+		MTP_int(0),
+		MTP_long(0)
+	)).done([=](const MTPmessages_Messages &result) {
+		auto &owner = channel->owner();
+		auto next = MsgId(0);
+		auto added = false;
+		const auto apply = [&](const auto &data) {
+			owner.processUsers(data.vusers());
+			owner.processChats(data.vchats());
+			for (const auto &message : data.vmessages().v) {
+				const auto id = IdFromMessage(message);
+				if (!next || id < next) {
+					next = id;
+				}
+				const auto from = message.match([](
+						const MTPDmessageEmpty &) {
+					return PeerId();
+				}, [](const auto &data) {
+					const auto from = data.vfrom_id();
+					return from ? peerFromMTP(*from) : PeerId();
+				});
+				if (!peerIsUser(from)) {
+					continue;
+				}
+				if (const auto user = owner.userLoaded(peerToUser(from))) {
+					if (appendRow(user)) {
+						added = true;
+					}
+				}
+			}
+			return int(data.vmessages().v.size());
+		};
+		const auto count = result.match([&](
+				const MTPDmessages_messagesNotModified &) {
+			return 0;
+		}, [&](const auto &data) {
+			return apply(data);
+		});
+		if (added) {
+			resort();
+			refreshRows();
+			refreshDescription();
+		}
+		if (count >= 100 && next) {
+			exdLoadAuthors(next, page + 1);
+		}
+	}).send();
 }
 
 bool ParticipantsBoxController::exdAppendAuthors() {

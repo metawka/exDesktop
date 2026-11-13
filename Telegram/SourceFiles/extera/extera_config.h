@@ -54,6 +54,8 @@ private:
 [[nodiscard]] bool IsBoolKey(const QString &key);
 [[nodiscard]] int Int(const QString &key);
 [[nodiscard]] QString String(const QString &key);
+[[nodiscard]] bool KeepLocallyFor(uint64 peerId);
+void SetKeepLocallyFor(uint64 peerId, bool value);
 [[nodiscard]] int RecentStickersLimit(int serverLimit);
 [[nodiscard]] bool AyuEnabled(const QString &key);
 [[nodiscard]] bool GhostActive();

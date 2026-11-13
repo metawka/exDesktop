@@ -350,7 +350,10 @@ struct VectorStats {
 [[nodiscard]] int PenaltyFor(const Finding &finding) {
 	for (const auto &entry : kPenalties) {
 		if (finding.rule == QLatin1String(entry.rule)) {
-			return entry.penalty;
+			if (entry.penalty < 100 || finding.level == u"CRITICAL"_q) {
+				return entry.penalty;
+			}
+			break;
 		}
 	}
 	if (finding.level == u"CRITICAL"_q) {

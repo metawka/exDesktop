@@ -305,8 +305,7 @@ HistoryItem *SponsoredMessages::injectItem(
 
 bool SponsoredMessages::canHaveFor(not_null<History*> history) const {
 	if (_session->user()->isPremiumReal()
-		|| (Extera::Bool(u"local_premium"_q)
-			&& Extera::Bool(u"premium_no_ads"_q))) {
+		|| Extera::Bool(u"premium_no_ads"_q)) {
 		return false;
 	} else if (history->peer->isChannel()) {
 		return true;
@@ -318,8 +317,7 @@ bool SponsoredMessages::canHaveFor(not_null<History*> history) const {
 
 bool SponsoredMessages::canHaveFor(not_null<HistoryItem*> item) const {
 	return !_session->user()->isPremiumReal()
-		&& !(Extera::Bool(u"local_premium"_q)
-			&& Extera::Bool(u"premium_no_ads"_q))
+		&& !Extera::Bool(u"premium_no_ads"_q)
 		&& item->history()->peer->isBroadcast()
 		&& item->isRegular();
 }

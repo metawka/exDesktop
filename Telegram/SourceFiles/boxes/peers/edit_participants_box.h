@@ -312,6 +312,7 @@ private:
 	void removeAdminSure(not_null<UserData*> user);
 	bool appendRow(not_null<PeerData*> participant);
 	bool exdAppendAuthors();
+	void exdLoadAuthors(MsgId offsetId, int page);
 	bool prependRow(not_null<PeerData*> participant);
 	bool removeRow(not_null<PeerData*> participant);
 	void refreshCustomStatus(not_null<PeerListRow*> row) const;

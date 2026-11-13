@@ -62,6 +62,7 @@ public:
 	void ptsWaiterStartTimerFor(ChannelData *channel, crl::time ms);
 
 	void getDifference();
+	void exdGhostPoll();
 	void requestChannelRangeDifference(not_null<History*> history);
 
 	void addActiveChat(rpl::producer<PeerData*> chat);

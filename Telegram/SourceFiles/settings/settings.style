@@ -910,6 +910,7 @@ exteraInstallVersion: FlatLabel(defaultFlatLabel) {
 exteraInstallVersionPadding: margins(22px, 6px, 22px, 0px);
 exteraInstallShield: icon {{ "menu/exd_warning-20x20", windowFg }};
 exteraInstallPuzzle: icon {{ "menu/exd_puzzle-20x20", windowFg }};
+exteraInstallTranslate: icon {{ "menu/translate", windowFg }};
 exteraInstallPillFont: font(14px semibold);
 exteraInstallPillHeight: 32px;
 exteraInstallPillPadding: margins(10px, 0px, 14px, 0px);

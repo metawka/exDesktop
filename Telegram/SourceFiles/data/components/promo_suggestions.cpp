@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/components/promo_suggestions.h"
 
+#include "extera/extera_config.h"
+
 #include "api/api_text_entities.h"
 #include "apiwrap.h"
 #include "base/unixtime.h"
@@ -131,7 +133,9 @@ void PromoSuggestions::refreshTopPromotion() {
 					|= _dismissedSuggestions.emplace(qs(suggestion)).second;
 			}
 
-			if (const auto peer = data.vpeer()) {
+			const auto hideProxy = data.is_proxy()
+				&& Extera::Bool(u"premium_no_ads"_q);
+			if (const auto peer = hideProxy ? nullptr : data.vpeer()) {
 				const auto peerId = peerFromMTP(*peer);
 				const auto history = _session->data().history(peerId);
 				setTopPromoted(

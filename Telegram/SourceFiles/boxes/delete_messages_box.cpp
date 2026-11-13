@@ -250,7 +250,7 @@ void DeleteMessagesBox::prepare() {
 		_exdKeep.create(
 			this,
 			tr::lng_exd_keep_locally(tr::now),
-			false,
+			Extera::KeepLocallyFor(_ids.front().peer.value),
 			st::defaultBoxCheckbox);
 	}
 	_text->resizeToWidth(st::boxWidth - rect::m::sum::h(st::boxPadding));
@@ -602,6 +602,9 @@ void DeleteMessagesBox::deleteAndClear() {
 		return;
 	}
 	const auto ids = _ids;
+	if (_exdKeep) {
+		Extera::SetKeepLocallyFor(ids.front().peer.value, _exdKeep->checked());
+	}
 	if (_exdKeep && _exdKeep->checked()) {
 		session->data().exteraKeepLocally(ids);
 	}

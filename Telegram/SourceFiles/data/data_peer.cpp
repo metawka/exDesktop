@@ -457,7 +457,13 @@ void PeerData::paintUserpic(
 		const auto &logo = Extera::Streamer::Avatar();
 		auto hq = PainterHighQualityEnabler(p);
 		auto path = QPainterPath();
-		path.addEllipse(QRectF(context.position, QSizeF(size, size)));
+		const auto rect = QRectF(context.position, QSizeF(size, size));
+		if (Ui::UserpicCorners() < 28) {
+			const auto radius = size * Ui::UserpicCorners() / 56.;
+			path.addRoundedRect(rect, radius, radius);
+		} else {
+			path.addEllipse(rect);
+		}
 		p.save();
 		p.setClipPath(path);
 		p.drawImage(QRect(context.position, QSize(size, size)), logo);
@@ -533,6 +539,9 @@ QImage PeerData::GenerateUserpicImage(
 			return round(*radius);
 		} else if (peer->isForum()) {
 			return round(size * Ui::ForumUserpicRadiusMultiplier());
+		} else if (Ui::UserpicCorners() < 28) {
+			const auto custom = size * Ui::UserpicCorners() / 56;
+			return custom ? round(custom) : image;
 		} else {
 			return Images::Circle(std::move(image));
 		}
@@ -556,6 +565,19 @@ QImage PeerData::GenerateUserpicImage(
 			size,
 			size,
 			size * Ui::ForumUserpicRadiusMultiplier());
+	} else if (Ui::UserpicCorners() < 28) {
+		const auto custom = size * Ui::UserpicCorners() / 56;
+		if (custom) {
+			peer->ensureEmptyUserpic()->paintRounded(
+				p,
+				0,
+				0,
+				size,
+				size,
+				custom);
+		} else {
+			peer->ensureEmptyUserpic()->paintSquare(p, 0, 0, size, size);
+		}
 	} else {
 		peer->ensureEmptyUserpic()->paintCircle(p, 0, 0, size, size);
 	}
@@ -948,6 +970,7 @@ void PeerData::setBarSettings(const MTPPeerSettings &data) {
 }
 
 void PeerData::setBarSettings(PeerBarSettings which) {
+	const auto wasSettings = _barSettings.current();
 	const auto was = hideLinks();
 	_barSettings.set(which);
 	if (was && !hideLinks()) {
@@ -963,6 +986,9 @@ void PeerData::setBarSettings(PeerBarSettings which) {
 				});
 			}
 		}
+	}
+	if (_barSettings.current() != wasSettings) {
+		session().changes().peerUpdated(this, UpdateFlag::BarSettings);
 	}
 }
 
@@ -996,6 +1022,14 @@ bool PeerData::hideLinks() const {
 	}
 	const auto settings = barSettings();
 	return !settings || (*settings & PeerBarSetting::ReportSpam);
+}
+
+bool PeerData::hideEmojiStatus() const {
+	if (const auto to = migrateTo()) {
+		return to->hideEmojiStatus();
+	}
+	const auto settings = barSettings();
+	return settings && (*settings & PeerBarSetting::ReportSpam);
 }
 
 QString PeerData::requestChatTitle() const {

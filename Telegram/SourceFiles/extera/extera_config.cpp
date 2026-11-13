@@ -130,6 +130,10 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"disable_greeting_sticker"_q, false },
 		{ u"comma_after_mention"_q, false },
 		{ u"hide_copy_toast"_q, false },
+		{ u"capture_protection"_q, false },
+		{ u"sbx_leak_tokens"_q, false },
+		{ u"profile_music_cover"_q, true },
+		{ u"keep_locally_peers"_q, QString() },
 		{ u"chars_counter"_q, true },
 		{ u"select_service"_q, true },
 		{ u"gif_bot"_q, QString() },
@@ -184,7 +188,7 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"changelog_seen"_q, 0 },
 		{ u"notify_sound"_q, QString() },
 		{ u"local_premium_emoji"_q, false },
-		{ u"local_premium"_q, true },
+		{ u"local_premium"_q, false },
 		{ u"premium_no_ads"_q, true },
 		{ u"transcribe_provider"_q, 0 },
 		{ u"premium_wizard_shown"_q, false },
@@ -250,6 +254,10 @@ void Config::load() {
 			? _values.value(key).toBool()
 			: fallback;
 	};
+	if (!_values.contains(u"migrated_local_premium"_q)) {
+		_values.insert(u"local_premium"_q, false);
+		_values.insert(u"migrated_local_premium"_q, true);
+	}
 	const auto features = old(u"ayu_features"_q, false);
 	if (!_values.contains(u"ayu_keep_deleted"_q)) {
 		_values.insert(
@@ -516,6 +524,28 @@ bool GhostRead() {
 
 bool GhostStories() {
 	return GhostOption(u"ghost_stories"_q);
+}
+
+bool KeepLocallyFor(uint64 peerId) {
+	return String(u"keep_locally_peers"_q).split(
+		',',
+		Qt::SkipEmptyParts).contains(QString::number(peerId));
+}
+
+void SetKeepLocallyFor(uint64 peerId, bool value) {
+	auto list = String(u"keep_locally_peers"_q).split(
+		',',
+		Qt::SkipEmptyParts);
+	const auto key = QString::number(peerId);
+	if (value == list.contains(key)) {
+		return;
+	}
+	if (value) {
+		list.push_back(key);
+	} else {
+		list.removeAll(key);
+	}
+	Config::Instance().setString(u"keep_locally_peers"_q, list.join(','));
 }
 
 bool GhostOnline() {

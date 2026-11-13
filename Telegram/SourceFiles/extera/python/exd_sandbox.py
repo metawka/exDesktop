@@ -56,6 +56,7 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
     _n_log = getattr(native, "log", None) if native is not None else None
     _n_toast = getattr(native, "sbx_toast", None) if native is not None else None
     _n_prompt = getattr(native, "sbx_prompt", None) if native is not None else None
+    _n_secrets = getattr(native, "sbx_secrets", None) if native is not None else None
     try:
         import subprocess
         import platform
@@ -63,6 +64,7 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
     except Exception:
         pass
     _monotonic = time.monotonic
+    _now = time.time
     _open = _io.open
     _lower = str.lower
     _sw = str.startswith
@@ -94,6 +96,8 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
     _lock_new = _thread.allocate_lock
     _inet_pton = _socket.inet_pton
     _getaddrinfo = _socket.getaddrinfo
+    _sock_type = _socket.socket.__dict__["type"].__get__
+    _SOCK_DGRAM = _socket.SOCK_DGRAM
     _AF_INET = _socket.AF_INET
     _AF_INET6 = _socket.AF_INET6
     _direntry_path = os.DirEntry.__dict__["path"].__get__
@@ -390,8 +394,18 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
     for key, rules in (stored.get("net") or {}).items():
         if _type(key) is _str and _type(rules) is _dict:
             net_rules[key] = {d: r for d, r in rules.items() if _type(d) is _str and r in ("allow", "deny")}
+    extra_rules = {}
+    for key, rules in (stored.get("extra") or {}).items():
+        if _type(key) is _str and _type(rules) is _dict:
+            extra_rules[key] = {d: r for d, r in rules.items()
+                                if d in ("clipboard", "links", "notify") and r in ("allow", "deny", "ask")}
     files_granted = {}
     once = set()
+    leak_once = set()
+    reg_handles = set()
+    reg_pending = {}
+    disable_queue = []
+    journal = {}
     pending = {}
     pending_keys = {}
     allowed_ips = {}
@@ -430,6 +444,25 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                        "Plugin \"{name}\" is not allowed to connect to {target}."),
         "unknown": ("Заблокировано действие плагина из неизвестного контекста.",
                     "A plugin action from an unknown context was blocked."),
+        "lan_text": ("Плагин «{name}» запрашивает подключение к устройству в локальной сети: {target}.",
+                     "Plugin \"{name}\" requests a connection to a local network device: {target}."),
+        "udp_text": ("Плагин «{name}» запрашивает отправку UDP-пакетов на {target}.",
+                     "Plugin \"{name}\" requests to send UDP packets to {target}."),
+        "leak_text": ("Плагин «{name}» пытается отправить {target}. Отправка остановлена.",
+                      "Plugin \"{name}\" is trying to send {target}. Sending is paused."),
+        "leak_disable": ("Отключить плагин", "Disable Plugin"),
+        "internet_off": ("Плагину «{name}» запрещён доступ в интернет.",
+                         "Plugin \"{name}\" is not allowed to access the Internet."),
+        "leak_session": ("ключи сессии Telegram", "Telegram session keys"),
+        "leak_code": ("код входа в Telegram", "a Telegram login code"),
+        "leak_phone": ("номер телефона аккаунта", "the account phone number"),
+        "leak_contacts": ("номера телефонов контактов", "contact phone numbers"),
+        "leak_keys": ("приватные ключи или токены", "private keys or tokens"),
+        "leak_seed": ("сид-фразу криптокошелька", "a crypto wallet seed phrase"),
+        "leak_browser": ("данные браузера", "browser data"),
+        "leak_device": ("данные компьютера", "computer details"),
+        "leak_tokens": ("токены ботов или API-ключи", "bot tokens or API keys"),
+        "leak_to": ("{what} на {target}", "{what} to {target}"),
     }
 
     def text(key, target=""):
@@ -477,7 +510,11 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
         nets = []
         for plugin_id, rules in _ditems(net_rules):
             _append(nets, escape(plugin_id) + ":{" + _join(",", [escape(d) + ":" + escape(r) for d, r in _ditems(rules)]) + "}")
-        data = "{\"paths\":{" + _join(",", parts) + "},\"net\":{" + _join(",", nets) + "}}"
+        extras = []
+        for plugin_id, rules in _ditems(extra_rules):
+            _append(extras, escape(plugin_id) + ":{" + _join(",", [escape(d) + ":" + escape(r) for d, r in _ditems(rules)]) + "}")
+        data = ("{\"paths\":{" + _join(",", parts) + "},\"net\":{" + _join(",", nets)
+                + "},\"extra\":{" + _join(",", extras) + "}}")
         try:
             with _open(state_path, "w", encoding="utf-8") as handle:
                 handle.write(data)
@@ -612,8 +649,10 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                         return "allow"
                 if "__pycache__" in rest:
                     return "allow"
-            if _ew(head, source_exts) or _sw(head, "."):
+            if _sw(head, "."):
                 return "hard"
+            if _ew(head, source_exts):
+                return "hard" if write else "allow"
             return "allow"
         if inside(path, files_root):
             rest = [p for p in _split(path[_len(files_root):], sep) if p]
@@ -653,6 +692,20 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                 if rest and is_dir(root + sep + rest[0]):
                     return root + sep + rest[0]
                 return root
+        if home and inside(path, home):
+            rest = [p for p in _split(path[_len(home):], sep) if p]
+            if rest and is_dir(home + sep + rest[0]):
+                return home + sep + rest[0]
+        if win and _len(path) > 3 and path[1:3] == ":\\":
+            rest = [p for p in _split(path[3:], sep) if p]
+            if rest and is_dir(path[:3] + rest[0]):
+                return path[:3] + rest[0]
+        elif not win:
+            rest = [p for p in _split(path, "/") if p]
+            if _len(rest) >= 3 and rest[0] in ("mnt", "media", "Volumes", "run"):
+                candidate = "/" + _join("/", rest[:3])
+                if is_dir(candidate):
+                    return candidate
         return path if is_dir(path) else parent(path)
 
     def path_allowed(plugin_id, path):
@@ -664,7 +717,7 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
         return False
 
     # Prompts
-    def ask(kind, plugin_id, target, buttons):
+    def ask(kind, plugin_id, target, buttons, message=None):
         key = kind + "\x00" + plugin_id + "\x00" + target
         with mutex:
             token = _dget(pending_keys, key)
@@ -685,7 +738,8 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             answer(token, "deny")
             return
         if fresh:
-            message = text("net_text" if kind == "net" else "path_text", target)
+            if message is None:
+                message = text(_dget(prompt_texts, kind, "path_text"), target)
             data = "[" + _join(",", ["{\"which\":%d,\"text\":%s,\"value\":%s}" % (which, escape(label), escape(value))
                                      for label, value, which in buttons]) + "]"
             try:
@@ -696,6 +750,8 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
         if _get_ident() == main_ident:
             return
         waiter.acquire(True, 120)
+
+    prompt_texts = {"net": "lan_text", "udp": "udp_text", "path": "path_text"}
 
     def answer(token, value):
         if _type(token) is not _str or _type(value) is not _str:
@@ -708,7 +764,15 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             plugin_id = entry["plugin"]
             target = entry["target"]
             changed = False
-            if entry["kind"] == "net":
+            if entry["kind"] == "leak":
+                if value == "once":
+                    _sadd(leak_once, plugin_id + "\x00" + target)
+                elif value == "always":
+                    _dset(net_rules.setdefault(plugin_id, {}), "leak:" + target, "allow")
+                    changed = True
+                elif value == "disable":
+                    _append(disable_queue, plugin_id)
+            elif entry["kind"] in ("net", "udp"):
                 if value == "always":
                     _dset(net_rules.setdefault(plugin_id, {}), target, "allow")
                     changed = True
@@ -727,7 +791,21 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                     waiter.release()
                 except _Err:
                     pass
+        while disable_queue:
+            disable_plugin(_lpop(disable_queue))
         return None
+
+    def disable_plugin(plugin_id):
+        try:
+            host._set_enabled({"id": plugin_id, "enabled": False})
+        except _Err:
+            pass
+        try:
+            changed = getattr(native, "plugins_changed", None)
+            if changed is not None:
+                changed()
+        except _Err:
+            pass
 
     main_ident = _get_ident()
 
@@ -768,46 +846,112 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             if _type(address) is _str:
                 _dset(bucket, address, stamp)
 
-    def check_net(plugin_id, host_name):
+    def is_private(name):
+        try:
+            packed = _inet_pton(_AF_INET, name)
+            a = packed[0]
+            b = packed[1]
+            return (a in (0, 10, 127) or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168)
+                    or (a == 169 and b == 254) or (a == 100 and 64 <= b <= 127))
+        except _Err:
+            pass
+        try:
+            packed = _inet_pton(_AF_INET6, name)
+        except _Err:
+            return False
+        if packed == b"\x00" * 15 + b"\x01" or packed == b"\x00" * 16:
+            return True
+        first = packed[0]
+        if (first & 0xfe) == 0xfc or (first == 0xfe and (packed[1] & 0xc0) == 0x80):
+            return True
+        if packed[:12] == b"\x00" * 10 + b"\xff\xff":
+            return is_private("%d.%d.%d.%d" % (packed[12], packed[13], packed[14], packed[15]))
+        return False
+
+    def is_local(name):
+        if is_loopback(name):
+            return True
+        if is_ip(name):
+            return is_private(name)
+        return _ew(name, (".local", ".lan", ".home", ".internal", ".localdomain"))
+
+    def journal_of(plugin_id):
+        entry = _dget(journal, plugin_id)
+        if entry is None:
+            entry = {"net": {}, "files": {}, "blocked": []}
+            _dset(journal, plugin_id, entry)
+        return entry
+
+    def journal_net(plugin_id, domain, size=0):
+        bucket = journal_of(plugin_id)["net"]
+        item = _dget(bucket, domain)
+        if item is None:
+            if _len(bucket) >= 300:
+                return
+            item = [0, 0.0, 0]
+            _dset(bucket, domain, item)
+        item[0] += 1
+        item[1] = _now()
+        item[2] += size
+
+    def journal_file(plugin_id, folder):
+        bucket = journal_of(plugin_id)["files"]
+        if folder in bucket or _len(bucket) < 300:
+            _dset(bucket, folder, _now())
+
+    def journal_block(plugin_id, what):
+        blocked = journal_of(plugin_id)["blocked"]
+        _append(blocked, [_now(), what])
+        while _len(blocked) > 100:
+            _lpop(blocked, 0)
+
+    def check_net(plugin_id, host_name, udp=False):
         name = _lower(_strip(_strip(host_name), "[]"))
         if not name:
             return None
         if plugin_id == UNKNOWN:
             return "exDesktop sandbox: network access from an unknown context is blocked"
+        rules = _dget(net_rules, plugin_id, {})
+        if _dget(rules, "*") == "deny":
+            toast(plugin_id, "internet_off")
+            return "exDesktop sandbox: Internet access is disabled for this plugin"
+        name = _rstrip(name, ".")
+        local = is_local(name)
         if is_loopback(name):
             domain = "localhost"
+        elif is_ip(name):
+            domain = name
         else:
-            domain = domain_key(_rstrip(name, "."))
-            if is_ip(name):
-                seen = _dget(_dget(allowed_ips, plugin_id, {}), name)
-                if seen is not None and _monotonic() - seen < 3600:
-                    return None
-        rule = _dget(_dget(net_rules, plugin_id, {}), domain)
-        if rule == "allow":
-            if not is_ip(name) and domain != "localhost":
-                remember_ips(plugin_id, name)
-            return None
-        stamp = plugin_id + "\x00" + domain
-        if stamp in once:
-            _sdiscard(once, stamp)
-            if not is_ip(name) and domain != "localhost":
-                remember_ips(plugin_id, name)
-            return None
+            domain = domain_key(name)
+        key = ("udp:" + domain) if (udp and not local) else domain
+        rule = _dget(rules, key)
+        if rule is None and key != domain:
+            rule = _dget(rules, domain)
         if rule == "deny":
             toast(plugin_id, "denied_net", domain)
+            journal_block(plugin_id, "net:" + domain)
             return "exDesktop sandbox: connection to %s is denied" % domain
-        ask("net", plugin_id, domain, (
+        journal_net(plugin_id, domain)
+        if not local and not udp:
+            return None
+        if rule == "allow":
+            return None
+        stamp = plugin_id + "\x00" + key
+        if stamp in once:
+            _sdiscard(once, stamp)
+            return None
+        kind = "net" if local else "udp"
+        ask(kind, plugin_id, key, (
             (text("net_always"), "always", -1),
             (text("net_once"), "once", -3),
             (text("deny"), "deny", -2),
-        ))
-        rule = _dget(_dget(net_rules, plugin_id, {}), domain)
+        ), text(prompt_texts[kind], domain))
+        rule = _dget(_dget(net_rules, plugin_id, {}), key)
         if rule == "allow" or stamp in once:
             _sdiscard(once, stamp)
-            if not is_ip(name) and domain != "localhost":
-                remember_ips(plugin_id, name)
             return None
-        log("%s: network denied %s" % (plugin_id, domain))
+        log("%s: network denied %s" % (plugin_id, key))
+        journal_block(plugin_id, "net:" + key)
         return "exDesktop sandbox: connection to %s is not allowed" % domain
 
     def url_host(url):
@@ -852,9 +996,12 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             return None
         if verdict == "hard":
             log("%s: protected path %s" % (plugin_id, path))
-            toast(plugin_id, "hard")
+            journal_block(plugin_id, "path:" + path)
+            if not inside(path, settings_root) and not inside(path, plugins_root):
+                toast(plugin_id, "hard")
             return "exDesktop sandbox: access to protected files is blocked"
         if path_allowed(plugin_id, path):
+            journal_file(plugin_id, folder_key(path))
             return None
         folder = folder_key(path)
         ask("path", plugin_id, folder, (
@@ -862,8 +1009,10 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             (text("deny"), "deny", -2),
         ))
         if path_allowed(plugin_id, path):
+            journal_file(plugin_id, folder)
             return None
         log("%s: path denied %s" % (plugin_id, path))
+        journal_block(plugin_id, "path:" + folder)
         return "exDesktop sandbox: access to %s is not allowed" % folder
 
     read_events = {"os.listdir", "os.scandir", "glob.glob"}
@@ -1018,13 +1167,38 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             return deny_here(args[0] if args else None, False, importing)
         if event == "exd.getlogin":
             return "exDesktop sandbox: user name is not available"
+        if event == "winreg.OpenKey" and _len(args) >= 3:
+            root_key = args[0]
+            access = args[2]
+            readable = _type(access) is _int and (access & 0x000D0026) == 0
+            sub_key = _lower(text_of(args[1]) or "") if _len(args) > 1 else ""
+            proxy_key = sub_key == "software\\microsoft\\windows\\currentversion\\internet settings"
+            if _type(root_key) is _int and readable \
+                    and (root_key in (0x80000000, -0x80000000, 0xFFFFFFFF80000000) or root_key in reg_handles
+                         or (proxy_key and root_key in (0x80000001, -0x7FFFFFFF, 0xFFFFFFFF80000001))):
+                reg_pending[_get_ident()] = True
+                return None
+            if readable:
+                log("%s: registry read denied %s" % (owner, sub_key))
+                journal_block(owner, "registry:" + sub_key)
+                return "exDesktop sandbox: registry access is blocked"
+        if event == "winreg.OpenKey/result":
+            if _dpop(reg_pending, _get_ident(), False) and args and _type(args[0]) is _int:
+                if _len(reg_handles) < 4096:
+                    _sadd(reg_handles, args[0])
+            return None
+        if event in ("winreg.EnumKey", "winreg.EnumValue", "winreg.QueryValue", "winreg.QueryInfoKey",
+                     "winreg.PyHKEY.Detach"):
+            return None
         if _sw(event, "ctypes.") or _sw(event, "winreg.") or _sw(event, "_winapi.") or _sw(event, "msvcrt.") \
                 or _sw(event, "fcntl."):
             log("%s: %s blocked" % (owner, event))
+            journal_block(owner, "native:" + event)
             toast(owner, "native")
             return "exDesktop sandbox: native access is blocked"
         if event in process_events:
             log("%s: %s blocked" % (owner, event))
+            journal_block(owner, "process:" + event)
             toast(owner, "process")
             return "exDesktop sandbox: starting programs is blocked"
         if event in internals:
@@ -1081,7 +1255,12 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                 name = address_host(address)
                 if name is None:
                     return "exDesktop sandbox: invalid address"
-                return check_net(owner, name)
+                udp = False
+                try:
+                    udp = (_sock_type(args[0]) & 0xF) == _SOCK_DGRAM
+                except _Err:
+                    udp = False
+                return check_net(owner, name, udp)
             if text_of(address) is not None:
                 return "exDesktop sandbox: local sockets are blocked"
             return "exDesktop sandbox: invalid address"
@@ -1113,9 +1292,55 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                 net = [("{\"key\":%s,\"rule\":%s}" % (escape(k), escape(v)))
                        for k, v in _ditems(_dget(net_rules, first, {}))]
                 folders = [("{\"key\":%s}" % escape(p)) for p in _dget(paths_allowed, first, ())]
+                extra = [("{\"key\":%s,\"rule\":%s}" % (escape(k), escape(v)))
+                         for k, v in _ditems(_dget(extra_rules, first, {}))]
                 _lsort(net)
                 _lsort(folders)
-                return "{\"net\":[" + _join(",", net) + "],\"paths\":[" + _join(",", folders) + "]}"
+                _lsort(extra)
+                return ("{\"net\":[" + _join(",", net) + "],\"paths\":[" + _join(",", folders)
+                        + "],\"extra\":[" + _join(",", extra) + "]}")
+            if method == "extra_allowed":
+                return "true" if _dget(_dget(extra_rules, first, {}), second) == "allow" else "false"
+            if method == "journal":
+                entry = _dget(journal, first) or {"net": {}, "files": {}, "blocked": []}
+                net = [("{\"key\":%s,\"count\":%d,\"last\":%d}" % (escape(k), v[0], _int(v[1])))
+                       for k, v in _ditems(entry["net"])]
+                files = [("{\"key\":%s,\"last\":%d}" % (escape(k), _int(v)))
+                         for k, v in _ditems(entry["files"])]
+                blocked = [("{\"key\":%s,\"last\":%d}" % (escape(v[1]), _int(v[0])))
+                           for v in entry["blocked"]]
+                return ("{\"net\":[" + _join(",", net) + "],\"files\":[" + _join(",", files)
+                        + "],\"blocked\":[" + _join(",", blocked) + "]}")
+            if method == "set_rule":
+                if second == "net" and _type(third) is _str:
+                    cut = _rfind(third, "=")
+                    key = third[:cut] if cut > 0 else ""
+                    value = third[cut + 1:] if cut > 0 else ""
+                    if key:
+                        bucket = net_rules.setdefault(first, {})
+                        if value in ("allow", "deny"):
+                            _dset(bucket, key, value)
+                        else:
+                            _dpop(bucket, key, None)
+                        if not bucket:
+                            _dpop(net_rules, first, None)
+                        save_state()
+                        return "true"
+                if second == "extra" and _type(third) is _str:
+                    cut = _rfind(third, "=")
+                    key = third[:cut] if cut > 0 else ""
+                    value = third[cut + 1:] if cut > 0 else ""
+                    if key in ("clipboard", "links", "notify"):
+                        bucket = extra_rules.setdefault(first, {})
+                        if value in ("allow", "deny", "ask"):
+                            _dset(bucket, key, value)
+                        else:
+                            _dpop(bucket, key, None)
+                        if not bucket:
+                            _dpop(extra_rules, first, None)
+                        save_state()
+                        return "true"
+                return "false"
             if method == "revoke":
                 changed = False
                 if second == "net" and third in _dget(net_rules, first, {}):
@@ -1130,7 +1355,9 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                         _dpop(paths_allowed, first, None)
                     changed = True
                 elif second == "all":
-                    changed = _bool(_dpop(net_rules, first, None)) | _bool(_dpop(paths_allowed, first, None))
+                    changed = (_bool(_dpop(net_rules, first, None)) | _bool(_dpop(paths_allowed, first, None))
+                               | _bool(_dpop(extra_rules, first, None)))
+                    _dpop(journal, first, None)
                     _dpop(allowed_ips, first, None)
                 if changed:
                     save_state()
@@ -1244,6 +1471,336 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         except Exception:
             pass
+
+    # Leaks
+    import re as _re_mod
+    import binascii as _binascii
+    from urllib.parse import unquote_plus as _unquote
+    _rx = _re_mod.compile
+    _json_loads = json.loads
+    _a2b = _binascii.a2b_base64
+    _b2a = _binascii.b2a_base64
+    _fromhex = bytes.fromhex
+    _sencode = str.encode
+    _bfind = bytes.find
+    rx_code = _rx(r"(?<![0-9])([0-9]{5,6})(?![0-9])")
+    rx_phone = _rx(r"\+?[0-9][0-9 ()\-]{5,20}[0-9]")
+    rx_b64 = _rx(r"[A-Za-z0-9+/_\-]{40,}={0,2}")
+    rx_words = _rx(r"[a-z]+")
+    rx_private = _rx(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+    rx_discord = _rx(r"[MNO][A-Za-z0-9_\-]{23,27}\.[A-Za-z0-9_\-]{6}\.[A-Za-z0-9_\-]{27,40}")
+    rx_tokens = (_rx(r"[0-9]{8,10}:AA[A-Za-z0-9_\-]{33}"), _rx(r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}"),
+                 _rx(r"AIza[0-9A-Za-z_\-]{35}"), _rx(r"gh[pousr]_[A-Za-z0-9]{36}"),
+                 _rx(r"xox[abpr]-[A-Za-z0-9\-]{10,}"), _rx(r"sk-ant-[A-Za-z0-9_\-]{20,}"))
+    common_names = {"user", "users", "admin", "administrator", "root", "guest", "default", "owner", "home",
+                    "desktop", "computer", "localhost", "public", "windows", "test"}
+    try:
+        with _open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "exd_bip39.txt"),
+                   encoding="utf-8") as wordlist:
+            bip39 = frozenset(w for w in (line.strip() for line in wordlist) if w)
+    except _Err:
+        bip39 = frozenset()
+    scan_limit = 2 * 1024 * 1024
+    secrets_cache = [-100.0, None]
+
+    def digits(value):
+        return _join("", [c for c in value if "0" <= c <= "9"])
+
+    def prepare_secrets(data):
+        result = {"phones": _set(), "codes": _set(), "keys": [], "contacts": _set(), "device": [], "tokens": False}
+        if _type(data) is not _dict:
+            return result
+        for value in data.get("phones") or ():
+            number = digits(_str(value))
+            if _len(number) >= 7:
+                _sadd(result["phones"], number[-10:])
+        for value in data.get("codes") or ():
+            _sadd(result["codes"], _str(value))
+        for value in data.get("keys") or ():
+            try:
+                raw = _fromhex(_str(value))
+            except _Err:
+                continue
+            if _len(raw) < 32:
+                continue
+            encoded = _bdecode(_b2a(raw, newline=False), "ascii")
+            _append(result["keys"], (_lower(_str(value))[:32], raw[:16], encoded[:40],
+                                     _replace(_replace(encoded[:40], "+", "-"), "/", "_")))
+        for value in data.get("contacts") or ():
+            number = digits(_str(value))
+            if _len(number) >= 7:
+                _sadd(result["contacts"], number[-10:])
+        for value in data.get("device") or ():
+            text_value = _lower(_strip(_str(value)))
+            if _len(text_value) >= 12 and _len([c for c in text_value if c in "0123456789abcdef"]) >= 12:
+                _append(result["device"], text_value)
+        options = data.get("options")
+        result["tokens"] = _bool(_type(options) is _dict and options.get("tokens"))
+        return result
+
+    def secrets():
+        stamp = _monotonic()
+        if secrets_cache[1] is None or stamp - secrets_cache[0] > 5:
+            raw = "{}"
+            if _n_secrets is not None:
+                try:
+                    raw = _n_secrets()
+                except _Err:
+                    raw = "{}"
+            try:
+                data = _json_loads(raw)
+            except _Err:
+                data = {}
+            secrets_cache[1] = prepare_secrets(data)
+            secrets_cache[0] = stamp
+        return secrets_cache[1]
+
+    def payload_of(value, depth=0):
+        if value is None or depth > 3:
+            return None
+        kind = _type(value)
+        if kind is _str:
+            return value[:scan_limit]
+        if kind is _bytes or kind is bytearray or kind is memoryview:
+            try:
+                return _bytes(value[:scan_limit])
+            except _Err:
+                return None
+        if kind is _list or kind is _tuple:
+            parts = []
+            for item in value[:64]:
+                part = payload_of(item, depth + 1)
+                if part is not None:
+                    _append(parts, part if _type(part) is _bytes else _sencode(part, "utf-8", "ignore"))
+            return _bjoin(b"\n", parts)
+        if kind is _dict:
+            parts = []
+            for item in _ditems(value):
+                for piece in item:
+                    part = payload_of(piece, depth + 1)
+                    if part is not None:
+                        _append(parts, part if _type(part) is _bytes else _sencode(part, "utf-8", "ignore"))
+            return _bjoin(b"\n", parts)
+        return None
+
+    def views_of(payload):
+        raws = []
+        if _type(payload) is _str:
+            text_value = payload
+        else:
+            _append(raws, payload)
+            text_value = _bdecode(payload, "utf-8", "ignore")
+        views = [text_value]
+        if "%" in text_value or "+" in text_value:
+            try:
+                _append(views, _unquote(text_value))
+            except _Err:
+                pass
+        count = 0
+        for chunk in rx_b64.findall(text_value):
+            count += 1
+            if count > 32:
+                break
+            chunk = _replace(_replace(chunk, "-", "+"), "_", "/")
+            chunk = _rstrip(chunk, "=")
+            try:
+                decoded = _a2b(chunk + "=" * (-_len(chunk) % 4))
+            except _Err:
+                continue
+            _append(raws, decoded)
+            _append(views, _bdecode(decoded, "utf-8", "ignore"))
+        return raws, views
+
+    def detect(payload):
+        known = secrets()
+        raws, views = views_of(payload)
+        for blob in raws:
+            for key in known["keys"]:
+                if _bfind(blob, key[1]) >= 0:
+                    return "session"
+            if blob[:16] == b"SQLite format 3\x00":
+                return "browser"
+        for view in views:
+            low = _lower(view)
+            for key in known["keys"]:
+                if key[0] in low or key[2] in view or key[3] in view:
+                    return "session"
+            if known["codes"]:
+                for match in rx_code.findall(view):
+                    if match in known["codes"]:
+                        return "code"
+            numbers = [digits(m)[-10:] for m in rx_phone.findall(view)]
+            for number in numbers:
+                if number in known["phones"]:
+                    return "phone"
+            if known["contacts"]:
+                hits = _set()
+                for number in numbers:
+                    if number in known["contacts"]:
+                        _sadd(hits, number)
+                if _len(hits) > 3:
+                    return "contacts"
+            if rx_private.search(view) or ("\"ciphertext\"" in low and "\"kdf\"" in low):
+                return "keys"
+            if rx_discord.search(view):
+                return "keys"
+            if bip39:
+                run = 0
+                for word in rx_words.findall(low):
+                    if word in bip39:
+                        run += 1
+                        if run >= 12:
+                            return "seed"
+                    else:
+                        run = 0
+            for value in known["device"]:
+                if value in low:
+                    return "device"
+            if known["tokens"]:
+                for pattern in rx_tokens:
+                    if pattern.search(view):
+                        return "tokens"
+        return None
+
+    def leak_check(owner, value, target):
+        if owner == "":
+            return None
+        payload = payload_of(value)
+        if not payload:
+            return None
+        try:
+            category = detect(payload)
+        except _Err:
+            category = None
+        if category is None:
+            return None
+        key = category + "|" + target
+        stamp = owner + "\x00" + key
+        if stamp in leak_once:
+            _sdiscard(leak_once, stamp)
+            return None
+        if _dget(_dget(net_rules, owner, {}), "leak:" + key) == "allow":
+            return None
+        journal_block(owner, "leak:" + category + ":" + target)
+        log("%s: blocked sending %s to %s" % (owner, category, target))
+        if owner == UNKNOWN or not interactive:
+            return "exDesktop sandbox: sending protected data is blocked"
+        ask("leak", owner, key, (
+            (text("deny"), "deny", -1),
+            (text("net_once"), "once", -3),
+            (text("net_always"), "always", -4),
+            (text("leak_disable"), "disable", -2),
+        ), "")
+        if stamp in leak_once or _dget(_dget(net_rules, owner, {}), "leak:" + key) == "allow":
+            _sdiscard(leak_once, stamp)
+            return None
+        return "exDesktop sandbox: sending protected data is blocked"
+
+    def peer_name(sock):
+        try:
+            name = getattr(sock, "server_hostname", None)
+            if _type(name) is _str and name:
+                return name
+        except _Err:
+            pass
+        try:
+            address = _sock_peer(sock)
+            if _type(address) is _tuple and address:
+                return _str(address[0])
+        except _Err:
+            pass
+        return "?"
+
+    def wrap_send(klass, name, sock_of=None):
+        original = lookup(klass, name)
+        if original is None:
+            return
+
+        def wrapper(self, *args, **kwargs):
+            if args:
+                owner = owner_now()
+                if owner != "":
+                    sock = sock_of(self) if sock_of is not None else self
+                    target = peer_name(sock)
+                    verdict = leak_check(owner, args[0], target)
+                    if verdict:
+                        raise _PermErr(verdict)
+                    try:
+                        journal_net(owner, domain_key(_lower(target)) if not is_ip(target) else target,
+                                    _len(args[0]) if _type(args[0]) in (_bytes, _str, bytearray) else 0)
+                    except _Err:
+                        pass
+            return original(self, *args, **kwargs)
+
+        try:
+            wrapper.__name__ = name
+            setattr(klass, name, wrapper)
+        except _Err:
+            pass
+
+    def wrap_native(name, target_of, path_index=None):
+        original = getattr(native, name, None) if native is not None else None
+        if original is None:
+            return
+
+        def wrapper(*args):
+            owner = owner_now()
+            if owner != "":
+                if path_index is not None and _len(args) > path_index and _type(args[path_index]) is _str:
+                    verdict = deny_path(owner, args[path_index], False, False)
+                    if verdict:
+                        raise _PermErr(verdict)
+                verdict = leak_check(owner, _list(args), target_of(args))
+                if verdict:
+                    raise _PermErr(verdict)
+            return original(*args)
+
+        try:
+            setattr(native, name, wrapper)
+        except _Err:
+            pass
+
+    def extra_rule(owner, key):
+        return _dget(_dget(extra_rules, owner, {}), key)
+
+    def wrap_extra(name, key):
+        original = getattr(native, name, None) if native is not None else None
+        if original is None:
+            return
+
+        def wrapper(*args):
+            owner = owner_now()
+            if owner != "" and extra_rule(owner, key) == "deny":
+                journal_block(owner, key)
+                return None
+            return original(*args)
+
+        try:
+            setattr(native, name, wrapper)
+        except _Err:
+            pass
+
+    try:
+        import ssl as _ssl_module
+        import socket as _sock_module
+        _sock_peer = _socket.socket.getpeername
+        for method in ("send", "sendall", "sendto", "sendmsg"):
+            wrap_send(_sock_module.socket, method)
+        for method in ("send", "sendall", "write"):
+            wrap_send(_ssl_module.SSLSocket, method)
+        wrap_send(_ssl_module.SSLObject, "write", lambda obj: obj)
+    except _Err:
+        pass
+
+    def tg_target(args):
+        return "Telegram"
+
+    for native_name, index in (("send_message", None), ("edit_message", None), ("send_request", None),
+                               ("send_raw_request", None), ("send_media", 2)):
+        wrap_native(native_name, tg_target, index)
+    wrap_extra("copy", "clipboard")
+    wrap_extra("open_url", "links")
+    wrap_extra("toast", "notify")
 
     # Register
     if native is not None and hasattr(native, "sbx_install"):

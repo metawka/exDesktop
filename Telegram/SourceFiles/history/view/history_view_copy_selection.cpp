@@ -342,9 +342,6 @@ void CopySelection(CopySelectionArgs &&args) {
 			text,
 			std::move(args.blocks),
 			args.session);
-		if (!Extera::Bool(u"hide_copy_toast"_q)) {
-			Ui::ShowTextCopiedToast(args.show);
-		}
 		return;
 	}
 	PendingCopy() = nullptr;

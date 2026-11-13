@@ -80,8 +80,11 @@ case "$OS" in
 		DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/exDesktop"
 		;;
 	Darwin)
-		[ "$ARCH" = "arm64" ] || fail "only Apple Silicon builds are published for macOS" "для macOS публикуются только сборки Apple Silicon"
-		PATTERN='exDesktop-macos-arm64\.[0-9.]*\.zip'
+		if [ "$ARCH" = "arm64" ] || [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+			PATTERN='exDesktop-macos-arm64\.[0-9.]*\.zip'
+		else
+			PATTERN='exDesktop-macos-x64\.[0-9.]*\.zip'
+		fi
 		[ -n "$PREFIX" ] || PREFIX="/Applications"
 		DATA_DIR="$HOME/Library/Application Support/exDesktop"
 		;;

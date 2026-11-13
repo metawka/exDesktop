@@ -136,7 +136,7 @@ void PortBar::paint(Painter &p, QRect clip) {
 				: st::windowBgActive);
 			p.drawEllipse(ellipse);
 		}
-		const auto &icon = st::exteraInstallPuzzle;
+		const auto &icon = st::exteraInstallTranslate;
 		icon.paint(
 			p,
 			full.x() + (full.width() - icon.width()) / 2,

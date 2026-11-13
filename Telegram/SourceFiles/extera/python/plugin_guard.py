@@ -439,8 +439,8 @@ def _escape_patterns(tree):
                 base = target.value
                 if isinstance(base, ast.Attribute) and base.attr in _ESCAPE_SYS and _escape_root(base) == "sys":
                     key = target.slice
-                    if not isinstance(key, ast.Constant) or not isinstance(key.value, str) \
-                            or key.value.split(".")[0] in _ESCAPE_MODULES or key.value in _ESCAPE_SEALED:
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str) \
+                            and (key.value.split(".")[0] in _ESCAPE_MODULES or key.value in _ESCAPE_SEALED):
                         return "sys.%s[...]" % base.attr, node.lineno
                 if isinstance(base, ast.Name) and base.id == "__builtins__":
                     return "__builtins__[...]", node.lineno
@@ -466,6 +466,16 @@ def _escape_patterns(tree):
                 if (modules.get(root) or root or "").split(".")[0] in _ESCAPE_MODULES:
                     return "reload(%s)" % root, node.lineno
     return None
+
+
+def _dynamic_module_writes(tree):
+    for node in ast.walk(tree):
+        targets = node.targets if isinstance(node, (ast.Assign, ast.Delete)) else []
+        for target in targets:
+            if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Attribute) \
+                    and target.value.attr == "modules" and _escape_root(target.value) == "sys":
+                return True
+    return False
 
 
 def _rules(source, capabilities):
@@ -561,6 +571,8 @@ def _rules(source, capabilities):
             add("PRIVILEGED_COMMAND_EXECUTION", "WARNING", "process execution")
     if "ctypes" in low:
         add("CTYPES_NATIVE_ACCESS", "WARNING", "ctypes")
+    if tree is not None and _dynamic_module_writes(tree):
+        add("MODULE_REGISTRY_WRITE", "INFO", "sys.modules")
     obfuscation = capabilities.get("obfuscation") or []
     if obfuscation:
         add("OBFUSCATED_CODE_STRUCTURE", "CRITICAL", ", ".join(obfuscation))

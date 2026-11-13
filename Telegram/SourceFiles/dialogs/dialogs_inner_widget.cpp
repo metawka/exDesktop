@@ -23,11 +23,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/dialogs_search_tags.h"
 #include "dialogs/dialogs_quick_action.h"
 #include "history/view/history_view_context_menu.h"
+#include "history/view/media/history_view_save_document_action.h"
 #include "history/view/history_view_subsection_tabs.h"
 #include "history/history.h"
 #include "history/history_item.h"
+#include "history/history_item_helpers.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
+#include "core/file_utilities.h"
 #include "core/shortcuts.h"
 #include "core/ui_integration.h"
 #include "ui/widgets/buttons.h"
@@ -42,6 +45,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/screen_reader_mode.h"
 #include "ui/ui_utility.h"
 #include "data/components/sponsored_messages.h"
+#include "data/data_document.h"
 #include "data/data_drafts.h"
 #include "data/data_folder.h"
 #include "data/data_forum.h"
@@ -56,6 +60,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_histories.h"
 #include "data/data_chat_filters.h"
 #include "data/data_changes.h"
+#include "data/data_media_types.h"
 #include "data/data_message_reactions.h"
 #include "data/data_saved_messages.h"
 #include "data/data_saved_sublist.h"
@@ -63,6 +68,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/stickers/data_custom_emoji.h"
 #include "data/stickers/data_stickers.h"
 #include "data/data_send_action.h"
+#include "base/call_delayed.h"
+#include "base/platform/base_platform_info.h"
 #include "base/unixtime.h"
 #include "base/options.h"
 #include "lang/lang_keys.h"
@@ -82,9 +89,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/effects/ripple_animation.h"
 #include "ui/effects/loading_element.h"
 #include "ui/effects/thanos_effect_session.h"
+#include "ui/controls/delete_message_context_action.h"
 #include "ui/widgets/multi_select.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/unread_badge.h"
+#include "boxes/contacts_box.h"
+#include "boxes/delete_messages_box.h"
 #include "boxes/filters/edit_filter_box.h"
 #include "boxes/peers/edit_forum_topic_box.h"
 #include "boxes/peer_list_box.h"
@@ -94,6 +104,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_boxes.h"
 #include "styles/style_chat.h" // popupMenuExpandedSeparator
 #include "styles/style_chat_helpers.h"
+#include "styles/style_widgets.h"
 #include "styles/style_color_indices.h"
 #include "styles/style_layers.h"
 #include "styles/style_window.h"
@@ -445,6 +456,19 @@ InnerWidget::InnerWidget(
 		dialogRowReplaced(r.old, r.now);
 	}, lifetime());
 
+	session().changes().realtimeHistoryUpdates(
+		Data::HistoryUpdate::Flag::IsPinned
+	) | rpl::on_next([=](const Data::HistoryUpdate &update) {
+		_removedRowSlide.block(update.history);
+		Ui::PostponeCall(this, [=] { _removedRowSlide.clearPending(); });
+	}, lifetime());
+
+	session().changes().realtimeHistoryUpdates(
+		Data::HistoryUpdate::Flag::Folder
+	) | rpl::on_next([=](const Data::HistoryUpdate &update) {
+		_removedRowSlide.start(update.history);
+	}, lifetime());
+
 	session().data().sendActionManager().animationUpdated(
 	) | rpl::on_next([=](
 			const Data::SendActionManager::AnimationUpdate &update) {
@@ -483,16 +507,17 @@ InnerWidget::InnerWidget(
 
 	Ui::ScheduleThanosEffectWarmUp(&session(), lifetime());
 
+	session().settings().archiveCollapsedChanges(
+	) | rpl::on_next([=] {
+		refreshWithArchiveSlide();
+	}, lifetime());
+
 	rpl::merge(
-		session().settings().archiveCollapsedChanges() | rpl::map_to(false),
-		session().data().chatsFilters().changed() | rpl::map_to(true),
-		session().data().chatsFilters().tagsEnabledChanges(
-		) | rpl::map_to(true)
-	) | rpl::on_next([=](bool refreshHeight) {
-		if (refreshHeight) {
-			_chatsFilterTags.clear();
-			_shownList->updateHeights(_narrowRatio);
-		}
+		session().data().chatsFilters().changed(),
+		session().data().chatsFilters().tagsEnabledChanges() | rpl::to_empty
+	) | rpl::on_next([=] {
+		_chatsFilterTags.clear();
+		_shownList->updateHeights(_narrowRatio);
 		refreshWithCollapsedRows();
 	}, lifetime());
 
@@ -561,7 +586,7 @@ InnerWidget::InnerWidget(
 
 	session().settings().archiveInMainMenuChanges(
 	) | rpl::on_next([=] {
-		refresh();
+		refreshWithArchiveSlide();
 	}, lifetime());
 
 	session().changes().historyUpdates(
@@ -584,17 +609,30 @@ InnerWidget::InnerWidget(
 		| UpdateFlag::IsContact
 		| UpdateFlag::FullInfo
 		| UpdateFlag::EmojiStatus
+		| UpdateFlag::BarSettings
 	) | rpl::on_next([=](const Data::PeerUpdate &update) {
 		if (update.flags
 			& (UpdateFlag::Name
 				| UpdateFlag::Photo
 				| UpdateFlag::FullInfo
-				| UpdateFlag::EmojiStatus)) {
+				| UpdateFlag::EmojiStatus
+				| UpdateFlag::BarSettings)) {
 			if (update.flags & UpdateFlag::Photo) {
 				invalidateLoadedUserpics();
 			}
 			const auto peer = update.peer;
 			const auto history = peer->owner().historyLoaded(peer);
+			if (update.flags & UpdateFlag::BarSettings) {
+				if (history) {
+					invalidateCachedRow(RowsCacheKey(history));
+				}
+				const auto sublist = _savedSublists
+					? _savedSublists->sublistLoaded(peer)
+					: nullptr;
+				if (sublist) {
+					refreshDialogRow({ sublist, FullMsgId() });
+				}
+			}
 			if (_state == WidgetState::Default) {
 				if (history) {
 					updateDialogRow({ history, FullMsgId() });
@@ -782,6 +820,50 @@ int InnerWidget::skipTopHeight() const {
 	return (_skipTopDialog && !_shownList->empty())
 		? _shownList->begin()->get()->height()
 		: 0;
+}
+
+int InnerWidget::archiveBandHeight() const {
+	if (_shownList->empty() || !_shownList->begin()->get()->folder()) {
+		return 0;
+	}
+	return int(_collapsedRows.size()) * st::dialogsImportantBarHeight
+		+ (_skipTopDialog ? 0 : _shownList->begin()->get()->height());
+}
+
+void InnerWidget::refreshWithArchiveSlide() {
+	_archiveSlide.stop();
+	const auto slideAllowed = [&](int band) {
+		return (_state == WidgetState::Default)
+			&& !communityModeShown()
+			&& isVisible()
+			&& (_visibleTop < band);
+	};
+	const auto archive = _shownList->empty()
+		? nullptr
+		: _shownList->begin()->get()->folder();
+	const auto grab = [&](int height) {
+		return GrabArchiveBand(
+			this,
+			height,
+			!_collapsedRows.empty(),
+			*_st,
+			archive ? archive->chatListName() : QString());
+	};
+	const auto from = archiveBandHeight();
+	auto was = slideAllowed(from) ? grab(from) : ArchiveBand();
+	refreshWithCollapsedRows();
+	const auto to = archiveBandHeight();
+	if (from != to && (!was.image.isNull() || slideAllowed(to))) {
+		auto now = (from && to && !was.image.isNull())
+			? grab(to)
+			: ArchiveBand();
+		_archiveSlide.start(
+			from,
+			to,
+			std::move(was),
+			std::move(now),
+			_controller->window().layerShownValue());
+	}
 }
 
 int InnerWidget::collapsedRowsOffset() const {
@@ -1337,9 +1419,15 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		if (communityModeShown()) {
 			p.save();
 		}
+		const auto archiveShift = _archiveSlide.shift();
+		const auto archiveBandTransform = p.transform();
+		if (archiveShift) {
+			p.translate(0, archiveShift);
+			dialogsClip.translate(0, -archiveShift);
+		}
 		const auto collapsedSkip = collapsedRowsOffset();
 		p.translate(0, collapsedSkip);
-		paintCollapsedRows(p, r.translated(0, -collapsedSkip));
+		paintCollapsedRows(p, dialogsClip.translated(0, -collapsedSkip));
 
 		if (communityModeShown() && !_shownList->empty()) {
 			p.translate(0, st::searchedBarHeight);
@@ -1387,7 +1475,17 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 				}
 			};
 
-			auto i = list.findByY(dialogsClip.top() - skip);
+			const auto removedHeight = reorderingPinned
+				? 0
+				: _removedRowSlide.height(_shownList);
+			const auto removedTop = _removedRowSlide.top();
+			auto removedPainted = !removedHeight;
+			const auto paintRemoved = [&] {
+				_removedRowSlide.paint(p, fullWidth);
+				p.translate(0, removedHeight);
+				removedPainted = true;
+			};
+			auto i = list.findByY(dialogsClip.top() - skip - removedHeight);
 			if (_skipTopDialog && i != list.cend() && !(*i)->index()) {
 				++i;
 			}
@@ -1406,6 +1504,8 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 					auto row = (*i);
 					if (top >= dialogsClip.top() - skip + dialogsClip.height()) {
 						break;
+					} else if (!removedPainted && top >= removedTop) {
+						paintRemoved();
 					}
 
 					// Skip currently dragged chat to paint it above others after.
@@ -1417,6 +1517,12 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 					top += row->height();
 				}
 
+				if (!removedPainted
+					&& i == list.cend()
+					&& top == removedTop) {
+					paintRemoved();
+				}
+
 				// Paint the dragged chat above all others.
 				if (reorderingRow) {
 					p.translate(0, reorderingRow->top() - top);
@@ -1426,6 +1532,12 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 			}
 		} else {
 			p.fillRect(dialogsClip, currentBg());
+		}
+		if (archiveShift) {
+			const auto transform = p.transform();
+			p.setTransform(archiveBandTransform);
+			_archiveSlide.paintBand(p);
+			p.setTransform(transform);
 		}
 		if (communityModeShown()) {
 			p.restore();
@@ -1745,6 +1857,9 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		if (!_searchResults.empty()) {
 			const auto text = showUnreadInSearchResults
 				? u"Search results"_q
+				: _searchResultsOnlyTitle
+				? _searchResultsOnlyTitle(
+					_searchedMigratedCount + _searchedCount)
 				: (_searchState.tab == ChatSearchTab::PublicPosts && !_searchIn)
 				? (_searchState.query.isEmpty()
 					? tr::lng_posts_subtitle_empty(tr::now)
@@ -2759,6 +2874,7 @@ bool InnerWidget::addQuickActionRipple(
 		.sizeOverride = Size(st::dialogsQuickActionSize),
 	});
 	context->action = action;
+	context->label = type;
 	context->icon->jumpTo(context->icon->framesCount() - 1, [=] {
 		const auto size = QSize(
 			st::dialogsQuickActionRippleSize,
@@ -2783,10 +2899,7 @@ bool InnerWidget::addQuickActionRipple(
 							p,
 							Rect(size),
 							context->icon.get(),
-							ResolveQuickDialogLabel(
-								history,
-								action,
-								_filterId));
+							type);
 					}),
 				std::move(updateCallback));
 		}
@@ -3373,9 +3486,36 @@ void InnerWidget::moveSearchIn() {
 	_searchIn->moveToLeft(0, searchInChatOffset());
 }
 
+void InnerWidget::prepareRemovedRowSlide(not_null<Row*> row) {
+	const auto top = dialogsOffset() + row->top();
+	if (_state != WidgetState::Default
+		|| communityModeShown()
+		|| _dragging
+		|| _aboveIndex >= 0
+		|| !isVisible()
+		|| _shownList->getRow(row->key()) != row
+		|| (_skipTopDialog && !row->index())
+		|| top >= _visibleBottom
+		|| top + row->height() <= _visibleTop) {
+		return;
+	}
+	_removedRowSlide.prepare(
+		row->entry(),
+		_shownList,
+		row->top(),
+		Ui::GrabWidgetToImage(
+			this,
+			QRect(0, top, width(), row->height()),
+			st::dialogsBg->c));
+	Ui::PostponeCall(this, [=] { _removedRowSlide.clearPending(); });
+}
+
 void InnerWidget::dialogRowReplaced(
 		Row *oldRow,
 		Row *newRow) {
+	if (oldRow && !newRow) {
+		prepareRemovedRowSlide(oldRow);
+	}
 	if (oldRow) {
 		invalidateCachedRow(RowsCacheKey(oldRow->entry()));
 	}
@@ -3481,8 +3621,8 @@ void InnerWidget::handleChatListEntryRefreshes() {
 
 		if (event.existenceChanged) {
 			if (!entry->inChatList()) {
-				if (key == _menuRow.key && _menu) {
-					InvokeQueued(this, [=] { _menu = nullptr; });
+				if (key == _menuRow.key) {
+					closeMenuForRemovedRow();
 				}
 				if (_selected && _selected->key() == key) {
 					_selected = nullptr;
@@ -3954,6 +4094,7 @@ void InnerWidget::refreshShownList() {
 		? session().data().chatsFilters().chatsList(_filterId)->indexed()
 		: session().data().chatsList(_openedFolder)->indexed();
 	if (_shownList != list) {
+		clearPressed();
 		_shownList->unfreeze();
 		_shownList = list;
 		_shownList->updateHeights(_narrowRatio);
@@ -3985,6 +4126,10 @@ void InnerWidget::clearSelection() {
 	_lastRowLocalMouseX = -1;
 	deselectAllRows();
 	setCommunityPressed(-1);
+}
+
+bool InnerWidget::hasSelection() const {
+	return isSelected();
 }
 
 void InnerWidget::deselectAllRows() {
@@ -4020,6 +4165,72 @@ void InnerWidget::fillSupportSearchMenu(not_null<Ui::PopupMenu*> menu) {
 		session().settings().setSupportAllSearchResults(!all);
 		session().saveSettingsDelayed();
 	});
+}
+
+void InnerWidget::fillSearchResultMenu(
+		not_null<Ui::PopupMenu*> menu,
+		FullMsgId itemId) {
+	const auto owner = &session().data();
+	const auto item = owner->message(itemId);
+	if (!item) {
+		return;
+	}
+	const auto controller = _controller;
+	if (item->isHistoryEntry()) {
+		menu->addAction(tr::lng_context_to_msg(tr::now), [=] {
+			if (const auto item = owner->message(itemId)) {
+				JumpToMessageClickHandler(item)->onClick({});
+			}
+		}, &st::menuIconShowInChat);
+	}
+	const auto media = item->media();
+	if (const auto document = media ? media->document() : nullptr) {
+		if (document->loading()) {
+			menu->addAction(tr::lng_context_cancel_download(tr::now), [=] {
+				document->cancel();
+			}, &st::menuIconCancel);
+		} else {
+			const auto filepath = document->filepath(true);
+			if (!filepath.isEmpty()) {
+				menu->addAction((Platform::IsMac()
+					? tr::lng_context_show_in_finder(tr::now)
+					: tr::lng_context_show_in_folder(tr::now)),
+					base::fn_delayed(
+						st::defaultDropdownMenu.menu.ripple.hideDuration,
+						this,
+						[=] { File::ShowInFolder(filepath); }),
+					&st::menuIconShowInFolder);
+			}
+			if (item->allowsForward()) {
+				HistoryView::AddSaveDocumentAction(
+					Ui::Menu::CreateAddActionCallback(menu),
+					item,
+					document,
+					controller);
+			}
+		}
+	}
+	HistoryView::AddPostLinkAction(
+		menu,
+		controller,
+		item,
+		HistoryView::Context::History);
+	if (item->allowsForward()) {
+		menu->addAction(tr::lng_context_forward_msg(tr::now), [=] {
+			Window::ShowForwardMessagesBox(controller, { 1, itemId });
+		}, &st::menuIconForward);
+	}
+	if (item->canDelete()) {
+		menu->addAction(Ui::DeleteMessageContextAction(
+			menu->menu(),
+			[=] {
+				if (const auto item = owner->message(itemId)) {
+					controller->show(Box<DeleteMessagesBox>(item));
+				}
+			},
+			item->ttlDestroyAt(),
+			[=] { _menu = nullptr; }));
+	}
 }
 
 bool InnerWidget::showChatPreview() {
@@ -4118,10 +4329,16 @@ void InnerWidget::contextMenuEvent(QContextMenuEvent *e) {
 
 	_menu = base::make_unique_q<Ui::PopupMenu>(
 		this,
-		row.fullId ? st::defaultPopupMenu : st::popupMenuExpandedSeparator);
+		(!row.fullId
+			? st::popupMenuExpandedSeparator
+			: (_searchResultsOnlyTitle && !session().supportMode())
+			? st::popupMenuWithIcons
+			: st::defaultPopupMenu));
 	if (row.fullId) {
 		if (session().supportMode()) {
 			fillSupportSearchMenu(_menu.get());
+		} else if (_searchResultsOnlyTitle) {
+			fillSearchResultMenu(_menu.get(), row.fullId);
 		}
 	} else {
 		const auto addAction = Ui::Menu::CreateAddActionCallback(_menu);
@@ -4147,6 +4364,12 @@ void InnerWidget::contextMenuEvent(QContextMenuEvent *e) {
 			selectByMouse(globalPosition);
 		}
 	});
+	const auto close = [=] { closeMenuForRemovedRow(); };
+	if (const auto topic = row.key.topic()) {
+		topic->destroyed() | rpl::on_next(close, _menu->lifetime());
+	} else if (const auto sublist = row.key.sublist()) {
+		sublist->destroyed() | rpl::on_next(close, _menu->lifetime());
+	}
 	if (_menu->empty()) {
 		_menu = nullptr;
 	} else {
@@ -4217,6 +4440,12 @@ void InnerWidget::showSponsoredMenu(int peerSearchIndex, QPoint globalPos) {
 		_menu = nullptr;
 	} else {
 		_menu->popup(globalPos);
+	}
+}
+
+void InnerWidget::closeMenuForRemovedRow() {
+	if (base::take(_menuRow).key && _menu) {
+		InvokeQueued(_menu.get(), [=] { _menu = nullptr; });
 	}
 }
 
@@ -4678,6 +4907,17 @@ void InnerWidget::setLoadMoreCallback(Fn<void()> callback) {
 
 void InnerWidget::setLoadMoreFilteredCallback(Fn<void()> callback) {
 	_loadMoreFilteredCallback = std::move(callback);
+}
+
+void InnerWidget::setSearchResultsOnly(Fn<QString(int count)> title) {
+	_searchResultsOnlyTitle = std::move(title);
+	_deselectOnTopUp = true;
+	updateSearchIn();
+	refresh();
+}
+
+void InnerWidget::setDeselectOnTopUp(bool value) {
+	_deselectOnTopUp = value;
 }
 
 auto InnerWidget::chosenRow() const -> rpl::producer<ChosenRow> {
@@ -5318,10 +5558,11 @@ bool InnerWidget::communitySearchActive() const {
 }
 
 void InnerWidget::updateSearchIn() {
-	if (!_searchState.inChat
-		&& _searchHashOrCashtag == HashOrCashtag::None
-		&& !archiveSearchActive()
-		&& !communitySearchActive()) {
+	if (_searchResultsOnlyTitle
+		|| (!_searchState.inChat
+			&& _searchHashOrCashtag == HashOrCashtag::None
+			&& !archiveSearchActive()
+			&& !communitySearchActive())) {
 		_searchIn = nullptr;
 		return;
 	} else if (!_searchIn) {
@@ -5537,6 +5778,10 @@ void InnerWidget::selectSkip(int32 direction) {
 				: base::in_range(_previewSelected, 0, _previewResults.size())
 				? (_previewSelected + _peerSearchResults.size() + _filterResults.size() + _hashtagResults.size())
 				: (_searchedSelected + _previewResults.size() + _peerSearchResults.size() + _filterResults.size() + _hashtagResults.size());
+			if (_deselectOnTopUp && !cur && direction < 0) {
+				deselectAllRows();
+				return;
+			}
 			cur = std::clamp(
 				cur + direction,
 				0,
@@ -6646,6 +6891,7 @@ bool InnerWidget::prepareQuickAction(
 		.sizeOverride = Size(st::dialogsQuickActionSize),
 	});
 	context->action = action;
+	context->label = type;
 	return true;
 }
 
