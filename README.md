@@ -29,18 +29,26 @@
   <a href="README.ru.md"><img src="https://img.shields.io/badge/Русский-open-ee6b54?style=for-the-badge" alt="Русский"></a>
 </p>
 
-<p align="center">
-  <img src="docs/screenshots/exdesktop.png" width="100%" alt="exDesktop">
-</p>
-
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/settings.png" alt="Settings"></td>
-    <td width="50%"><img src="docs/screenshots/appearance.png" alt="Appearance"></td>
+    <td width="50%"><img src="docs/screenshots/settings.webp" alt="Settings"></td>
+    <td width="50%"><img src="docs/screenshots/appearance.webp" alt="Appearance"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/chats.png" alt="Chats"></td>
-    <td width="50%"><img src="docs/screenshots/plugins.png" alt="Plugins"></td>
+    <td width="50%"><img src="docs/screenshots/messages.webp" alt="Messages"></td>
+    <td width="50%"><img src="docs/screenshots/premium.webp" alt="Telegram Premium"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/privacy.webp" alt="Privacy"></td>
+    <td width="50%"><img src="docs/screenshots/saving.webp" alt="Saving messages"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/network.webp" alt="Network"></td>
+    <td width="50%"><img src="docs/screenshots/plugins.webp" alt="Plugins"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/analysis.webp" alt="Plugin analysis"></td>
+    <td width="50%"><img src="docs/screenshots/support.webp" alt="Support the project"></td>
   </tr>
 </table>
 
@@ -67,6 +75,7 @@
         <li>Built-in QuoteReply</li>
         <li>Scheduled posting for channel editors</li>
         <li>Forwarding messages from other accounts</li>
+        <li>Double click actions for left and right mouse buttons</li>
         <li>Message translation preserving formatting</li>
       </ul>
     </td>
@@ -92,6 +101,8 @@
         <li>Streamer mode</li>
         <li>Show hidden group members</li>
         <li>Hide archive</li>
+        <li>Ghost mode</li>
+        <li>Saved deleted messages and edit history</li>
       </ul>
     </td>
   </tr>
@@ -104,6 +115,8 @@
         <li>Notification visual settings</li>
         <li>Custom notification sound</li>
         <li>Removed account limit</li>
+        <li>Local Telegram Premium</li>
+        <li>Default client for tg:// links</li>
         <li>Automatic updates</li>
       </ul>
     </td>
@@ -114,7 +127,8 @@
         <li>Plugin settings</li>
         <li>Plugin export</li>
         <li>Install plugins from file</li>
-        <li>AI chat</li>
+        <li>Plugin security check</li>
+        <li>AI Chat [beta]</li>
       </ul>
     </td>
   </tr>
@@ -129,6 +143,12 @@
 | macOS | `exDesktop-macos-arm64.*.dmg` or `.zip` for Apple Silicon |
 
 All files are available on the [releases page](https://github.com/metawka/exDesktop/releases/latest). exDesktop installs beside Telegram Desktop and keeps its data separate.
+
+Linux and macOS installation from the terminal (the installer detects the system and offers the application menu entry, TG WS Proxy dependencies and AyuGram features):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/metawka/exDesktop/main/install.sh | sh
+```
 
 ## Building
 
@@ -216,6 +236,69 @@ Most strings follow Telegram Desktop translations. exDesktop strings are availab
 | [exteraGram](https://github.com/exteraSquad/exteraGram) | Features and plugin format |
 | [AyuGram Desktop](https://github.com/AyuGram/AyuGramDesktop) | Desktop implementation references |
 | [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy) | Built-in WebSocket proxy, MIT License |
+| [Kangel Plugins Manager](https://git.kangel.xyz/KangelPlugins/PluginManager) | Plugin security check approach and the PluginGuard vector model |
+<details>
+<summary><b>Third-party libraries and components</b></summary>
+
+- [Telegram Desktop](https://github.com/telegramdesktop/tdesktop): client sources, GPL-3.0 with an OpenSSL linking exception
+- desktop-app libraries: [lib_base](https://github.com/desktop-app/lib_base), [lib_rpl](https://github.com/desktop-app/lib_rpl), [lib_crl](https://github.com/desktop-app/lib_crl), [lib_storage](https://github.com/desktop-app/lib_storage), [lib_tl](https://github.com/desktop-app/lib_tl), [lib_lottie](https://github.com/desktop-app/lib_lottie), [lib_spellcheck](https://github.com/desktop-app/lib_spellcheck), [lib_qr](https://github.com/desktop-app/lib_qr), [lib_webrtc](https://github.com/desktop-app/lib_webrtc), [lib_webview](https://github.com/desktop-app/lib_webview), [lib_translate](https://github.com/desktop-app/lib_translate), [codegen](https://github.com/desktop-app/codegen), [cmake_helpers](https://github.com/desktop-app/cmake_helpers): GPL-3.0 with an OpenSSL linking exception
+- [lib_ui](https://github.com/metawka/lib_ui): fork with exDesktop changes, GPL-3.0 with an OpenSSL linking exception
+- [Qt 6](https://github.com/qt/qtbase): LGPL-3.0 or GPL-3.0
+- [OpenSSL 3](https://github.com/openssl/openssl): Apache-2.0
+- [WebRTC (tg_owt)](https://github.com/desktop-app/tg_owt): BSD-3-Clause
+- [FFmpeg](https://ffmpeg.org): LGPL-2.1-or-later
+- [OpenAL Soft](https://github.com/kcat/openal-soft): LGPL
+- [Opus](https://github.com/xiph/opus): BSD-3-Clause
+- [RNNoise](https://github.com/xiph/rnnoise): BSD-3-Clause
+- [libjpeg-turbo](https://github.com/libjpeg-turbo/libjpeg-turbo): IJG, BSD-3-Clause
+- [zlib and minizip](https://zlib.net): zlib
+- [LZMA SDK](https://www.7-zip.org/sdk.html), [liblzma](https://tukaani.org/xz/): public domain
+- [Breakpad](https://chromium.googlesource.com/breakpad/breakpad): BSD-3-Clause
+- [Crashpad](https://crashpad.chromium.org): Apache-2.0
+- [Ada](https://github.com/ada-url/ada): Apache-2.0
+- [CLD3](https://github.com/google/cld3): Apache-2.0
+- [tgcalls](https://github.com/TelegramMessenger/tgcalls): LGPL-3.0
+- [CMake](https://cmake.org): BSD-3-Clause
+- [Ninja](https://ninja-build.org): Apache-2.0
+- [GSL](https://github.com/Microsoft/GSL): MIT
+- [range-v3](https://github.com/ericniebler/range-v3): BSL-1.0
+- [expected](https://github.com/TartanLlama/expected): CC0-1.0
+- [xxHash](https://github.com/Cyan4973/xxHash): BSD-2-Clause
+- [LZ4](https://github.com/lz4/lz4): BSD-2-Clause
+- [QR Code generator](https://github.com/nayuki/QR-Code-generator): MIT
+- [zxcvbn-c](https://github.com/tsyrogit/zxcvbn-c): MIT
+- [Hunspell](https://github.com/hunspell/hunspell): LGPL-2.1, MPL-1.1 or GPL-2.0
+- [libcbor](https://github.com/PJK/libcbor): MIT
+- [libfido2](https://github.com/Yubico/libfido2): BSD-2-Clause
+- [cmark-gfm](https://github.com/desktop-app/cmark-gfm): BSD-2-Clause
+- [MicroTeX](https://github.com/desktop-app/MicroTeX): MIT
+- [libprisma](https://github.com/desktop-app/libprisma): MIT
+- [TooManyCooks](https://github.com/tzcnt/TooManyCooks): BSL-1.0
+- [litehtml](https://github.com/litehtml/litehtml): BSD-3-Clause
+- [Gumbo](https://github.com/google/gumbo-parser): Apache-2.0
+- [QuickJS-ng](https://github.com/quickjs-ng/quickjs): MIT
+- [twidget](https://github.com/TelegramMessenger/twidget): BSD-3-Clause
+- [widget-sandbox](https://github.com/TelegramMessenger/widget-sandbox): BSD-3-Clause
+- [KImageFormats](https://github.com/KDE/kimageformats): LGPL-2.0-or-later
+- [KCoreAddons](https://github.com/KDE/kcoreaddons): LGPL-2.1-or-later
+- [nimf](https://github.com/hamonikr/nimf): LGPL-3.0
+- [fcitx5-qt](https://github.com/fcitx/fcitx5-qt): LGPL-2.1-or-later
+- [hime](https://github.com/hime-ime/hime): LGPL-2.1
+- [xdg-desktop-portal](https://github.com/flatpak/xdg-desktop-portal): LGPL-2.1-or-later
+- [Open Sans](https://github.com/googlefonts/opensans): Apache-2.0
+- [Vazirmatn](https://github.com/rastikerdar/vazirmatn): OFL-1.1
+- [Emoji alpha codes](https://github.com/emojione/emojione): MIT
+- [FrequencyWords](https://github.com/hermitdave/FrequencyWords) by Hermit Dave: CC BY-SA 4.0
+- [Python 3.11 (CPython)](https://github.com/python/cpython): PSF-2.0
+- [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy): MIT, sources in `Telegram/SourceFiles/extera/tgws`
+- [cryptography](https://github.com/pyca/cryptography): Apache-2.0 or BSD-3-Clause
+- [h2](https://github.com/python-hyper/h2): MIT
+- [httpx](https://github.com/encode/httpx): BSD-3-Clause
+- [certifi](https://github.com/certifi/python-certifi): MPL-2.0
+- [exteraGram](https://github.com/exteraSquad/exteraGram): GPL-2.0
+- [AyuGram Desktop](https://github.com/AyuGram/AyuGramDesktop): GPL-3.0
+
+</details>
 
 ## License
 

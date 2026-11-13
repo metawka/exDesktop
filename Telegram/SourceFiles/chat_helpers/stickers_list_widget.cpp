@@ -57,6 +57,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat_helpers.h"
 #include "styles/style_window.h"
 #include "styles/style_menu_icons.h"
+#include "extera/extera_config.h"
 
 #include <QtWidgets/QApplication>
 
@@ -2786,13 +2787,20 @@ base::unique_qptr<Ui::PopupMenu> StickersListWidget::fillContextMenu(
 
 base::unique_qptr<Ui::PopupMenu> StickersListWidget::fillSetContextMenu(
 		const Set &set) {
-	if (!set.set) {
+	const auto id = (set.id == Data::Stickers::MegagroupSetId
+		&& _megagroupSet
+		&& _megagroupSet->mgInfo)
+		? _megagroupSet->mgInfo->stickerSet.id
+		: set.id;
+	const auto &sets = session().data().stickers().sets();
+	const auto i = sets.find(id);
+	if (!set.set || i == sets.end()) {
 		return nullptr;
 	}
 	return FillStickerSetContextMenu(
 		this,
 		_show,
-		set.set,
+		i->second.get(),
 		_localSetsManager.get(),
 		crl::guard(this, [this](uint64 id) { removeSet(id); }),
 		crl::guard(this, [this] { update(); }),
@@ -3442,7 +3450,8 @@ auto StickersListWidget::collectRecentStickers() -> std::vector<Sticker> {
 
 	auto add = [&](not_null<DocumentData*> document, bool custom) {
 		if (result.size() >= kRecentDisplayLimit
-			&& !OptionUnlimitedRecentStickers.value()) {
+			&& !OptionUnlimitedRecentStickers.value()
+			&& !Extera::Bool(u"unlimited_recent_stickers"_q)) {
 			return;
 		}
 		const auto i = ranges::find(result, document, &Sticker::document);

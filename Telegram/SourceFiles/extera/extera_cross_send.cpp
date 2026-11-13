@@ -10,6 +10,7 @@
 #include "data/data_photo.h"
 #include "data/data_photo_media.h"
 #include "data/data_session.h"
+#include "data/data_histories.h"
 #include "data/data_thread.h"
 #include "data/data_user.h"
 #include "history/history.h"
@@ -130,8 +131,12 @@ void Proceed(std::shared_ptr<State> state, not_null<Main::Account*> to) {
 	}
 	state->finished = true;
 	state->lifetime.destroy();
-	Core::App().domain().activate(to);
-	ChooseAndSend(state, to, 0);
+	crl::on_main([=] {
+		if (to->sessionExists()) {
+			Core::App().domain().activate(to);
+			ChooseAndSend(state, to, 0);
+		}
+	});
 }
 
 [[nodiscard]] bool CheckReady(const std::shared_ptr<State> &state) {
@@ -160,6 +165,99 @@ void Proceed(std::shared_ptr<State> state, not_null<Main::Account*> to) {
 	}
 	return ready;
 }
+
+struct RelayState {
+	std::vector<FullMsgId> received;
+	int expected = 0;
+	bool finished = false;
+	rpl::lifetime lifetime;
+};
+
+void RelayChoose(
+		std::shared_ptr<RelayState> state,
+		not_null<Main::Account*> to,
+		int attempt) {
+	const auto window = Core::App().activePrimaryWindow();
+	const auto controller = window ? window->sessionController() : nullptr;
+	if (!controller || (&controller->session().account() != to)) {
+		if (attempt < kWaitControllerAttempts) {
+			base::call_delayed(kWaitControllerDelay, [=] {
+				RelayChoose(state, to, attempt + 1);
+			});
+		}
+		return;
+	}
+	const auto session = &controller->session();
+	const auto ids = state->received;
+	Window::ShowChooseRecipientBox(controller, [=](
+			not_null<Data::Thread*> thread) {
+		auto items = HistoryItemsList();
+		for (const auto &id : ids) {
+			if (const auto item = session->data().message(id)) {
+				items.push_back(item);
+			}
+		}
+		if (items.empty()) {
+			return true;
+		}
+		const auto relay = MessageIdsList(ids.begin(), ids.end());
+		session->api().forwardMessages(
+			Data::ResolvedForwardDraft{ .items = std::move(items) },
+			Api::SendAction(thread),
+			[=] {
+				session->data().histories().deleteMessages(relay, true);
+				session->data().sendHistoryChangeNotifications();
+			});
+		controller->showPeerHistory(thread->peer());
+		return true;
+	});
+}
+
+void RelayFinish(
+		std::shared_ptr<RelayState> state,
+		not_null<Main::Account*> to) {
+	if (state->finished) {
+		return;
+	}
+	state->finished = true;
+	state->lifetime.destroy();
+	if (state->received.empty() || !to->sessionExists()) {
+		return;
+	}
+	Core::App().domain().activate(to);
+	RelayChoose(state, to, 0);
+}
+
+void RelayTo(
+		not_null<Main::Session*> from,
+		HistoryItemsList items,
+		not_null<UserData*> target,
+		not_null<Main::Account*> to) {
+	const auto session = &to->session();
+	const auto fromPeerId = from->userPeerId();
+	const auto state = std::make_shared<RelayState>();
+	state->expected = int(items.size());
+	session->data().newItemAdded(
+	) | rpl::filter([=](not_null<HistoryItem*> item) {
+		return (item->history()->peer->id == fromPeerId) && !item->out();
+	}) | rpl::on_next([=](not_null<HistoryItem*> item) {
+		state->received.push_back(item->fullId());
+		if (int(state->received.size()) >= state->expected) {
+			crl::on_main([=] { RelayFinish(state, to); });
+		}
+	}, state->lifetime);
+	base::call_delayed(crl::time(15000), [=] {
+		RelayFinish(state, to);
+	});
+	from->api().forwardMessages(
+		Data::ResolvedForwardDraft{ .items = std::move(items) },
+		Api::SendAction(from->data().history(target)));
+}
+
+void CopyFromAccount(
+	not_null<Main::Session*> from,
+	MessageIdsList ids,
+	not_null<Main::Account*> to);
 
 } // namespace
 
@@ -193,13 +291,72 @@ void AddSendFromAccountActions(
 			tr::lng_exd_send_from(tr::now, lt_name, name),
 			[=] {
 				closeBox();
-				SendFromAccount(from, ids, account);
+				const auto source = &from->account();
+				base::call_delayed(crl::time(50), [=] {
+					if (account->sessionExists() && source->sessionExists()) {
+						SendFromAccount(&source->session(), ids, account);
+					}
+				});
 			},
 			&st::menuIconForward);
 	}
 }
 
 void SendFromAccount(
+		not_null<Main::Session*> from,
+		MessageIdsList ids,
+		not_null<Main::Account*> to) {
+	auto items = HistoryItemsList();
+	for (const auto &id : ids) {
+		const auto item = from->data().message(id);
+		if (item && item->allowsForward()) {
+			items.push_back(item);
+		}
+	}
+	if (items.size() != ids.size() || !to->sessionExists()) {
+		CopyFromAccount(from, ids, to);
+		return;
+	}
+	const auto targetSelf = to->session().user();
+	const auto targetId = targetSelf->id;
+	const auto known = from->data().userLoaded(peerToUser(targetId));
+	if (known && known->accessHash()) {
+		RelayTo(from, std::move(items), known, to);
+		return;
+	}
+	const auto owner = &from->data();
+	const auto done = [=](const MTPcontacts_ResolvedPeer &result) {
+		result.match([&](const MTPDcontacts_resolvedPeer &data) {
+			owner->processUsers(data.vusers());
+			owner->processChats(data.vchats());
+		});
+		const auto user = owner->userLoaded(peerToUser(targetId));
+		if (user && user->accessHash()) {
+			RelayTo(from, items, user, to);
+		} else {
+			CopyFromAccount(from, ids, to);
+		}
+	};
+	const auto fail = [=] { CopyFromAccount(from, ids, to); };
+	const auto username = targetSelf->username();
+	if (!username.isEmpty()) {
+		from->api().request(MTPcontacts_ResolveUsername(
+			MTP_flags(0),
+			MTP_string(username),
+			MTP_string()
+		)).done(done).fail(fail).send();
+	} else if (!targetSelf->phone().isEmpty()) {
+		from->api().request(MTPcontacts_ResolvePhone(
+			MTP_string(targetSelf->phone())
+		)).done(done).fail(fail).send();
+	} else {
+		CopyFromAccount(from, ids, to);
+	}
+}
+
+namespace {
+
+void CopyFromAccount(
 		not_null<Main::Session*> from,
 		MessageIdsList ids,
 		not_null<Main::Account*> to) {
@@ -245,5 +402,7 @@ void SendFromAccount(
 		}
 	}, state->lifetime);
 }
+
+} // namespace
 
 } // namespace Extera

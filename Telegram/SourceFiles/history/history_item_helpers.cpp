@@ -22,11 +22,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_group_call.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
+#include "data/data_location.h"
 #include "data/data_message_reactions.h"
 #include "data/data_messages.h"
 #include "data/data_poll.h"
 #include "data/data_premium_limits.h"
 #include "data/data_session.h"
+#include "chat_helpers/message_field.h"
+#include "ui/widgets/fields/input_field.h"
 #include "data/data_stories.h"
 #include "data/data_user.h"
 #include "history/view/controls/history_view_suggest_options.h"
@@ -713,12 +716,90 @@ bool ShowEphemeralReplyTextOnlyError(
 	return true;
 }
 
+bool ApplyDeletedReplyQuote(
+		not_null<Main::Session*> session,
+		FullReplyTo &replyTo,
+		TextWithTags &text) {
+	if (!replyTo.messageId
+		|| !session->data().exteraIsDeleted(replyTo.messageId)) {
+		return false;
+	}
+	const auto replied = session->data().message(replyTo.messageId);
+	const auto clear = [&] {
+		replyTo.messageId = replyTo.topicRootId
+			? FullMsgId(replyTo.messageId.peer, replyTo.topicRootId)
+			: FullMsgId();
+		replyTo.quote = TextWithEntities();
+		replyTo.richQuote = nullptr;
+		replyTo.quoteOffset = 0;
+	};
+	if (!replied) {
+		clear();
+		return true;
+	}
+	const auto shortify = [](const QString &value, int maxLength) {
+		return (value.isEmpty() || value.size() < maxLength)
+			? value
+			: (value.left(maxLength - 1) + QChar(0x2026));
+	};
+	const auto from = replied->from();
+	auto name = QString();
+	if (!replied->history()->peer->isUser()) {
+		name = from->name();
+	}
+	auto body = !replyTo.quote.empty()
+		? replyTo.quote.text
+		: replied->originalText().text;
+	if (body.isEmpty()) {
+		body = replied->notificationText().text;
+	}
+	body = shortify(body, 100);
+	const auto prefix = name.isEmpty() ? body : (name + '\n' + body);
+	if (text.text.isEmpty()) {
+		text.text = prefix;
+	} else {
+		text.text.prepend(prefix + '\n');
+	}
+	const auto shift = int(prefix.size())
+		+ ((text.text.size() > prefix.size()) ? 1 : 0);
+	for (auto &tag : text.tags) {
+		tag.offset += shift;
+	}
+	auto entities = EntitiesInText();
+	entities.push_back({ EntityType::Blockquote, 0, int(prefix.size()) });
+	if (!name.isEmpty()) {
+		entities.push_back({ EntityType::Bold, 0, int(name.size()) });
+		if (const auto user = from->asUser()) {
+			if (const auto hash = user->accessHash()) {
+				entities.push_back({
+					EntityType::MentionName,
+					0,
+					int(name.size()),
+					u"%1.%2:%3"_q
+						.arg(user->id.value)
+						.arg(hash)
+						.arg(session->userId().bare),
+				});
+			}
+		}
+	}
+	text.tags.append(TextUtilities::ConvertEntitiesToTextTags(entities));
+	clear();
+	return true;
+}
+
 void StripEphemeralReply(
 		not_null<Main::Session*> session,
 		FullReplyTo &replyTo) {
 	const auto item = session->data().message(replyTo.messageId);
 	if (item && item->isEphemeral()) {
 		replyTo.messageId = FullMsgId();
+	} else if (replyTo.messageId
+		&& session->data().exteraIsDeleted(replyTo.messageId)) {
+		replyTo.messageId = FullMsgId();
+		replyTo.quote = TextWithEntities();
+		replyTo.richQuote = nullptr;
+		replyTo.quoteOffset = 0;
 	}
 }
 
@@ -1084,23 +1165,17 @@ MediaCheckResult CheckMessageMedia(const MTPMessageMedia &media) {
 	}, [](const MTPDmessageMediaContact &) {
 		return Result::Good;
 	}, [](const MTPDmessageMediaGeo &data) {
-		return data.vgeo().match([](const MTPDgeoPoint &) {
-			return Result::Good;
-		}, [](const MTPDgeoPointEmpty &) {
-			return Result::Empty;
-		});
+		return Data::LocationPoint::FromMTP(data.vgeo())
+			? Result::Good
+			: Result::Empty;
 	}, [](const MTPDmessageMediaVenue &data) {
-		return data.vgeo().match([](const MTPDgeoPoint &) {
-			return Result::Good;
-		}, [](const MTPDgeoPointEmpty &) {
-			return Result::Empty;
-		});
+		return Data::LocationPoint::FromMTP(data.vgeo())
+			? Result::Good
+			: Result::Empty;
 	}, [](const MTPDmessageMediaGeoLive &data) {
-		return data.vgeo().match([](const MTPDgeoPoint &) {
-			return Result::Good;
-		}, [](const MTPDgeoPointEmpty &) {
-			return Result::Empty;
-		});
+		return Data::LocationPoint::FromMTP(data.vgeo())
+			? Result::Good
+			: Result::Empty;
 	}, [](const MTPDmessageMediaPhoto &data) {
 		const auto photo = data.vphoto();
 		if (!photo) {
@@ -1162,6 +1237,8 @@ MediaCheckResult CheckMessageMedia(const MTPMessageMedia &media) {
 	}, [](const MTPDmessageMediaPaidMedia &) {
 		return Result::Good;
 	}, [](const MTPDmessageMediaVideoStream &) {
+		return Result::Good;
+	}, [](const MTPDmessageMediaWidget &) {
 		return Result::Good;
 	}, [](const MTPDmessageMediaUnsupported &) {
 		return Result::Unsupported;

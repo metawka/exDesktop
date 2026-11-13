@@ -41,6 +41,7 @@ struct Item {
 		{ u"wallet"_q, tr::lng_wallet_menu, &st::walletMenuIcon },
 		{ u"settings"_q, tr::lng_menu_settings, &st::menuIconSettings },
 		{ u"streamer"_q, tr::lng_extera_streamer_mode, &st::menuIconUserHide },
+		{ u"ghost"_q, tr::lng_exd_ayu_ghost_mode, &st::menuIconStealth },
 		{ u"night"_q, tr::lng_menu_night_mode, &st::menuIconNightMode },
 	};
 	return result;
@@ -49,6 +50,9 @@ struct Item {
 [[nodiscard]] const Item *FindItem(const QString &id) {
 	for (const auto &item : Items()) {
 		if (item.id == id) {
+			if (id == u"ghost"_q && !Bool(u"ayu_features"_q)) {
+				return nullptr;
+			}
 			return &item;
 		}
 	}
@@ -68,6 +72,9 @@ struct Item {
 	}), result.end());
 	auto previous = QString();
 	for (const auto &item : Items()) {
+		if (!FindItem(item.id)) {
+			continue;
+		}
 		if (!result.contains(item.id) && !hidden.contains(item.id)) {
 			const auto after = previous.isEmpty()
 				? -1

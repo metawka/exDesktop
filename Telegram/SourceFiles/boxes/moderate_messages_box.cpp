@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "extera/extera_config.h"
 #include "boxes/moderate_messages_box.h"
 
 #include "api/api_blocked_peers.h"
@@ -731,12 +732,13 @@ void CreateModerateMessagesBox(
 			return checkbox->checked();
 		});
 	};
-	Ui::Checkbox *deleteOptions = nullptr;
-	Ui::Checkbox *deleteMessages = nullptr;
-	Controller *deleteMessagesController = nullptr;
-	rpl::variable<base::flat_map<PeerId, int>> *deleteMessagesCounts = nullptr;
-	Ui::Checkbox *deleteReactions = nullptr;
-	Controller *deleteReactionsController = nullptr;
+	auto deleteOptions = (Ui::Checkbox*)nullptr;
+	auto deleteMessages = (Ui::Checkbox*)nullptr;
+	auto deleteMessagesController = (Controller*)nullptr;
+	auto deleteMessagesCounts
+		= (rpl::variable<base::flat_map<PeerId, int>>*)nullptr;
+	auto deleteReactions = (Ui::Checkbox*)nullptr;
+	auto deleteReactionsController = (Controller*)nullptr;
 	const auto effectiveCheckedParticipants = [](
 			Ui::Checkbox *checkbox,
 			Controller *controller) {
@@ -1556,8 +1558,25 @@ void CreateModerateMessagesBox(
 		}, ban->lifetime());
 	}
 
+	const auto keepLocal = (hasItems && Extera::SaveDeleted())
+		? box->addRow(
+			object_ptr<Ui::Checkbox>(
+				box,
+				tr::lng_exd_keep_locally(tr::now),
+				Extera::KeepLocallyFor(ids.front().peer.value),
+				st::defaultBoxCheckbox),
+			st::boxRowPadding + QMargins(0, st::boxLittleSkip, 0, 0))
+		: nullptr;
 	const auto close = crl::guard(box, [=] { box->closeBox(); });
 	box->addButton(tr::lng_box_delete(), [=] {
+		if (keepLocal) {
+			Extera::SetKeepLocallyFor(
+				ids.front().peer.value,
+				keepLocal->checked());
+		}
+		if (keepLocal && keepLocal->checked()) {
+			session->data().exteraKeepLocally(ids);
+		}
 		confirms->fire({});
 		if (confirmed) {
 			confirmed();

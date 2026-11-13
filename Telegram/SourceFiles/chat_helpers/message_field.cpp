@@ -109,7 +109,7 @@ constexpr auto kLinkProtocols = {
 				if (!emoji) {
 					i = all.erase(i);
 					continue;
-				} else if (!session->premium()) {
+				} else if (!session->premiumEmoji()) {
 					const auto document = session->data().document(emoji);
 					if (document->isPremiumEmoji()) {
 						if (!allowPremiumEmoji
@@ -1037,6 +1037,10 @@ void MessageLinksParser::parseNow() {
 
 void MessageLinksParser::setDisabled(bool disabled) {
 	_disabled = disabled;
+}
+
+bool MessageLinksParser::disabled() const {
+	return _disabled;
 }
 
 bool MessageLinksParser::eventFilter(QObject *object, QEvent *event) {

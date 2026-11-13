@@ -132,6 +132,7 @@ public:
 	}
 
 	[[nodiscard]] bool premium() const;
+	[[nodiscard]] bool premiumEmoji() const;
 	[[nodiscard]] bool premiumPossible() const;
 	[[nodiscard]] rpl::producer<bool> premiumPossibleValue() const;
 	[[nodiscard]] bool premiumBadgesShown() const;
@@ -257,6 +258,7 @@ public:
 	void addWindow(not_null<Window::SessionController*> controller);
 	[[nodiscard]] auto windows() const
 		-> const base::flat_set<not_null<Window::SessionController*>> &;
+	[[nodiscard]] rpl::producer<> windowAdded() const;
 	[[nodiscard]] Window::SessionController *tryResolveWindow(
 		PeerData *forPeer = nullptr) const;
 
@@ -374,6 +376,7 @@ private:
 	std::unique_ptr<Window::TermsLock> _termsLock;
 
 	base::flat_set<not_null<Window::SessionController*>> _windows;
+	rpl::event_stream<> _windowAdded;
 	base::Timer _saveSettingsTimer;
 
 	rpl::variable<FreezeInfo> _frozen;

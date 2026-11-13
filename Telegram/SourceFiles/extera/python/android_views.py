@@ -88,13 +88,22 @@ def theme_color(name):
         return 0
 
 
+_owners = {}
+
+
+def _scope(view_id):
+    import extera_host
+    return extera_host.owner_scope(_owners.get(view_id))
+
+
 def dispatch_click(view_id):
     with _lock:
         view = _views.get(view_id)
     if view is None:
         return False
     from android_utils import safe_call
-    safe_call(view._click)
+    with _scope(view_id):
+        safe_call(view._click)
     return True
 
 
@@ -104,8 +113,9 @@ def dispatch_text_changed(view_id, text):
     if view is None:
         return False
     from android_utils import safe_call
-    for watcher in getattr(view, "_watchers", []):
-        safe_call(getattr(watcher, "afterTextChanged", None), str(text))
+    with _scope(view_id):
+        for watcher in getattr(view, "_watchers", []):
+            safe_call(getattr(watcher, "afterTextChanged", None), str(text))
     return True
 
 
@@ -122,6 +132,24 @@ def handle_sheet_closed(sheet_id):
 # Drawables
 
 class GradientDrawable:
+    RECTANGLE = 0
+    OVAL = 1
+    LINE = 2
+    RING = 3
+    LINEAR_GRADIENT = 0
+    RADIAL_GRADIENT = 1
+    SWEEP_GRADIENT = 2
+
+    class Orientation:
+        TOP_BOTTOM = "TOP_BOTTOM"
+        TR_BL = "TR_BL"
+        RIGHT_LEFT = "RIGHT_LEFT"
+        BR_TL = "BR_TL"
+        BOTTOM_TOP = "BOTTOM_TOP"
+        BL_TR = "BL_TR"
+        LEFT_RIGHT = "LEFT_RIGHT"
+        TL_BR = "TL_BR"
+
     def __init__(self, orientation=None, colors=None):
         self.kind = "rounded"
         self.radius = 0
@@ -133,6 +161,15 @@ class GradientDrawable:
     def setCornerRadius(self, radius):
         self.radius = float(radius)
         return self
+
+    def setShape(self, shape):
+        self.shape = shape
+        return self
+
+    def __getattr__(self, item):
+        if item.startswith(("set", "mutate", "invalidate")):
+            return lambda *args, **kwargs: self
+        raise AttributeError(item)
 
     def setColor(self, color):
         self.color = int(color) if color is not None else None
@@ -211,7 +248,7 @@ class Typeface(metaclass=_compat.LenientMeta):
 
 
 class RectF:
-    def __init__(self, left, top, right, bottom):
+    def __init__(self, left=0, top=0, right=0, bottom=0):
         self.left = float(left)
         self.top = float(top)
         self.right = float(right)
@@ -395,6 +432,11 @@ class Gravity:
     CENTER_VERTICAL = 16
     CENTER_HORIZONTAL = 1
     NO_GRAVITY = 0
+    START = 8388611
+    END = 8388613
+    FILL = 119
+    FILL_HORIZONTAL = 7
+    FILL_VERTICAL = 112
 
 
 class LayoutParams:
@@ -410,6 +452,56 @@ class LayoutParams:
     def setMargins(self, left, top, right, bottom):
         self.margins = [int(left), int(top), int(right), int(bottom)]
         return self
+
+
+class LayoutHelper:
+    MATCH_PARENT = -1
+    WRAP_CONTENT = -2
+
+    @staticmethod
+    def _size(value):
+        value = float(value or 0)
+        return int(value) if value < 0 else int(dp(value))
+
+    @staticmethod
+    def _build(width, height, gravity, margins):
+        params = LayoutParams(LayoutHelper._size(width), LayoutHelper._size(height), gravity)
+        if margins:
+            values = [int(dp(float(m or 0))) for m in (list(margins) + [0, 0, 0, 0])[:4]]
+            params.setMargins(*values)
+        return params
+
+    @staticmethod
+    def createLinear(width=-1, height=-2, *args):
+        args = list(args)
+        weight = 0.0
+        gravity = None
+        if args and isinstance(args[0], float):
+            weight = args.pop(0)
+        if len(args) in (1, 5):
+            gravity = int(args.pop(0))
+        params = LayoutHelper._build(width, height, gravity, args)
+        params.weight = weight
+        return params
+
+    @staticmethod
+    def createFrame(width=-1, height=-2, *args):
+        args = list(args)
+        gravity = None
+        if len(args) in (1, 5):
+            gravity = int(args.pop(0))
+        return LayoutHelper._build(width, height, gravity, args)
+
+    @staticmethod
+    def createRelative(width=-1, height=-2, *args):
+        return LayoutHelper._build(width, height, None, list(args)[:4])
+
+    @staticmethod
+    def createScroll(width=-1, height=-2, gravity=None, *args):
+        return LayoutHelper._build(width, height, gravity, list(args)[:4])
+
+    createLinearRelatively = createLinear
+    createFrameRelatively = createFrame
 
 
 class ViewPropertyAnimator:
@@ -460,12 +552,22 @@ class View(metaclass=_UiClassMeta):
     INVISIBLE = 4
     GONE = 8
 
+    def __getattr__(self, item):
+        if item.startswith("__") or item.startswith("_"):
+            raise AttributeError(item)
+        return _compat.lenient(type(self).__name__, item)
+
     class OnClickListener:
         def onClick(self, view):
             pass
 
     def __init__(self, context=None):
         self._id = _nid()
+        try:
+            import extera_host
+            _owners[self._id] = extera_host.owner_now()
+        except Exception:
+            _owners[self._id] = "<unknown>"
         with _lock:
             _views[self._id] = self
         self._children = []
@@ -717,14 +819,24 @@ class TextView(View):
     def setTextColor(self, color):
         self._set_prop("color", int(color), {"op": "color", "value": int(color)})
 
-    def setTextSize(self, size):
+    def setTextSize(self, unit_or_size, size=None):
+        if size is None:
+            size = unit_or_size
+        elif int(unit_or_size or 0) == 0:
+            self.setTextSizePx(size)
+            return
         self._set_prop("size", dp(size), {"op": "size", "value": dp(size)})
 
     def setTextSizePx(self, px):
         self._set_prop("size", int(px), {"op": "size", "value": int(px)})
 
-    def setTypeface(self, typeface):
-        bold = int(typeface) == Typeface.DEFAULT_BOLD if typeface is not None else False
+    def setTypeface(self, typeface, style=None):
+        if style is not None:
+            typeface = style
+        try:
+            bold = int(typeface) in (Typeface.DEFAULT_BOLD, Typeface.BOLD) if typeface is not None else False
+        except Exception:
+            bold = False
         self._set_prop("bold", bold, {"op": "bold", "value": bold})
 
     def setGravity(self, gravity):
@@ -877,6 +989,11 @@ def _mark_live(view, sheet_id):
 
 
 class BottomSheet(metaclass=_UiClassMeta):
+    def __getattr__(self, item):
+        if item.startswith("__") or item.startswith("_"):
+            raise AttributeError(item)
+        return _compat.lenient("BottomSheet", item)
+
     class Builder:
         def __init__(self, context=None, dark=None, *args):
             self._view = None
@@ -890,6 +1007,14 @@ class BottomSheet(metaclass=_UiClassMeta):
             self._title = title
             return self
 
+        def create(self):
+            return self
+
+        def __getattr__(self, item):
+            if item.startswith("_"):
+                raise AttributeError(item)
+            return lambda *args, **kwargs: self
+
         def show(self):
             if self._view is None:
                 return None
@@ -899,24 +1024,115 @@ class BottomSheet(metaclass=_UiClassMeta):
         pass
 
 
+def _android_listener(listener):
+    if listener is None:
+        return None
+    on_click = getattr(listener, "onClick", None)
+    if callable(on_click):
+        return lambda dialog, which: on_click(dialog, which)
+    if callable(listener):
+        return lambda dialog, which: listener(dialog, which)
+    return None
+
+
 class AlertDialog(metaclass=_UiClassMeta):
+    BUTTON_POSITIVE = -1
+    BUTTON_NEGATIVE = -2
+    BUTTON_NEUTRAL = -3
+
     class Builder:
         def __init__(self, context=None, *args):
             self._view = None
             self._title = ""
+            self._message = None
+            self._items = None
+            self._items_listener = None
+            self._buttons = []
+            self._cancelable = True
+            self._dismiss = None
+            self._native = None
 
-        def setView(self, view):
+        def setView(self, view, *args):
             self._view = view
             return self
 
         def setTitle(self, title):
-            self._title = title
+            self._title = str(title or "")
             return self
 
+        def setMessage(self, message):
+            self._message = str(message or "")
+            return self
+
+        def setItems(self, items, listener=None, *args):
+            self._items = [str(x) for x in (items or [])]
+            self._items_listener = listener
+            return self
+
+        def setPositiveButton(self, text, listener=None):
+            self._buttons.append(("positive", str(text or ""), listener))
+            return self
+
+        def setNegativeButton(self, text, listener=None):
+            self._buttons.append(("negative", str(text or ""), listener))
+            return self
+
+        def setNeutralButton(self, text, listener=None):
+            self._buttons.append(("neutral", str(text or ""), listener))
+            return self
+
+        def setCancelable(self, value):
+            self._cancelable = bool(value)
+            return self
+
+        def setOnDismissListener(self, listener):
+            self._dismiss = listener
+            return self
+
+        def __getattr__(self, item):
+            if item.startswith("_"):
+                raise AttributeError(item)
+            return lambda *args, **kwargs: self
+
+        def create(self):
+            return self
+
+        def getButton(self, which):
+            return _compat.Stub("AlertDialog.button")
+
+        def dismiss(self):
+            if self._native is not None:
+                try:
+                    self._native.dismiss()
+                except Exception:
+                    pass
+
         def show(self):
-            if self._view is None:
-                return None
-            return _show_sheet(self._view, "alert")
+            if self._view is not None:
+                return _show_sheet(self._view, "alert")
+            import ui.alert as alert
+            builder = alert.AlertDialogBuilder(None)
+            if self._title:
+                builder.set_title(self._title)
+            if self._message:
+                builder.set_message(self._message)
+            if self._items:
+                builder.set_items(self._items, _android_listener(self._items_listener))
+            for kind, text, listener in self._buttons:
+                wrapped = _android_listener(listener)
+                if kind == "positive":
+                    builder.set_positive_button(text, wrapped)
+                elif kind == "negative":
+                    builder.set_negative_button(text, wrapped)
+                else:
+                    builder.set_neutral_button(text, wrapped)
+            builder.set_cancelable(self._cancelable)
+            if self._dismiss is not None:
+                on_dismiss = getattr(self._dismiss, "onDismiss", self._dismiss)
+                builder.set_on_dismiss_listener(lambda *args: on_dismiss(self))
+            self._native = builder
+            builder.show()
+            return self
 
     def __init__(self, *args):
         pass

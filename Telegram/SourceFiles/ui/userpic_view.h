@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtGui/QImage>
 #include <QtGui/QColor>
+#include <QtCore/QRectF>
 
 class QPainter;
 
@@ -58,6 +59,7 @@ struct PeerUserpicView {
 
 void SetUserpicCorners(int corners, bool singleRadius);
 [[nodiscard]] int UserpicCorners();
+void DrawUserpicShape(QPainter &p, QRectF rect);
 
 [[nodiscard]] bool PeerUserpicLoading(const PeerUserpicView &view);
 

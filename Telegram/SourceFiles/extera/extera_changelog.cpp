@@ -64,7 +64,7 @@ State &Instance() {
 }
 
 [[nodiscard]] int CurrentKey() {
-	return AppVersion * 100 + Extera::Update::Build();
+	return Extera::Update::BaseVersion() * 100 + Extera::Update::Build();
 }
 
 bool Apply(const QByteArray &bytes) {

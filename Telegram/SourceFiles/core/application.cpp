@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/application.h"
+#include "data/data_forum_topic.h"
+#include "ui/emoji_config.h"
 #include "extera/extera_update.h"
 #include "extera/extera_changelog.h"
 #include "extera/extera_ws_proxy.h"
@@ -55,6 +57,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_specific.h"
 #include "platform/platform_integration.h"
 #include "history/history.h"
+#include "history/history_item.h"
+#include "data/data_histories.h"
+#include "data/data_user.h"
+#include "apiwrap.h"
+#include "base/timer.h"
 #include "apiwrap.h"
 #include "api/api_updates.h"
 #include "calls/calls_instance.h"
@@ -101,10 +108,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_folder_archive.h"
 #include "storage/localstorage.h"
 #include "payments/payments_checkout_process.h"
+#include "tgw/tgw_runtime.h"
 #include "export/export_manager.h"
 #include "wallet/wallet_panel.h"
 #include "webrtc/webrtc_environment.h"
 #include "webview/webview_interface.h"
+#include "window/window_columns.h"
 #include "window/window_saved_windows.h"
 #include "window/window_separate_id.h"
 #include "window/window_session_controller.h"
@@ -202,8 +211,159 @@ Application::Application()
 , _autoLockTimer([=] { checkAutoLock(); }) {
 	Ui::Integration::Set(&_private->uiIntegration);
 	Extera::Config::Instance().setWorkingDir(cWorkingDir());
+	Extera::Config::Instance().applyInstallChoice({
+		cExeDir() + u"exd_install.conf"_q,
+		psAppDataPath() + u"exd_install.conf"_q,
+	});
+	Extera::Config::Instance().boolChanges(
+		u"ayu_features"_q
+	) | rpl::filter([](bool enabled) {
+		return !enabled;
+	}) | rpl::on_next([] {
+		if (Extera::GhostActive()) {
+			Extera::SetGhostAll(false);
+		}
+	}, _lifetime);
+	Extera::BadgesChanges(
+	) | rpl::on_next([=] {
+		crl::on_main(this, [=] {
+			for (const auto &[index, account] : domain().accounts()) {
+				if (account->sessionExists()) {
+					account->session().data().exteraRefreshAllViews();
+				}
+			}
+		});
+	}, _lifetime);
 	Ui::SetMaterialSwitches(Extera::Bool(u"md3_switches"_q));
 	Ui::SetMutedSwitches(Extera::Bool(u"md3_switches_muted"_q));
+	Extera::Config::Instance().changes(
+	) | rpl::filter([](const QString &key) {
+		return key == u"local_premium_emoji"_q;
+	}) | rpl::on_next([=] {
+		crl::on_main(this, [=] {
+			for (const auto &[index, account] : domain().accounts()) {
+				if (account->sessionExists()) {
+					account->session().data().exteraReapplyPremiumEmoji();
+				}
+			}
+		});
+	}, _lifetime);
+	Extera::Config::Instance().changes(
+	) | rpl::filter([](const QString &key) {
+		static const auto keys = base::flat_set<QString>{
+			u"remove_message_tail"_q,
+			u"hide_share_button"_q,
+			u"edited_icon"_q,
+			u"forward_count"_q,
+			u"sticker_size"_q,
+			u"sticker_time"_q,
+			u"name_accent"_q,
+			u"online_indicator"_q,
+			u"wide_posts"_q,
+			u"feed_wide_posts"_q,
+			u"hide_reactions_private"_q,
+			u"hide_reactions_groups"_q,
+			u"hide_reactions_channels"_q,
+			u"time_with_seconds"_q,
+			u"disable_number_rounding"_q,
+			u"system_emoji"_q,
+			u"inline_math"_q,
+			u"filter_zalgo"_q,
+			u"local_premium_emoji"_q,
+			u"poll_results_before_voting"_q,
+			u"translucent_deleted"_q,
+			u"disable_colorful_replies"_q,
+		};
+		return keys.contains(key);
+	}) | rpl::on_next([=] {
+		crl::on_main(this, [=] {
+			for (const auto &[index, account] : domain().accounts()) {
+				if (account->sessionExists()) {
+					account->session().data().exteraRefreshAllViews();
+				}
+			}
+		});
+	}, _lifetime);
+	{
+		const auto ghostOnline = std::make_shared<
+			base::flat_set<not_null<Main::Session*>>>();
+		const auto ghostPolled = std::make_shared<
+			base::flat_map<not_null<Main::Session*>, TimeId>>();
+		const auto ghostSent = std::make_shared<
+			base::flat_map<not_null<Main::Session*>, TimeId>>();
+		const auto ghostTimer = std::make_shared<base::Timer>([=] {
+			if (Core::Quitting()) {
+				return;
+			}
+			const auto now = base::unixtime::now();
+			for (const auto &[index, account] : domain().accounts()) {
+				const auto session = account->maybeSession();
+				if (!session) {
+					continue;
+				}
+				if (Extera::GhostOnline() && hasActiveWindow(session)) {
+					auto &polled = (*ghostPolled)[session];
+					if (now - polled >= 10) {
+						polled = now;
+						session->updates().exdGhostPoll();
+					}
+				}
+				if (!Extera::GhostOffline()) {
+					continue;
+				}
+				const auto dirty = ghostOnline->contains(session);
+				const auto online = session->user()->lastseen().isOnline(now);
+				auto &last = (*ghostSent)[session];
+				if (!dirty && (!online || (now - last) < 30)) {
+					continue;
+				}
+				last = now;
+				ghostOnline->remove(session);
+				session->api().request(MTPaccount_UpdateStatus(
+					MTP_bool(true)
+				)).send();
+			}
+		});
+		ghostTimer->callEach(3000);
+		const auto ghostSubscribed = std::make_shared<
+			base::flat_set<not_null<Main::Session*>>>();
+		_domain->activeSessionValue(
+		) | rpl::filter([](Main::Session *session) {
+			return session != nullptr;
+		}) | rpl::on_next([=](not_null<Main::Session*> session) {
+			if (!ghostSubscribed->emplace(session).second) {
+				return;
+			}
+			session->lifetime().add([=] {
+				ghostSubscribed->remove(session);
+				ghostOnline->remove(session);
+				ghostSent->remove(session);
+				ghostPolled->remove(session);
+			});
+			session->data().newItemAdded(
+			) | rpl::filter([](not_null<HistoryItem*> item) {
+				return item->out() && item->isRegular();
+			}) | rpl::on_next([=](not_null<HistoryItem*> item) {
+				ghostOnline->emplace(session);
+				if (Extera::GhostRead() && Extera::GhostReadAfterAction()) {
+					const auto history = item->history();
+					if (const auto topic = item->topic()) {
+						Extera::AllowGhostRead(history->peer->id.value);
+						topic->readTillEnd();
+					} else {
+						Extera::AllowGhostRead(history->peer->id.value);
+						history->owner().histories().readInbox(history);
+					}
+				}
+			}, session->lifetime());
+		}, _lifetime);
+		_lifetime.add([=] { ghostTimer->cancel(); });
+	}
+	Extera::Config::Instance().boolChanges(
+		u"system_emoji"_q
+	) | rpl::on_next([=](bool enabled) {
+		Ui::Emoji::SetSystemEmoji(enabled);
+	}, _lifetime);
 	Extera::Config::Instance().boolChanges(
 		u"md3_switches_muted"_q
 	) | rpl::on_next([=](bool enabled) {
@@ -1002,6 +1162,12 @@ void Application::setCurrentProxy(
 	my.setSelected(proxy);
 	my.setSettings(settings);
 	const auto now = current();
+	if (_badProxyConfiguration && *_badProxyConfiguration != now) {
+		_badProxyConfiguration.reset();
+		if (const auto box = base::take(_badProxyDisableBox)) {
+			box->closeBox();
+		}
+	}
 	refreshGlobalProxy();
 	_proxyChanges.fire({ was, now });
 	my.connectionTypeChangesNotify();
@@ -1022,19 +1188,31 @@ auto Application::proxyChanges() const -> rpl::producer<ProxyChange> {
 	return _proxyChanges.events();
 }
 
-void Application::badMtprotoConfigurationError() {
-	if (settings().proxy().isEnabled() && !_badProxyDisableBox) {
-		const auto disableCallback = [=] {
-			setCurrentProxy(
-				settings().proxy().selected(),
-				MTP::ProxyData::Settings::System);
-		};
-		_badProxyDisableBox = Ui::show(
-			Ui::MakeInformBox(Lang::Hard::ProxyConfigError()));
-		_badProxyDisableBox->boxClosing(
-		) | rpl::on_next(
-			disableCallback,
-			_badProxyDisableBox->lifetime());
+void Application::badMtprotoConfigurationError(const MTP::ProxyData &proxy) {
+	const auto &current = settings().proxy();
+	if (_badProxyDisableBox
+		|| _badProxyConfiguration == proxy
+		|| !current.isEnabled()
+		|| current.selected() != proxy) {
+		return;
+	}
+	_badProxyConfiguration = proxy;
+	_badProxyDisableBox = Ui::show(Ui::MakeConfirmBox({
+		.text = Lang::Hard::ProxyConfigError(),
+		.confirmed = [=](Fn<void()> close) {
+			close();
+			const auto &current = settings().proxy();
+			if (current.isEnabled() && current.selected() == proxy) {
+				setCurrentProxy(
+					current.selected(),
+					MTP::ProxyData::Settings::System);
+			}
+		},
+		.confirmText = tr::lng_proxy_disable(),
+		.cancelText = tr::lng_cancel(),
+	}), Ui::LayerOption::KeepOther);
+	if (!_badProxyDisableBox) {
+		_badProxyConfiguration.reset();
 	}
 }
 
@@ -1430,12 +1608,15 @@ bool Application::openCustomUrl(
 		|| passcodeLocked()) {
 		return false;
 	}
-	static const auto kTagExp = QRegularExpression(
-		u"^\\~[a-zA-Z0-9_\\-]+\\~:"_q);
 	auto skip = protocol.size();
-	const auto match = kTagExp.match(base::StringViewMid(urlTrimmed, skip));
-	if (match.hasMatch()) {
-		skip += match.capturedLength();
+	if (protocol == u"internal:"_q) {
+		static const auto kTagExp = QRegularExpression(
+			u"^\\~[a-zA-Z0-9_\\-]+\\~:"_q);
+		const auto match = kTagExp.match(
+			base::StringViewMid(urlTrimmed, skip));
+		if (match.hasMatch()) {
+			skip += match.capturedLength();
+		}
 	}
 	const auto command = base::StringViewMid(urlTrimmed, skip, 8192);
 	const auto my = context.value<ClickHandlerContext>();
@@ -1457,7 +1638,11 @@ bool Application::openCustomUrl(
 }
 
 void Application::preventOrInvoke(Fn<void()> &&callback) {
-	_lastActivePrimaryWindow->preventOrInvoke(std::move(callback));
+	if (_lastActivePrimaryWindow) {
+		_lastActivePrimaryWindow->preventOrInvoke(std::move(callback));
+	} else {
+		callback();
+	}
 }
 
 void Application::updateWindowTitles() {
@@ -1591,9 +1776,15 @@ void Application::localPasscodeChanged() {
 	checkAutoLock(crl::now());
 }
 
-bool Application::savingPositionFor(
+bool Application::isWindowInSettings(
 		not_null<Window::Controller*> window) const {
-	return !_windowInSettings || (_windowInSettings == window);
+	return (_windowInSettings == window);
+}
+
+void Application::reseedWindowInSettings() {
+	if (_windowInSettings) {
+		_windowInSettings->columns().seedFromSettings();
+	}
 }
 
 bool Application::hasActiveWindow(not_null<Main::Session*> session) const {
@@ -1662,6 +1853,14 @@ not_null<Window::Controller*> Application::ensureSeparateWindowFor(
 	}
 	result->firstShow();
 	result->finishFirstShow();
+	if (result->isPrimary()) {
+		if (!_lastActivePrimaryWindow) {
+			_lastActivePrimaryWindow = result;
+		}
+		if (!_windowInSettings) {
+			setWindowInSettings(result);
+		}
+	}
 	return activate(result);
 }
 
@@ -1795,6 +1994,43 @@ void Application::setLastActiveWindow(Window::Controller *window) {
 	}, _floatPlayerDelegateLifetime);
 }
 
+void Application::setWindowInSettings(Window::Controller *window) {
+	Expects(!window || window->isPrimary());
+
+	if (_windowInSettings == window) {
+		return;
+	}
+	if (window) {
+		window->widget()->savePosition();
+	}
+	_windowInSettings = window;
+	if (window) {
+		window->widget()->savePositionToSettings();
+		window->columns().writeToSettings();
+		saveSettingsDelayed();
+	}
+}
+
+Window::Controller *Application::nextPrimaryWindow(
+		not_null<Window::Controller*> closing) const {
+	const auto eligible = [&](not_null<Window::Controller*> window) {
+		return (window != closing)
+			&& window->isPrimary()
+			&& !_closingAsyncWindows.contains(window);
+	};
+	for (const auto &window : ranges::views::reverse(_windowStack)) {
+		if (eligible(window)) {
+			return window;
+		}
+	}
+	for (const auto &window : ranges::views::values(_windows)) {
+		if (eligible(window.get())) {
+			return window.get();
+		}
+	}
+	return nullptr;
+}
+
 void Application::closeWindow(not_null<Window::Controller*> window) {
 	if (_savedWindows) {
 		_savedWindows->windowClosed(window);
@@ -1816,11 +2052,12 @@ void Application::closeWindow(not_null<Window::Controller*> window) {
 		: nullptr;
 	Assert(next != window);
 
+	const auto nextPrimary = nextPrimaryWindow(window);
 	if (_lastActivePrimaryWindow == window) {
-		_lastActivePrimaryWindow = next;
+		_lastActivePrimaryWindow = nextPrimary;
 	}
 	if (_windowInSettings == window) {
-		_windowInSettings = next;
+		setWindowInSettings(nextPrimary);
 	}
 	if (stackIt != end(_windowStack)) {
 		_windowStack.erase(stackIt);
@@ -2092,6 +2329,9 @@ void QuitAttempt() {
 bool Application::readyToQuit() {
 	auto prevented = false;
 	if (_calls->isQuitPrevent()) {
+		prevented = true;
+	}
+	if (Tgw::Runtime::IsQuitPrevent()) {
 		prevented = true;
 	}
 	if (_domain->started()) {

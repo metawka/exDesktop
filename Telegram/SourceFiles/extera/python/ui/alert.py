@@ -36,6 +36,7 @@ class AlertDialogBuilder:
         self._canceled_on_touch_outside = None
         self._progress = None
         self._shown = False
+        self._exd_extra = None
 
     def set_title(self, text):
         self._title = str(text or "")
@@ -128,6 +129,7 @@ class AlertDialogBuilder:
             "alert_type": self._alert_type,
             "items": self._items,
             "cancelable": self._cancelable,
+            "exd": self._exd_extra,
             "buttons": [
                 {"which": which, "text": text}
                 for which, (text, _) in sorted(self._buttons.items())
@@ -139,6 +141,11 @@ class AlertDialogBuilder:
 
     def show(self):
         _builders[self._id] = self
+        try:
+            import extera_host
+            _owners[self._id] = extera_host.owner_now()
+        except Exception:
+            _owners[self._id] = "<unknown>"
         _extera.show_alert(json.dumps(self._payload(), ensure_ascii=False))
         self._shown = True
         return self
@@ -160,6 +167,14 @@ class AlertDialogBuilder:
         return lambda *args, **kwargs: self
 
 
+def _scope(builder_id):
+    import extera_host
+    return extera_host.owner_scope(_owners.get(builder_id))
+
+
+_owners = {}
+
+
 def _dispatch_dismiss(builder_id, kind):
     builder = _builders.pop(builder_id, None)
     if builder is None:
@@ -169,7 +184,9 @@ def _dispatch_dismiss(builder_id, kind):
                 "back": builder._on_back}.get(kind)
     if listener is not None:
         from android_utils import safe_call
-        safe_call(listener, builder)
+        with _scope(builder_id):
+            safe_call(listener, builder)
+    _owners.pop(builder_id, None)
 
 
 def dispatch(builder_id, which):
@@ -185,6 +202,8 @@ def dispatch(builder_id, which):
         listener = builder._buttons.get(which, ("", None))[1]
     if listener is not None:
         from android_utils import safe_call
-        safe_call(listener, builder, which)
+        with _scope(builder_id):
+            safe_call(listener, builder, which)
     if which < 0:
         _builders.pop(builder_id, None)
+        _owners.pop(builder_id, None)

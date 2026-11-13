@@ -57,6 +57,8 @@ enum class Exception {
 [[nodiscard]] bool HideAvatar();
 [[nodiscard]] bool HideProfile();
 [[nodiscard]] PhoneMode Phone();
+[[nodiscard]] PhoneMode SelfPhone();
+[[nodiscard]] QString SelfPhoneText(const QString &formatted);
 [[nodiscard]] UsernameMode Username();
 [[nodiscard]] IdMode Id();
 
@@ -64,6 +66,13 @@ enum class Exception {
 [[nodiscard]] ChatHide ForPeer(not_null<PeerData*> peer);
 [[nodiscard]] Exception ExceptionFor(not_null<PeerData*> peer);
 void SetException(not_null<PeerData*> peer, Exception exception);
+
+[[nodiscard]] bool NotificationsMuted();
+[[nodiscard]] bool HideNameOf(not_null<const PeerData*> peer);
+[[nodiscard]] bool HideAvatarOf(not_null<const PeerData*> peer);
+[[nodiscard]] bool HideTextOf(not_null<const PeerData*> peer);
+[[nodiscard]] const QString &PlaceholderName();
+void ShowMenu(not_null<Window::SessionController*> controller);
 
 [[nodiscard]] QString Name();
 [[nodiscard]] const QImage &Avatar();

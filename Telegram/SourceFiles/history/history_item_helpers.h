@@ -157,6 +157,10 @@ struct ForwardRange {
 void StripEphemeralReply(
 	not_null<Main::Session*> session,
 	FullReplyTo &replyTo);
+bool ApplyDeletedReplyQuote(
+	not_null<Main::Session*> session,
+	FullReplyTo &replyTo,
+	TextWithTags &text);
 void ConfirmDeleteSelectedEphemeral(
 	std::shared_ptr<ChatHelpers::Show> show,
 	std::vector<not_null<HistoryItem*>> items,

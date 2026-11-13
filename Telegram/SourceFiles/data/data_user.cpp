@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_user.h"
 
+#include "extera/extera_config.h"
+
 #include "api/api_credits.h"
 #include "api/api_global_privacy.h"
 #include "api/api_sensitive_content.h"
@@ -127,6 +129,15 @@ std::unique_ptr<Data::Forum> BotInfo::takeForumData() {
 		return result;
 	}
 	return nullptr;
+}
+
+void BotInfo::setInlineReturnTo(Dialogs::EntryState state) {
+	_inlineReturnThread = state.key.thread();
+	_inlineReturnTo = std::move(state);
+}
+
+Dialogs::EntryState BotInfo::inlineReturnTo() const {
+	return _inlineReturnThread ? _inlineReturnTo : Dialogs::EntryState();
 }
 
 Data::LastseenStatus LastseenFromMTP(
@@ -642,11 +653,12 @@ bool UserData::isFake() const {
 }
 
 bool UserData::isPremium() const {
-	return flags() & UserDataFlag::Premium;
+	return isPremiumReal()
+		|| (isSelf() && Extera::Bool(u"local_premium"_q));
 }
 
-bool UserData::isBotInlineGeo() const {
-	return flags() & UserDataFlag::BotInlineGeo;
+bool UserData::isPremiumReal() const {
+	return flags() & UserDataFlag::Premium;
 }
 
 bool UserData::isBot() const {

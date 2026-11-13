@@ -1,4 +1,8 @@
 #include "extera/extera_badges.h"
+#include "ui/text/text_custom_emoji.h"
+#include "window/themes/window_theme.h"
+#include "ui/painter.h"
+#include "styles/style_basic.h"
 
 #include "data/data_peer.h"
 #include "settings.h"
@@ -35,6 +39,7 @@ struct CustomBadge {
 };
 
 struct OwnBadge {
+	int number = 0;
 	QString type;
 	DocumentId documentId = 0;
 	QString text;
@@ -45,6 +50,7 @@ struct OwnLists {
 	base::flat_map<QString, QString> typeText;
 	base::flat_map<uint64, OwnBadge> users;
 	base::flat_map<uint64, OwnBadge> channels;
+	base::flat_map<uint64, OwnBadge> bots;
 	std::optional<std::vector<TrustedSource>> trusted;
 };
 
@@ -77,6 +83,11 @@ base::flat_set<QString> &Hashes() {
 
 [[nodiscard]] QString OwnCachePath() {
 	return cWorkingDir() + u"tdata/exd_badges.json"_q;
+}
+
+rpl::event_stream<> &ChangesStream() {
+	static auto result = rpl::event_stream<>();
+	return result;
 }
 
 QByteArray &ETag() {
@@ -128,13 +139,16 @@ bool Apply(const QByteArray &bytes) {
 [[nodiscard]] base::flat_map<uint64, OwnBadge> ReadOwn(
 		const QJsonValue &value) {
 	auto result = base::flat_map<uint64, OwnBadge>();
+	auto number = 0;
 	for (const auto &entry : value.toArray()) {
+		++number;
 		const auto object = entry.toObject();
 		const auto id = ReadId(object.value(u"id"_q));
 		if (!id) {
 			continue;
 		}
 		result.emplace(id, OwnBadge{
+			.number = number,
 			.type = object.value(u"type"_q).toString(),
 			.documentId = DocumentId(ReadId(object.value(u"emoji"_q))),
 			.text = object.value(u"text"_q).toString(),
@@ -149,6 +163,10 @@ bool ApplyOwn(const QByteArray &bytes) {
 		return false;
 	}
 	const auto object = document.object();
+	if (!object.value(u"types"_q).isObject()
+		|| !object.value(u"users"_q).isArray()) {
+		return false;
+	}
 	auto lists = OwnLists();
 	const auto types = object.value(u"types"_q).toObject();
 	for (auto i = types.begin(); i != types.end(); ++i) {
@@ -160,6 +178,7 @@ bool ApplyOwn(const QByteArray &bytes) {
 	}
 	lists.users = ReadOwn(object.value(u"users"_q));
 	lists.channels = ReadOwn(object.value(u"channels"_q));
+	lists.bots = ReadOwn(object.value(u"bots"_q));
 	if (object.contains(u"trusted"_q)) {
 		auto trusted = std::vector<TrustedSource>();
 		for (const auto &entry : object.value(u"trusted"_q).toArray()) {
@@ -174,12 +193,16 @@ bool ApplyOwn(const QByteArray &bytes) {
 		lists.trusted = std::move(trusted);
 	}
 	Own() = std::move(lists);
+	ChangesStream().fire({});
 	return true;
 }
 
 bool ApplyHashes(const QByteArray &bytes) {
 	const auto document = QJsonDocument::fromJson(bytes);
 	if (!document.isObject()) {
+		return false;
+	}
+	if (!document.object().value(u"hashes"_q).isArray()) {
 		return false;
 	}
 	auto hashes = base::flat_set<QString>();
@@ -191,13 +214,30 @@ bool ApplyHashes(const QByteArray &bytes) {
 		}
 	}
 	Hashes() = std::move(hashes);
+	ChangesStream().fire({});
 	return true;
 }
 
-void RefreshHashes(QNetworkAccessManager *manager) {
-	auto request = QNetworkRequest(QUrl(
-		u"https://raw.githubusercontent.com/metawka/exDesktop/main/trusted_hashes.json"_q));
+[[nodiscard]] QNetworkRequest FileRequest(const QString &name, bool fresh) {
+	auto request = QNetworkRequest(QUrl(fresh
+		? (u"https://api.github.com/repos/metawka/exDesktop/contents/"_q
+			+ name
+			+ u"?ref=main"_q)
+		: (u"https://raw.githubusercontent.com/metawka/exDesktop/main/"_q
+			+ name)));
 	request.setRawHeader("User-Agent", "exDesktop");
+	if (fresh) {
+		request.setRawHeader("Accept", "application/vnd.github.raw");
+		request.setRawHeader("Cache-Control", "no-cache");
+	}
+	request.setAttribute(
+		QNetworkRequest::CacheLoadControlAttribute,
+		QNetworkRequest::AlwaysNetwork);
+	return request;
+}
+
+void RefreshHashes(QNetworkAccessManager *manager, bool fresh = false) {
+	auto request = FileRequest(u"trusted_hashes.json"_q, fresh);
 	const auto reply = manager->get(request);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
@@ -214,10 +254,13 @@ void RefreshHashes(QNetworkAccessManager *manager) {
 	});
 }
 
-void RefreshOwn(QNetworkAccessManager *manager) {
-	auto request = QNetworkRequest(QUrl(
-		u"https://raw.githubusercontent.com/metawka/exDesktop/main/badges.json"_q));
-	request.setRawHeader("User-Agent", "exDesktop");
+[[nodiscard]] QNetworkAccessManager *&Manager() {
+	static QNetworkAccessManager *result = nullptr;
+	return result;
+}
+
+void RefreshOwn(QNetworkAccessManager *manager, bool fresh = false) {
+	auto request = FileRequest(u"badges.json"_q, fresh);
 	const auto reply = manager->get(request);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
@@ -247,9 +290,18 @@ void RefreshOwn(QNetworkAccessManager *manager) {
 
 [[nodiscard]] const OwnBadge *FindOwn(not_null<PeerData*> peer) {
 	const auto bare = BareId(peer);
-	const auto &map = peer->isUser() ? Own().users : Own().channels;
-	const auto i = map.find(bare);
-	return (i != end(map)) ? &i->second : nullptr;
+	const auto find = [&](const base::flat_map<uint64, OwnBadge> &map) {
+		const auto i = map.find(bare);
+		return (i != end(map)) ? &i->second : nullptr;
+	};
+	if (!peer->isUser()) {
+		return find(Own().channels);
+	} else if (const auto result = find(Own().users)) {
+		return result;
+	} else if (const auto result = find(Own().bots)) {
+		return result;
+	}
+	return find(Own().channels);
 }
 
 [[nodiscard]] BadgeKind OwnKind(
@@ -269,6 +321,57 @@ void RefreshOwn(QNetworkAccessManager *manager) {
 
 } // namespace
 
+void PaintBadgeEmoji(
+		QPainter &p,
+		not_null<Ui::Text::CustomEmoji*> emoji,
+		const Ui::Text::CustomEmojiPaintContext &context) {
+	if (Window::Theme::IsNightMode()) {
+		emoji->paint(p, context);
+		return;
+	}
+	const auto side = std::max(emoji->width(), st::emojiSize)
+		+ style::ConvertScale(4);
+	const auto ratio = style::DevicePixelRatio();
+	auto image = QImage(
+		QSize(side, side) * ratio,
+		QImage::Format_ARGB32_Premultiplied);
+	image.setDevicePixelRatio(ratio);
+	image.fill(Qt::transparent);
+	{
+		auto q = QPainter(&image);
+		auto copy = context;
+		copy.position = QPoint();
+		emoji->paint(q, copy);
+	}
+	auto weight = 0.;
+	auto light = 0.;
+	for (auto y = 0; y < image.height(); y += 2) {
+		const auto line = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+		for (auto x = 0; x < image.width(); x += 2) {
+			const auto pixel = line[x];
+			const auto alpha = qAlpha(pixel);
+			if (alpha < 32) {
+				continue;
+			}
+			const auto factor = 255. / alpha;
+			const auto luma = (0.299 * qRed(pixel)
+				+ 0.587 * qGreen(pixel)
+				+ 0.114 * qBlue(pixel)) * factor / 255.;
+			weight += alpha;
+			light += luma * alpha;
+		}
+	}
+	if (weight > 0. && (light / weight) > 0.8) {
+		auto q = QPainter(&image);
+		q.setCompositionMode(QPainter::CompositionMode_SourceIn);
+		const auto color = QColor(context.textColor);
+		q.fillRect(
+			QRect(0, 0, side, side),
+			color.alpha() ? color : st::windowFg->c);
+	}
+	p.drawImage(context.position, image);
+}
+
 void StartBadges() {
 	static auto started = false;
 	if (started) {
@@ -285,6 +388,7 @@ void StartBadges() {
 		ApplyHashes(hashes.readAll());
 	}
 	const auto manager = new QNetworkAccessManager(qApp);
+	Manager() = manager;
 	RefreshOwn(manager);
 	RefreshHashes(manager);
 	const auto timer = new QTimer(manager);
@@ -293,6 +397,17 @@ void StartBadges() {
 		RefreshHashes(manager);
 	});
 	timer->start(kRefreshInterval);
+}
+
+void RefreshBadges() {
+	if (const auto manager = Manager()) {
+		RefreshOwn(manager, true);
+		RefreshHashes(manager, true);
+	}
+}
+
+rpl::producer<> BadgesChanges() {
+	return ChangesStream().events();
 }
 
 BadgeKind BadgeKindFor(not_null<PeerData*> peer) {
@@ -328,6 +443,18 @@ BadgeKind BadgeKindFor(not_null<PeerData*> peer) {
 	return BadgeKind::None;
 }
 
+[[nodiscard]] DocumentId TypeEmojiOr(
+		std::initializer_list<QString> types,
+		DocumentId fallback) {
+	for (const auto &type : types) {
+		const auto i = Own().typeEmoji.find(type);
+		if (i != end(Own().typeEmoji) && i->second) {
+			return i->second;
+		}
+	}
+	return fallback;
+}
+
 DocumentId BadgeEmoji(not_null<PeerData*> peer) {
 	if (const auto own = FindOwn(peer)) {
 		if (own->documentId) {
@@ -337,29 +464,66 @@ DocumentId BadgeEmoji(not_null<PeerData*> peer) {
 		if (i != end(Own().typeEmoji) && i->second) {
 			return i->second;
 		}
+		const auto fallback = Own().typeEmoji.find(u"default"_q);
+		if (fallback != end(Own().typeEmoji) && fallback->second) {
+			return fallback->second;
+		}
 	}
 	switch (BadgeKindFor(peer)) {
 	case BadgeKind::Porter:
 	case BadgeKind::PorterChannel:
-		return kPorterEmoji;
+		return TypeEmojiOr({ u"porter"_q, u"developer"_q }, kPorterEmoji);
 	case BadgeKind::Developer:
 	case BadgeKind::OfficialChannel:
-		return kDeveloperEmoji;
+		return TypeEmojiOr({ u"extera_developer"_q }, kDeveloperEmoji);
 	case BadgeKind::Supporter:
+		return TypeEmojiOr({ u"supporter"_q, u"default"_q }, kSupporterEmoji);
 	case BadgeKind::Bughunter:
+		return TypeEmojiOr({ u"bughunter"_q, u"default"_q }, kSupporterEmoji);
 	case BadgeKind::Helper:
+		return TypeEmojiOr({ u"helper"_q, u"default"_q }, kSupporterEmoji);
 	case BadgeKind::Donor:
-		return kSupporterEmoji;
+		return TypeEmojiOr({ u"donor"_q, u"default"_q }, kSupporterEmoji);
 	case BadgeKind::Custom: {
 		const auto i = Data().custom.find(BareId(peer));
 		return (i != end(Data().custom) && i->second.documentId)
 			? i->second.documentId
-			: kSupporterEmoji;
+			: TypeEmojiOr({ u"default"_q }, kSupporterEmoji);
 	}
 	case BadgeKind::None:
 		break;
 	}
 	return DocumentId();
+}
+
+bool BadgeIsCustom(not_null<PeerData*> peer) {
+	if (const auto own = FindOwn(peer)) {
+		return (own->type == u"custom"_q) || (own->documentId != 0);
+	}
+	return Data().custom.contains(BareId(peer));
+}
+
+int BadgeHolders(not_null<PeerData*> peer) {
+	const auto own = FindOwn(peer);
+	if (!own || own->type.isEmpty()) {
+		return 0;
+	}
+	auto result = 0;
+	for (const auto map : { &Own().users, &Own().channels, &Own().bots }) {
+		for (const auto &[id, badge] : *map) {
+			if (badge.type == own->type) {
+				++result;
+			}
+		}
+	}
+	return result;
+}
+
+int BadgeNumber(not_null<PeerData*> peer) {
+	if (const auto own = FindOwn(peer)) {
+		return own->number;
+	}
+	return 0;
 }
 
 QString BadgeCustomText(not_null<PeerData*> peer) {
@@ -384,6 +548,34 @@ std::optional<std::vector<TrustedSource>> TrustedSources() {
 
 bool IsTrustedHash(const QString &sha256) {
 	return Hashes().contains(sha256.toLower());
+}
+
+bool IsBadgeEmoji(DocumentId id) {
+	if (!id) {
+		return false;
+	} else if (id == kPorterEmoji
+		|| id == kDeveloperEmoji
+		|| id == kSupporterEmoji) {
+		return true;
+	}
+	for (const auto &[type, emoji] : Own().typeEmoji) {
+		if (emoji == id) {
+			return true;
+		}
+	}
+	for (const auto map : { &Own().users, &Own().channels, &Own().bots }) {
+		for (const auto &[bare, badge] : *map) {
+			if (badge.documentId == id) {
+				return true;
+			}
+		}
+	}
+	for (const auto &[bare, custom] : Data().custom) {
+		if (custom.documentId == id) {
+			return true;
+		}
+	}
+	return false;
 }
 
 DocumentId BadgeTypeEmoji(const QString &type) {

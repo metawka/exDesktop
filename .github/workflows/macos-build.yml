@@ -10,7 +10,19 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            name: arm64
+            prepare: ''
+          - runner: macos-15-intel
+            arch: x86_64
+            name: x64
+            prepare: x64-only
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     env:
       CLEAR_QT_BUILD_TREE: "1"
@@ -42,14 +54,14 @@ jobs:
           path: |
             ${{ github.workspace }}/Libraries
             ${{ github.workspace }}/ThirdParty
-          key: mac-libs-${{ hashFiles('tdesktop/Telegram/build/prepare/prepare.py', 'tdesktop/Telegram/build/prepare/mac.sh') }}
+          key: mac-libs-${{ matrix.name }}-${{ hashFiles('tdesktop/Telegram/build/prepare/prepare.py', 'tdesktop/Telegram/build/prepare/mac.sh') }}
           restore-keys: |
-            mac-libs-
+            mac-libs-${{ matrix.name }}-
 
       - name: Build ThirdParty libraries
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./tdesktop/Telegram/build/prepare/mac.sh silent
+        run: ./tdesktop/Telegram/build/prepare/mac.sh silent ${{ matrix.prepare }}
 
       - name: Save ThirdParty libraries
         if: steps.libs.outputs.cache-hit != 'true'
@@ -63,7 +75,7 @@ jobs:
       - name: Set up ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: mac-arm64
+          key: mac-${{ matrix.name }}
           max-size: 2G
 
       - name: Configure
@@ -82,7 +94,7 @@ jobs:
             -D Python3_ROOT_DIR="$pythonLocation" \
             -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON \
             -G "Ninja Multi-Config" \
-            -D CMAKE_OSX_ARCHITECTURES=arm64 \
+            -D CMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
             -D CMAKE_C_COMPILER_LAUNCHER=ccache \
             -D CMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -D CMAKE_OBJC_COMPILER_LAUNCHER=ccache \
@@ -123,26 +135,64 @@ jobs:
             "$APP/Contents/Resources/python311/lib/python3.11/site-packages"
           find "$APP/Contents/Resources/python311" -name "__pycache__" -type d -prune -exec rm -rf {} +
           rm -rf "$APP/Contents/Resources/python311/lib/python3.11/config-3.11-darwin"
+          mkdir -p "$APP/Contents/Resources/python/extera" "$APP/Contents/Resources/python/site-packages"
+          cp -R "$GITHUB_WORKSPACE/tdesktop/Telegram/SourceFiles/extera/python/." "$APP/Contents/Resources/python/extera/"
+          mkdir -p "$APP/Contents/Resources/python/tgws"
+          cp -R "$GITHUB_WORKSPACE/tdesktop/Telegram/SourceFiles/extera/tgws/." "$APP/Contents/Resources/python/tgws/"
+          "$pythonLocation/bin/python3" -m pip install --disable-pip-version-check \
+            --target "$APP/Contents/Resources/python/site-packages" requests beautifulsoup4 lxml pillow PyYAML packaging
+          find "$APP/Contents/Resources/python" -name "__pycache__" -type d -prune -exec rm -rf {} +
+          FW="$APP/Contents/Frameworks"
+          mkdir -p "$FW"
+          chmod -R u+w "$APP/Contents/Resources/python311" "$FW"
+          bundle_deps() {
+            for target in "$@"; do
+              for dep in $(otool -L "$target" | awk 'NR>1 {print $1}'); do
+                case "$dep" in
+                  /usr/lib/*|/System/*|@*) continue ;;
+                esac
+                name=$(basename "$dep")
+                if [ ! -f "$FW/$name" ]; then
+                  cp -L "$dep" "$FW/$name"
+                  chmod u+w "$FW/$name"
+                  install_name_tool -id "@executable_path/../Frameworks/$name" "$FW/$name"
+                  bundle_deps "$FW/$name"
+                fi
+                install_name_tool -change "$dep" "@executable_path/../Frameworks/$name" "$target"
+              done
+            done
+          }
+          if [ -f "$FW/libpython3.11.dylib" ]; then bundle_deps "$FW/libpython3.11.dylib"; fi
+          bundle_deps "$APP"/Contents/Resources/python311/lib/python3.11/lib-dynload/*.so
           find "$APP" -type l ! -exec test -e {} \; -print -delete
+          find "$APP/Contents/Frameworks" "$APP/Contents/Resources" \( -name "*.so" -o -name "*.dylib" \) \
+            -exec codesign --force --sign - {} \;
+          if find "$APP/Contents" \( -name "*.so" -o -name "*.dylib" \) -exec otool -L {} \; \
+              | grep -E "hostedtoolcache|/opt/homebrew|/usr/local/opt|/usr/local/Cellar"; then
+            echo "Python libraries reference build machine paths"
+            exit 1
+          fi
+          test -f "$APP/Contents/Resources/python/extera/extera_host.py"
+          test -d "$APP/Contents/Resources/python/site-packages/requests"
           rm -rf exDesktop.app
           mv "$APP" exDesktop.app
           codesign --force --deep --sign - exDesktop.app
           codesign --verify --deep --strict exDesktop.app
           ditto -c -k --sequesterRsrc --keepParent exDesktop.app \
-            "$GITHUB_WORKSPACE/exDesktop-macos-arm64.$VERSION.zip"
+            "$GITHUB_WORKSPACE/exDesktop-macos-${{ matrix.name }}.$VERSION.zip"
           mkdir -p dmg
           ditto exDesktop.app dmg/exDesktop.app
           ln -s /Applications dmg/Applications
           hdiutil create -volname exDesktop -srcfolder dmg -ov -format UDZO \
-            "$GITHUB_WORKSPACE/exDesktop-macos-arm64.$VERSION.dmg"
+            "$GITHUB_WORKSPACE/exDesktop-macos-${{ matrix.name }}.$VERSION.dmg"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: exDesktop-macos-arm64
+          name: exDesktop-macos-${{ matrix.name }}
           path: |
-            exDesktop-macos-arm64.*.zip
-            exDesktop-macos-arm64.*.dmg
+            exDesktop-macos-${{ matrix.name }}.*.zip
+            exDesktop-macos-${{ matrix.name }}.*.dmg
           retention-days: 7
 
       - name: Attach to release
@@ -151,5 +201,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            "exDesktop-macos-arm64.$VERSION.zip" \
-            "exDesktop-macos-arm64.$VERSION.dmg" --clobber
+            "exDesktop-macos-${{ matrix.name }}.$VERSION.zip" \
+            "exDesktop-macos-${{ matrix.name }}.$VERSION.dmg" --clobber

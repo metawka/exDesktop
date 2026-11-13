@@ -20,7 +20,9 @@
 namespace Extera::Update {
 namespace {
 
-constexpr auto kExteraBuild = 8;
+constexpr auto kExteraBase = AppVersionStr;
+constexpr auto kExteraBaseNumber = AppVersion;
+constexpr auto kExteraBuild = 1;
 constexpr auto kCheckInterval = 6 * 60 * 60 * crl::time(1000);
 constexpr auto kFirstCheckDelay = 10 * crl::time(1000);
 
@@ -64,7 +66,7 @@ State &Instance() {
 }
 
 [[nodiscard]] std::vector<int> Current() {
-	auto result = Parse(QString::fromLatin1(AppVersionStr));
+	auto result = Parse(QString::fromLatin1(kExteraBase));
 	result.resize(3);
 	result.push_back(kExteraBuild);
 	return result;
@@ -215,8 +217,12 @@ int Build() {
 	return kExteraBuild;
 }
 
+int BaseVersion() {
+	return kExteraBaseNumber;
+}
+
 QString VersionText() {
-	return QString::fromLatin1(AppVersionStr)
+	return QString::fromLatin1(kExteraBase)
 		+ '.'
 		+ QString::number(kExteraBuild);
 }

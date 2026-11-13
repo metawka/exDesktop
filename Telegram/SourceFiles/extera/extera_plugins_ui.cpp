@@ -1,5 +1,7 @@
 #include "extera/extera_plugins_ui.h"
 
+#include "base/unixtime.h"
+
 #include "apiwrap.h"
 #include "boxes/sticker_set_box.h"
 #include "data/data_document.h"
@@ -42,6 +44,10 @@
 #include "ui/wrap/vertical_layout.h"
 #include "window/window_session_controller.h"
 #include "extera/extera_plugin_trust.h"
+#include "extera/exd_plugin_guard.h"
+#include "extera/exd_plugin_porter.h"
+#include "data/data_channel.h"
+#include "data/data_peer_values.h"
 #include "boxes/translate_box.h"
 #include "data/data_user.h"
 #include "ui/wrap/slide_wrap.h"
@@ -51,6 +57,8 @@
 #include "ui/effects/animations.h"
 #include "ui/boxes/confirm_box.h"
 #include "styles/style_layers.h"
+#include "data/stickers/data_custom_emoji.h"
+#include "ui/emoji_config.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
 
@@ -58,8 +66,11 @@
 #include <QtCore/QFile>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QClipboard>
+#include <QtGui/QCursor>
 #include <QtSvg/QSvgRenderer>
 #include <QtCore/QFileInfo>
+#include <QtCore/QDir>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QJsonObject>
 
 namespace Extera::Plugins {
@@ -114,6 +125,25 @@ void FillSettings(
 	const auto items = Call(u"settings"_q, QJsonObject{
 		{ u"id"_q, id },
 	}).toArray();
+	if (items.isEmpty()) {
+		auto enabled = false;
+		for (const auto &entry : Call(u"list"_q).toArray()) {
+			const auto info = entry.toObject();
+			if (info.value(u"id"_q).toString() == id) {
+				enabled = info.value(u"enabled"_q).toBool();
+			}
+		}
+		Ui::AddSkip(container);
+		container->add(
+			object_ptr<Ui::FlatLabel>(
+				container,
+				(enabled
+					? tr::lng_exd_plugin_no_settings()
+					: tr::lng_exd_plugin_settings_off()),
+				st::exteraAbout),
+			st::exteraAboutPadding);
+		return;
+	}
 	const auto changed = [=](int index, QJsonValue value) {
 		Call(u"setting_changed"_q, QJsonObject{
 			{ u"id"_q, id },
@@ -323,6 +353,359 @@ void FillSettings(
 	Ui::AddSkip(container);
 }
 
+[[nodiscard]] QString DesktopOsName(QString os) {
+	if (os.isEmpty()) {
+#if defined Q_OS_WIN
+		os = u"windows"_q;
+#elif defined Q_OS_MAC
+		os = u"macos"_q;
+#else
+		os = u"linux"_q;
+#endif
+	}
+	if (os == u"windows"_q) {
+		return u"Windows"_q;
+	} else if (os == u"macos"_q) {
+		return u"macOS"_q;
+	} else if (os == u"linux"_q) {
+		return u"Linux"_q;
+	}
+	return os;
+}
+
+[[nodiscard]] QString PortedLabel(const QJsonObject &meta) {
+	const auto os = meta.value(u"desktop_os"_q).toString();
+	return os.isEmpty()
+		? tr::lng_exd_plugin_ported(tr::now)
+		: tr::lng_exd_plugin_ported_os(tr::now, lt_os, DesktopOsName(os));
+}
+
+[[nodiscard]] QJsonObject PluginPermissions(const QString &id) {
+	return SandboxQuery(u"permissions"_q, id).toObject();
+}
+
+[[nodiscard]] bool HasPermissions(const QJsonObject &permissions) {
+	return !permissions.value(u"net"_q).toArray().isEmpty()
+		|| !permissions.value(u"paths"_q).toArray().isEmpty();
+}
+
+void ShowPartialStyled(
+	not_null<Window::SessionController*> controller,
+	const QJsonObject &info,
+	const QStringList &items);
+void AddColorPill(
+	not_null<Ui::GenericBox*> box,
+	const QString &text,
+	const style::icon &icon,
+	Fn<QColor()> color);
+[[nodiscard]] not_null<Ui::RoundButton*> AddPortButton(
+	not_null<Ui::GenericBox*> box,
+	rpl::producer<QString> text,
+	bool primary,
+	bool last);
+
+void ShowPartialBox(
+		not_null<Window::SessionController*> controller,
+		const QJsonObject &info,
+		const QStringList &items) {
+	ShowPartialStyled(controller, info, items);
+}
+
+[[nodiscard]] QString LeakCategoryTitle(const QString &category) {
+	if (category == u"session"_q) {
+		return tr::lng_exd_leak_session(tr::now);
+	} else if (category == u"code"_q) {
+		return tr::lng_exd_leak_code(tr::now);
+	} else if (category == u"phone"_q) {
+		return tr::lng_exd_leak_phone(tr::now);
+	} else if (category == u"contacts"_q) {
+		return tr::lng_exd_leak_contacts(tr::now);
+	} else if (category == u"keys"_q) {
+		return tr::lng_exd_leak_keys(tr::now);
+	} else if (category == u"seed"_q) {
+		return tr::lng_exd_leak_seed(tr::now);
+	} else if (category == u"browser"_q) {
+		return tr::lng_exd_leak_browser(tr::now);
+	} else if (category == u"device"_q) {
+		return tr::lng_exd_leak_device(tr::now);
+	} else if (category == u"tokens"_q) {
+		return tr::lng_exd_leak_tokens(tr::now);
+	}
+	return category;
+}
+
+void AddPermissionToggle(
+		not_null<Ui::VerticalLayout*> container,
+		rpl::producer<QString> title,
+		bool value,
+		Fn<void(bool)> changed) {
+	const auto button = container->add(object_ptr<Ui::SettingsButton>(
+		container,
+		std::move(title),
+		st::settingsButtonNoIcon));
+	button->toggleOn(rpl::single(value));
+	button->toggledChanges(
+	) | rpl::on_next([=](bool enabled) {
+		changed(enabled);
+	}, button->lifetime());
+}
+
+[[nodiscard]] QString JournalTime(int64 stamp) {
+	const auto parsed = base::unixtime::parse(TimeId(stamp));
+	const auto time = QLocale().toString(parsed.time(), QLocale::ShortFormat);
+	return (parsed.date() == QDate::currentDate())
+		? time
+		: (QLocale().toString(parsed.date(), u"dd.MM"_q) + ' ' + time);
+}
+
+[[nodiscard]] std::vector<QJsonObject> JournalSorted(const QJsonArray &list) {
+	auto result = std::vector<QJsonObject>();
+	for (const auto &entry : list) {
+		result.push_back(entry.toObject());
+	}
+	ranges::sort(result, ranges::greater(), [](const QJsonObject &o) {
+		return o.value(u"last"_q).toDouble();
+	});
+	if (result.size() > 20) {
+		result.resize(20);
+	}
+	return result;
+}
+
+void FillJournal(
+		not_null<Ui::VerticalLayout*> container,
+		not_null<Window::SessionController*> controller,
+		const QString &id,
+		Fn<void()> refresh) {
+	const auto journal = SandboxQuery(u"journal"_q, id).toObject();
+	const auto net = JournalSorted(journal.value(u"net"_q).toArray());
+	const auto files = JournalSorted(journal.value(u"files"_q).toArray());
+	const auto blocked = JournalSorted(
+		journal.value(u"blocked"_q).toArray());
+	Ui::AddSkip(container);
+	Ui::AddSubsectionTitle(container, tr::lng_exd_plugin_journal());
+	if (net.empty() && files.empty() && blocked.empty()) {
+		container->add(
+			object_ptr<Ui::FlatLabel>(
+				container,
+				tr::lng_exd_plugin_journal_empty(),
+				st::exteraAbout),
+			st::exteraAboutPadding);
+	}
+	for (const auto &item : net) {
+		const auto key = item.value(u"key"_q).toString();
+		const auto count = int(item.value(u"count"_q).toDouble());
+		const auto last = int64(item.value(u"last"_q).toDouble());
+		const auto button = Settings::AddButtonWithLabel(
+			container,
+			rpl::single(key),
+			rpl::single(QString::number(count)
+				+ QString::fromUtf8(" \xC2\xB7 ")
+				+ JournalTime(last)),
+			st::settingsButtonNoIcon);
+		button->setClickedCallback([=] {
+			controller->show(Ui::MakeConfirmBox({
+				.text = tr::lng_exd_plugin_journal_block_sure(
+					tr::now,
+					lt_target,
+					key),
+				.confirmed = [=](Fn<void()> close) {
+					SandboxQuery(
+						u"set_rule"_q,
+						id,
+						u"net"_q,
+						key + u"=deny"_q);
+					close();
+					refresh();
+				},
+				.confirmText = tr::lng_exd_plugin_journal_block(),
+				.confirmStyle = &st::attentionBoxButton,
+			}));
+		});
+	}
+	for (const auto &item : files) {
+		const auto key = item.value(u"key"_q).toString();
+		Settings::AddButtonWithLabel(
+			container,
+			rpl::single(QDir::toNativeSeparators(key)),
+			rpl::single(JournalTime(int64(item.value(u"last"_q).toDouble()))),
+			st::settingsButtonNoIcon);
+	}
+	for (const auto &item : blocked) {
+		const auto key = item.value(u"key"_q).toString();
+		auto text = key;
+		if (key.startsWith(u"leak:"_q)) {
+			text = LeakCategoryTitle(key.section(':', 1, 1))
+				+ u": "_q
+				+ key.section(':', 2);
+		} else if (key.startsWith(u"path:"_q)) {
+			text = tr::lng_exd_plugin_journal_path(
+				tr::now,
+				lt_target,
+				QDir::toNativeSeparators(key.mid(5)));
+		} else if (key.startsWith(u"net:"_q)) {
+			text = tr::lng_exd_plugin_journal_conn(
+				tr::now,
+				lt_target,
+				key.mid(4));
+		} else if (key.startsWith(u"registry:"_q)) {
+			text = tr::lng_exd_plugin_journal_registry(
+				tr::now,
+				lt_target,
+				key.mid(9));
+		} else if (key.startsWith(u"native:"_q)) {
+			text = tr::lng_exd_plugin_journal_native(tr::now);
+		} else if (key.startsWith(u"process:"_q)) {
+			text = tr::lng_exd_plugin_journal_process(tr::now);
+		}
+		Settings::AddButtonWithLabel(
+			container,
+			rpl::single(text),
+			rpl::single(JournalTime(int64(item.value(u"last"_q).toDouble()))),
+			st::settingsAttentionButton);
+	}
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, tr::lng_exd_plugin_journal_about());
+}
+
+void FillPermissions(
+		not_null<Ui::VerticalLayout*> container,
+		not_null<Window::SessionController*> controller,
+		const QString &id,
+		Fn<void()> refresh) {
+	const auto permissions = PluginPermissions(id);
+	Ui::AddSkip(container);
+	Ui::AddSubsectionTitle(container, tr::lng_exd_plugin_permissions());
+	auto internet = true;
+	auto extra = std::map<QString, QString>();
+	for (const auto &entry : permissions.value(u"net"_q).toArray()) {
+		const auto item = entry.toObject();
+		if (item.value(u"key"_q).toString() == u"*"_q) {
+			internet = (item.value(u"rule"_q).toString() != u"deny"_q);
+		}
+	}
+	for (const auto &entry : permissions.value(u"extra"_q).toArray()) {
+		const auto item = entry.toObject();
+		extra[item.value(u"key"_q).toString()]
+			= item.value(u"rule"_q).toString();
+	}
+	const auto setExtra = [=](const QString &key, const QString &value) {
+		SandboxQuery(u"set_rule"_q, id, u"extra"_q, key + '=' + value);
+	};
+	AddPermissionToggle(
+		container,
+		tr::lng_exd_plugin_perm_internet(),
+		internet,
+		[=](bool enabled) {
+			SandboxQuery(
+				u"set_rule"_q,
+				id,
+				u"net"_q,
+				enabled ? u"*="_q : u"*=deny"_q);
+		});
+	AddPermissionToggle(
+		container,
+		tr::lng_exd_plugin_perm_clipboard(),
+		extra[u"clipboard"_q] != u"deny"_q,
+		[=](bool enabled) {
+			setExtra(u"clipboard"_q, enabled ? QString() : u"deny"_q);
+		});
+	AddPermissionToggle(
+		container,
+		tr::lng_exd_plugin_perm_notify(),
+		extra[u"notify"_q] != u"deny"_q,
+		[=](bool enabled) {
+			setExtra(u"notify"_q, enabled ? QString() : u"deny"_q);
+		});
+	AddPermissionToggle(
+		container,
+		tr::lng_exd_plugin_perm_links(),
+		extra[u"links"_q] == u"allow"_q,
+		[=](bool enabled) {
+			setExtra(u"links"_q, enabled ? u"allow"_q : QString());
+		});
+	const auto revoke = [=](QString kind, QString key, QString target) {
+		controller->show(Ui::MakeConfirmBox({
+			.text = tr::lng_exd_plugin_perm_revoke_sure(
+				tr::now,
+				lt_target,
+				target),
+			.confirmed = [=](Fn<void()> close) {
+				SandboxQuery(u"revoke"_q, id, kind, key);
+				close();
+				refresh();
+				notifyListChanged();
+			},
+			.confirmText = tr::lng_exd_plugin_perm_reset(),
+		}));
+	};
+	for (const auto &entry : permissions.value(u"net"_q).toArray()) {
+		const auto item = entry.toObject();
+		const auto key = item.value(u"key"_q).toString();
+		if (key == u"*"_q) {
+			continue;
+		}
+		const auto allowed = (item.value(u"rule"_q).toString() == u"allow"_q);
+		const auto shown = key.startsWith(u"udp:"_q)
+			? tr::lng_exd_plugin_perm_udp(tr::now, lt_target, key.mid(4))
+			: key.startsWith(u"leak:"_q)
+			? tr::lng_exd_plugin_perm_leak(
+				tr::now,
+				lt_what,
+				LeakCategoryTitle(key.mid(5).section('|', 0, 0)),
+				lt_target,
+				key.mid(5).section('|', 1))
+			: key;
+		const auto button = Settings::AddButtonWithLabel(
+			container,
+			rpl::single(shown),
+			(allowed
+				? tr::lng_exd_plugin_perm_allowed()
+				: tr::lng_exd_plugin_perm_denied()),
+			st::settingsButtonNoIcon);
+		button->setClickedCallback([=] {
+			revoke(u"net"_q, key, shown);
+		});
+	}
+	for (const auto &entry : permissions.value(u"paths"_q).toArray()) {
+		const auto key = entry.toObject().value(u"key"_q).toString();
+		const auto shown = QDir::toNativeSeparators(key);
+		const auto button = Settings::AddButtonWithLabel(
+			container,
+			rpl::single(QFileInfo(key).fileName().isEmpty()
+				? shown
+				: QFileInfo(key).fileName()),
+			tr::lng_exd_plugin_perm_folder(),
+			st::settingsButtonNoIcon);
+		button->setClickedCallback([=] {
+			revoke(u"path"_q, key, shown);
+		});
+	}
+	if (HasPermissions(permissions)
+		|| !permissions.value(u"extra"_q).toArray().isEmpty()) {
+		const auto all = container->add(object_ptr<Ui::SettingsButton>(
+			container,
+			tr::lng_exd_plugin_perm_reset_all(),
+			st::settingsAttentionButton));
+		all->setClickedCallback([=] {
+			controller->show(Ui::MakeConfirmBox({
+				.text = tr::lng_exd_plugin_perm_reset_all_sure(),
+				.confirmed = [=](Fn<void()> close) {
+					SandboxQuery(u"revoke"_q, id, u"all"_q);
+					close();
+					refresh();
+					notifyListChanged();
+				},
+				.confirmText = tr::lng_exd_plugin_perm_reset(),
+				.confirmStyle = &st::attentionBoxButton,
+			}));
+		});
+	}
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, tr::lng_exd_plugin_perm_about());
+	FillJournal(container, controller, id, refresh);
+}
+
 [[nodiscard]] QStringList PinnedPlugins() {
 	return String(u"plugins_pinned"_q).split(',', Qt::SkipEmptyParts);
 }
@@ -413,9 +796,62 @@ constexpr auto kPuzzleSvg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 
 }
 
 [[nodiscard]] TextWithEntities WithLinks(const QString &text) {
-	return TextUtilities::ParseEntities(
+	auto result = TextUtilities::ParseEntities(
 		text,
-		TextParseLinks | TextParseMentions | TextParseHashtags);
+		TextParseLinks
+			| TextParseMentions
+			| TextParseHashtags
+			| TextParseMarkdown);
+	static const auto kLink = QRegularExpression(
+		u"\\[([^\\]\\n]+)\\]\\(((?:https?://|tg://)[^\\s)]+)\\)"_q);
+	auto matches = std::vector<QRegularExpressionMatch>();
+	auto iterator = kLink.globalMatch(result.text);
+	while (iterator.hasNext()) {
+		matches.push_back(iterator.next());
+	}
+	for (auto i = int(matches.size()) - 1; i >= 0; --i) {
+		const auto &match = matches[i];
+		const auto start = int(match.capturedStart());
+		const auto end = int(match.capturedEnd());
+		const auto label = match.captured(1);
+		const auto url = match.captured(2);
+		const auto delta = int(label.size()) - (end - start);
+		auto entities = EntitiesInText();
+		for (const auto &entity : result.entities) {
+			const auto from = entity.offset();
+			const auto till = from + entity.length();
+			if (from >= start && till <= end) {
+				continue;
+			} else if (from >= end) {
+				entities.push_back(EntityInText(
+					entity.type(),
+					from + delta,
+					entity.length(),
+					entity.data()));
+			} else if (from <= start && till >= end) {
+				entities.push_back(EntityInText(
+					entity.type(),
+					from,
+					entity.length() + delta,
+					entity.data()));
+			} else if (till <= start) {
+				entities.push_back(entity);
+			}
+		}
+		result.text.replace(start, end - start, label);
+		entities.push_back(EntityInText(
+			EntityType::CustomUrl,
+			start,
+			int(label.size()),
+			url));
+		std::sort(entities.begin(), entities.end(), [](
+				const EntityInText &a,
+				const EntityInText &b) {
+			return a.offset() < b.offset();
+		});
+		result.entities = std::move(entities);
+	}
+	return result;
 }
 
 void SetupLinks(
@@ -434,31 +870,23 @@ void SetupPluginIcon(
 		int size,
 		int badge) {
 	struct State {
-		std::shared_ptr<Data::DocumentMedia> media;
+		std::unique_ptr<Ui::Text::CustomEmoji> emoji;
 		StickerSetIdentifier set;
 		QImage image;
 		QImage puzzle;
 		Ui::Animations::Simple appear;
 		bool failed = false;
+		bool shown = false;
 	};
 	widget->resize(size, size + badge / 3);
 	const auto state = widget->lifetime().make_state<State>();
 	const auto slash = icon.lastIndexOf('/');
 	state->failed = (slash <= 0);
-	const auto ready = [=] {
-		if (!state->image.isNull() || !state->media) {
+	const auto startAppear = [=] {
+		if (state->shown) {
 			return;
 		}
-		const auto large = state->media->getStickerLarge();
-		if (!large) {
-			return;
-		}
-		const auto ratio = style::DevicePixelRatio();
-		state->image = large->original().scaled(
-			QSize(size, size) * ratio,
-			Qt::KeepAspectRatio,
-			Qt::SmoothTransformation);
-		state->image.setDevicePixelRatio(ratio);
+		state->shown = true;
 		state->appear.start(
 			[=] { widget->update(); },
 			0.,
@@ -466,6 +894,32 @@ void SetupPluginIcon(
 			st::exteraInstallIconDuration,
 			anim::easeOutCirc);
 	};
+	if (state->failed) {
+		auto length = 0;
+		const auto trimmed = icon.trimmed();
+		const auto emoji = Ui::Emoji::Find(trimmed, &length);
+		if (emoji && length == trimmed.size()) {
+			const auto ratio = style::DevicePixelRatio();
+			auto image = QImage(
+				QSize(size, size) * ratio,
+				QImage::Format_ARGB32_Premultiplied);
+			image.setDevicePixelRatio(ratio);
+			image.fill(Qt::transparent);
+			{
+				auto q = QPainter(&image);
+				const auto large = Ui::Emoji::GetSizeLarge();
+				const auto drawn = large / ratio;
+				const auto scale = size * 0.8 / drawn;
+				q.setRenderHint(QPainter::SmoothPixmapTransform);
+				q.translate(size / 2., size / 2.);
+				q.scale(scale, scale);
+				Ui::Emoji::Draw(q, emoji, large, -drawn / 2, -drawn / 2);
+			}
+			state->image = std::move(image);
+			state->failed = false;
+			state->shown = true;
+		}
+	}
 	widget->paintRequest() | rpl::on_next([=] {
 		auto p = QPainter(widget);
 		auto hq = PainterHighQualityEnabler(p);
@@ -473,7 +927,11 @@ void SetupPluginIcon(
 		const auto rect = QRect(left, 0, size, size);
 		const auto radius = st::exteraInstallIconRadius;
 		p.setPen(Qt::NoPen);
-		if (state->failed && state->image.isNull()) {
+		const auto emojiReady = state->emoji && state->emoji->ready();
+		if (emojiReady) {
+			startAppear();
+		}
+		if (state->failed && state->image.isNull() && !emojiReady) {
 			p.setBrush(st::windowBgActive);
 			p.drawRoundedRect(rect, radius, radius);
 			st::exteraIconPlugins.paintInCenter(
@@ -481,7 +939,7 @@ void SetupPluginIcon(
 				rect,
 				st::windowFgActive->c);
 		} else {
-			const auto shown = state->image.isNull()
+			const auto shown = (state->image.isNull() && !emojiReady)
 				? 0.
 				: state->appear.value(1.);
 			if (shown < 1.) {
@@ -491,15 +949,27 @@ void SetupPluginIcon(
 				p.setOpacity(1.);
 			}
 			if (shown > 0.) {
-				const auto real = state->image.size()
-					/ state->image.devicePixelRatio();
 				const auto scale = 0.85 + 0.15 * shown;
 				p.setOpacity(shown);
 				p.translate(rect.center());
 				p.scale(scale, scale);
-				p.drawImage(
-					QPoint(-real.width() / 2, -real.height() / 2),
-					state->image);
+				if (emojiReady) {
+					const auto real = std::max(size, int(st::exteraInstallIcon));
+					if (real != size) {
+						p.scale(size / float64(real), size / float64(real));
+					}
+					state->emoji->paint(p, {
+						.textColor = st::windowFg->c,
+						.now = crl::now(),
+						.position = QPoint(-real / 2, -real / 2),
+					});
+				} else {
+					const auto real = state->image.size()
+						/ state->image.devicePixelRatio();
+					p.drawImage(
+						QPoint(-real.width() / 2, -real.height() / 2),
+						state->image);
+				}
 				p.resetTransform();
 				p.setOpacity(1.);
 			}
@@ -545,6 +1015,23 @@ void SetupPluginIcon(
 	const auto index = icon.mid(slash + 1).toInt();
 	const auto session = &controller->session();
 	const auto weak = base::make_weak(widget);
+	static auto Cache = base::flat_map<QString, DocumentId>();
+	const auto useDocument = [=](not_null<DocumentData*> document) {
+		state->emoji = session->data().customEmojiManager().create(
+			document,
+			[=] { widget->update(); },
+			Data::CustomEmojiManager::SizeTag::Isolated,
+			std::max(size, int(st::exteraInstallIcon)));
+		widget->update();
+	};
+	if (const auto i = Cache.find(icon); i != end(Cache)) {
+		const auto document = session->data().document(i->second);
+		if (document->sticker()) {
+			state->set = document->sticker()->set;
+			useDocument(document);
+			return;
+		}
+	}
 	session->api().request(MTPmessages_GetStickerSet(
 		MTP_inputStickerSetShortName(MTP_string(name)),
 		MTP_int(0)
@@ -561,19 +1048,8 @@ void SetupPluginIcon(
 				return;
 			}
 			const auto document = set->stickers[index];
-			state->media = document->createMediaView();
-			state->media->checkStickerLarge();
-			if (!state->media->loaded()) {
-				document->save(document->stickerOrGifOrigin(), QString());
-			}
-			ready();
-			session->downloaderTaskFinished(
-			) | rpl::filter([=] {
-				return state->image.isNull();
-			}) | rpl::on_next([=] {
-				state->media->checkStickerLarge();
-				ready();
-			}, widget->lifetime());
+			Cache[icon] = document->id;
+			useDocument(document);
 		}, [&](const MTPDmessages_stickerSetNotModified &) {
 			state->failed = true;
 			widget->update();
@@ -631,6 +1107,36 @@ void ShowPluginSettings(
 		box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 	}));
 }
+
+void ShowPluginPermissions(
+		not_null<Window::SessionController*> controller,
+		const QString &id,
+		const QString &name) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(rpl::single(name));
+		box->setWidth(st::boxWideWidth);
+		const auto content = box->verticalLayout();
+		const auto perms = content->add(
+			object_ptr<Ui::VerticalLayout>(content));
+		const auto refreshPerms = box->lifetime().make_state<Fn<void()>>();
+		*refreshPerms = [=] {
+			perms->clear();
+			FillPermissions(perms, controller, id, [=] {
+				(*refreshPerms)();
+			});
+			perms->resizeToWidth(content->width());
+		};
+		FillPermissions(perms, controller, id, [=] {
+			(*refreshPerms)();
+		});
+		box->addButton(tr::lng_close(), [=] { box->closeBox(); });
+	}));
+}
+
+void RunGuard(
+	not_null<Window::SessionController*> controller,
+	const QString &path,
+	const QString &id);
 
 void FillPluginsList(
 		not_null<Ui::VerticalLayout*> container,
@@ -712,16 +1218,6 @@ void FillPluginsList(
 					rpl::single(Subtitle(info)),
 					st::exteraSubtitle),
 				st::exteraPluginMetaPadding + style::margins(shift, 0, 0, 0));
-			const auto pluginPath = info.value(u"path"_q).toString();
-			const auto code = card->add(
-				object_ptr<Ui::LinkButton>(
-					card,
-					tr::lng_exd_plugin_view_code(tr::now)),
-				st::exteraPluginMetaPadding + style::margins(shift, 0, 0, 0),
-				style::al_left);
-			code->setClickedCallback([=] {
-				ShowSourceBox(controller, pluginPath);
-			});
 			const auto icon = Ui::CreateChild<Ui::AbstractButton>(card);
 			SetupPluginIcon(
 				icon,
@@ -742,21 +1238,59 @@ void FillPluginsList(
 			}, icon->lifetime());
 			const auto description = info.value(u"description"_q).toString();
 			if (!description.isEmpty() && !Bool(u"plugins_compact_view"_q)) {
-				card->add(
+				const auto about = card->add(
+					object_ptr<Ui::FlatLabel>(card, st::boxLabel),
+					st::exteraPluginDescriptionPadding);
+				about->setMarkedText(WithLinks(description));
+			}
+			const auto unsupported = info.value(u"unsupported"_q).toArray();
+			const auto desktopMark = info.value(u"desktop"_q).toBool();
+			if (desktopMark || !unsupported.isEmpty()) {
+				auto items = QStringList();
+				for (const auto &value : unsupported) {
+					items.push_back(value.toString());
+				}
+				auto text = TextWithEntities();
+				if (desktopMark) {
+					text.append(info.value(u"ported_from"_q).toString().isEmpty()
+						? tr::lng_exd_plugin_desktop(tr::now)
+						: PortedLabel(info));
+				} else {
+					text.append(Ui::Text::Link(
+						tr::lng_exd_plugin_partial(tr::now)));
+				}
+				const auto marks = card->add(
 					object_ptr<Ui::FlatLabel>(
 						card,
-						rpl::single(description),
-						st::boxLabel),
+						rpl::single(text),
+						st::exteraSubtitle),
 					st::exteraPluginDescriptionPadding);
+				marks->setClickHandlerFilter([=](
+						const ClickHandlerPtr &,
+						Qt::MouseButton) {
+					ShowPartialBox(controller, info, items);
+					return false;
+				});
 			}
 			const auto error = info.value(u"error"_q).toString();
-			if (!error.isEmpty()) {
+			const auto developer = Bool(u"plugins_developer_mode"_q);
+			if (info.value(u"installing"_q).toBool()) {
 				card->add(
 					object_ptr<Ui::FlatLabel>(
 						card,
-						rpl::single(error.trimmed().split('\n').last()),
+						tr::lng_exd_plugin_installing_deps(),
 						st::exteraAbout),
 					st::exteraPluginDescriptionPadding);
+			} else if (!error.isEmpty()) {
+				const auto label = card->add(
+					object_ptr<Ui::FlatLabel>(
+						card,
+						rpl::single(developer
+							? error.trimmed()
+							: error.trimmed().split('\n').last()),
+						st::exteraAbout),
+					st::exteraPluginDescriptionPadding);
+				label->setSelectable(developer);
 			}
 			const auto path = info.value(u"path"_q).toString();
 			const auto name = info.value(u"name"_q).toString();
@@ -777,11 +1311,8 @@ void FillPluginsList(
 				buttons.push_back(button);
 				return button;
 			};
-			addAction(st::menuIconShare, [=] {
-				SharePluginFile(controller, path);
-			});
-			addAction(st::exteraIconOpenCode, [=] {
-				ShowPluginCode(controller, name, path);
+			addAction(st::menuIconSettings, [=] {
+				ShowPluginSettings(controller, id);
 			});
 			const auto isPinned = pinned.contains(id);
 			addAction(
@@ -790,11 +1321,53 @@ void FillPluginsList(
 					SetPluginPinned(id, !isPinned);
 					notifyListChanged();
 				});
-			if (info.value(u"has_settings"_q).toBool()) {
-				addAction(st::menuIconSettings, [=] {
-					ShowPluginSettings(controller, id);
-				});
-			}
+			const auto guard = (Exd::PluginGuard::Mode() != 2);
+			const auto suggested = Exd::PluginPorter::Suggested(info);
+			const auto menu = card->lifetime().make_state<
+				base::unique_qptr<Ui::PopupMenu>>();
+			const auto more = Ui::CreateChild<Ui::IconButton>(
+				actions,
+				st::exteraPluginAction);
+			more->setIconOverride(&st::exteraIconMore, &st::exteraIconMore);
+			more->setClickedCallback([=] {
+				*menu = base::make_unique_q<Ui::PopupMenu>(
+					more,
+					st::popupMenuWithIcons);
+				const auto raw = menu->get();
+				raw->addAction(tr::lng_exd_plugin_share(tr::now), [=] {
+					SharePluginFile(controller, path);
+				}, &st::menuIconShare);
+				raw->addAction(tr::lng_exd_plugin_view_code(tr::now), [=] {
+					ShowPluginCode(controller, name, path);
+				}, &st::exteraIconOpenCode);
+				raw->addAction(
+					tr::lng_exd_plugin_permissions_menu(tr::now),
+					[=] { ShowPluginPermissions(controller, id, name); },
+					&st::menuIconLock);
+				if (guard) {
+					raw->addAction(tr::lng_exd_guard_run(tr::now), [=] {
+						RunGuard(controller, path, id);
+					}, &st::menuIconAntispam);
+				}
+				if (suggested) {
+					raw->addAction(tr::lng_exd_plugin_port(tr::now), [=] {
+						Exd::PluginPorter::Start(controller, path);
+					}, &st::menuIconTranslate);
+				}
+				if (developer) {
+					raw->addAction(tr::lng_exd_plugin_reload(tr::now), [=] {
+						crl::on_main(controller, [=] {
+							Call(u"reload"_q, QJsonObject{ { u"id"_q, id } });
+							notifyListChanged();
+							controller->showToast(tr::lng_exd_plugin_reloaded(
+								tr::now,
+								lt_name,
+								name));
+						});
+					}, &st::menuIconRestore);
+				}
+				raw->popup(QCursor::pos());
+			});
 			const auto remove = Ui::CreateChild<Ui::IconButton>(
 				actions,
 				st::exteraPluginAction);
@@ -821,10 +1394,16 @@ void FillPluginsList(
 					left += button->width();
 				}
 				remove->moveToRight(0, 0, width);
+				more->moveToRight(remove->width(), 0, width);
 			}, actions->lifetime());
 			Ui::AddSkip(card, st::exteraPluginCardSkip);
 		}
 		container->showChildren();
+		for (const auto child : container->findChildren<QWidget*>()) {
+			if (!child->testAttribute(Qt::WA_WState_ExplicitShowHide)) {
+				child->show();
+			}
+		}
 		container->resizeToWidth(container->width());
 	};
 	fill();
@@ -1545,7 +2124,7 @@ void AddDescription(
 	});
 }
 
-void AddTopActions(
+Fn<void(Fn<void()>)> AddTopActions(
 		not_null<Ui::GenericBox*> box,
 		not_null<Window::SessionController*> controller,
 		const QString &path,
@@ -1561,7 +2140,7 @@ void AddTopActions(
 		p.setBrush(st::windowBgOver);
 		p.drawRoundedRect(actions->rect(), size / 2., size / 2.);
 	}, actions->lifetime());
-	const auto addButton = [&](int index, const style::icon &icon, Fn<void()> callback) {
+	const auto addButton = [=](int index, const style::icon &icon, Fn<void()> callback) {
 		const auto button = Ui::CreateChild<Ui::AbstractButton>(actions);
 		button->setGeometry(index * size, 0, size, size);
 		button->paintRequest() | rpl::on_next([=, &icon] {
@@ -1569,6 +2148,7 @@ void AddTopActions(
 			icon.paintInCenter(p, button->rect());
 		}, button->lifetime());
 		button->setClickedCallback(std::move(callback));
+		button->show();
 	};
 	auto index = 0;
 	if (!description.isEmpty()) {
@@ -1595,9 +2175,76 @@ void AddTopActions(
 		actions->raise();
 	}, actions->lifetime());
 	crl::on_main(actions, [=] { actions->raise(); });
+	const auto reported = actions->lifetime().make_state<bool>(false);
+	const auto weak = base::make_weak(actions);
+	return [=](Fn<void()> report) {
+		if (!weak || *reported) {
+			return;
+		}
+		*reported = true;
+		actions->resize(size * (count + 1), size);
+		addButton(count, st::exteraTopActionReport, std::move(report));
+		const auto width = box->width();
+		const auto &margin = st::exteraTopActionsMargin;
+		actions->moveToLeft(
+			width - margin.right() - actions->width(),
+			margin.top(),
+			width);
+		actions->update();
+		actions->raise();
+	};
 }
 
 } // namespace
+
+void AddDesktopPill(not_null<Ui::GenericBox*> box, QString ported) {
+	const auto text = tr::lng_exd_plugin_desktop(tr::now);
+	const auto &font = st::exteraInstallPillFont;
+	const auto &icon = st::exteraInstallPuzzle;
+	const auto padding = st::exteraInstallPillPadding;
+	const auto width = padding.left()
+		+ icon.width()
+		+ st::exteraInstallPillSkip
+		+ font->width(text)
+		+ padding.right();
+	const auto widget = box->addRow(
+		object_ptr<Ui::RpWidget>(box),
+		st::exteraInstallPillMargin);
+	widget->resize(width, st::exteraInstallPillHeight);
+	widget->paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(widget);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto color = st::boxTextFgGood->c;
+		auto bg = color;
+		bg.setAlphaF(0.16);
+		const auto left = (widget->width() - width) / 2;
+		const auto rect = QRect(left, 0, width, widget->height());
+		p.setPen(Qt::NoPen);
+		p.setBrush(bg);
+		p.drawRoundedRect(rect, rect.height() / 2., rect.height() / 2.);
+		const auto iconLeft = left + padding.left();
+		icon.paint(
+			p,
+			QPoint(iconLeft, (rect.height() - icon.height()) / 2),
+			widget->width(),
+			color);
+		p.setPen(color);
+		p.setFont(font);
+		p.drawText(
+			iconLeft + icon.width() + st::exteraInstallPillSkip,
+			(rect.height() - font->height) / 2 + font->ascent,
+			text);
+	}, widget->lifetime());
+	if (!ported.isEmpty()) {
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				rpl::single(ported),
+				st::exteraInstallVersion),
+			st::exteraInstallVersionPadding,
+			style::al_top);
+	}
+}
 
 void AddSourcePill(
 		not_null<Ui::GenericBox*> box,
@@ -1653,10 +2300,522 @@ void AddSourcePill(
 	});
 }
 
+void SendGuardReport(
+		not_null<Window::SessionController*> controller,
+		const QString &path,
+		const Exd::PluginGuard::Report &report) {
+	const auto meta = Call(u"metadata"_q, QJsonObject{
+		{ u"path"_q, path },
+	}).toObject();
+	auto text = QStringList{
+		tr::lng_exd_guard_report_header(tr::now),
+		tr::lng_exd_guard_report_name(tr::now)
+			+ u": "_q + meta.value(u"name"_q).toString(),
+		tr::lng_exd_guard_report_version(tr::now)
+			+ u": "_q + meta.value(u"version"_q).toString(),
+		tr::lng_exd_guard_report_author(tr::now)
+			+ u": "_q + meta.value(u"author"_q).toString(),
+		u"SHA-256: "_q + report.sha256,
+		tr::lng_exd_guard_report_score(tr::now)
+			+ u": "_q + QString::number(report.score) + u"/100"_q,
+		QString(),
+		Exd::PluginGuard::Summary(report),
+	};
+	const auto message = text.join('\n');
+	const auto session = &controller->session();
+	const auto weak = base::make_weak(controller);
+	const auto send = [=](not_null<PeerData*> peer) {
+		const auto strong = weak.get();
+		if (!strong) {
+			return;
+		}
+		const auto history = session->data().history(peer);
+		auto list = Storage::PrepareMediaList(
+			QStringList{ path },
+			st::sendMediaPreviewSize,
+			session->premium());
+		if (list.error == Ui::PreparedList::Error::None
+			&& !list.files.empty()) {
+			session->api().sendFiles(
+				std::move(list),
+				SendMediaType::File,
+				nullptr,
+				Api::SendAction(history));
+		}
+		auto action = Api::SendAction(history);
+		auto toSend = Api::MessageToSend(action);
+		toSend.textWithTags = TextWithTags{ message };
+		session->api().sendMessage(std::move(toSend));
+		strong->showToast(tr::lng_exd_guard_report_sent(tr::now));
+	};
+	session->api().request(MTPcontacts_ResolveUsername(
+		MTP_flags(0),
+		MTP_string(u"exDesktopPlugins"_q),
+		MTP_string()
+	)).done([=](const MTPcontacts_ResolvedPeer &result) {
+		const auto &data = result.data();
+		session->data().processUsers(data.vusers());
+		session->data().processChats(data.vchats());
+		const auto peer = session->data().peerLoaded(peerFromMTP(data.vpeer()));
+		const auto channel = peer ? peer->asChannel() : nullptr;
+		const auto monoforum = channel ? channel->monoforumLink() : nullptr;
+		if (monoforum && monoforum->amMonoforumAdmin()) {
+			if (const auto strong = weak.get()) {
+				QGuiApplication::clipboard()->setText(message);
+				strong->showToast(tr::lng_exd_guard_report_admin(tr::now));
+			}
+		} else if (monoforum && monoforum->isLoaded()) {
+			send(monoforum);
+		} else if (const auto strong = weak.get()) {
+			QGuiApplication::clipboard()->setText(message);
+			strong->showToast(tr::lng_exd_guard_report_copied(tr::now));
+			if (channel) {
+				strong->showPeerHistory(channel);
+			}
+		}
+	}).fail([=] {
+		if (const auto strong = weak.get()) {
+			strong->showToast(tr::lng_exd_guard_report_failed(tr::now));
+		}
+	}).send();
+}
+
+[[nodiscard]] QColor GuardLevelColor(const QString &level) {
+	if (level == u"high"_q) {
+		return ThreatColor(ThreatLevel::Danger);
+	} else if (level == u"medium"_q) {
+		return ThreatColor(ThreatLevel::Attention);
+	} else if (level == u"low"_q) {
+		return st::historyPeer6UserpicBg->c;
+	}
+	return st::historyPeer2UserpicBg->c;
+}
+
+[[nodiscard]] QString FindingLevelTitle(const QString &level) {
+	if (level == u"CRITICAL"_q) {
+		return tr::lng_exd_guard_finding_critical(tr::now);
+	} else if (level == u"HIGH"_q) {
+		return tr::lng_exd_guard_finding_high(tr::now);
+	}
+	return tr::lng_exd_guard_finding_warning(tr::now);
+}
+
+[[nodiscard]] QColor FindingColor(const QString &level) {
+	return (level == u"CRITICAL"_q)
+		? ThreatColor(ThreatLevel::Danger)
+		: (level == u"HIGH"_q)
+		? ThreatColor(ThreatLevel::Attention)
+		: st::windowSubTextFg->c;
+}
+
+[[nodiscard]] QString VectorTitle(const QString &verdict) {
+	if (verdict == u"MALICIOUS"_q) {
+		return tr::lng_exd_guard_vector_malicious(tr::now);
+	} else if (verdict == u"ANOMALY"_q) {
+		return tr::lng_exd_guard_vector_anomaly(tr::now);
+	} else if (verdict == u"CLEAN"_q) {
+		return tr::lng_exd_guard_vector_clean(tr::now);
+	}
+	return tr::lng_exd_guard_vector_unavailable(tr::now);
+}
+
+[[nodiscard]] QString LlmTitle(const Exd::PluginGuard::Report &report) {
+	if (!report.llmUsed) {
+		return report.llmError.isEmpty()
+			? tr::lng_exd_guard_llm_off(tr::now)
+			: tr::lng_exd_guard_llm_error(tr::now);
+	} else if (report.llmVerdict == u"MALICIOUS"_q) {
+		return tr::lng_exd_guard_llm_malicious(tr::now);
+	} else if (report.llmVerdict == u"SUSPICIOUS"_q) {
+		return tr::lng_exd_guard_llm_suspicious(tr::now);
+	}
+	return tr::lng_exd_guard_llm_safe(tr::now);
+}
+
+class GuardChip final : public Ui::RpWidget {
+public:
+	GuardChip(QWidget *parent, QString text, QColor color)
+	: RpWidget(parent)
+	, _text(std::move(text))
+	, _color(color) {
+		const auto &font = st::normalFont;
+		resize(
+			font->width(_text) + style::ConvertScale(16),
+			font->height + style::ConvertScale(6));
+	}
+
+	void setContent(QString text, QColor color) {
+		if (_text == text && _color == color) {
+			return;
+		}
+		_text = std::move(text);
+		_color = color;
+		const auto &font = st::normalFont;
+		resize(
+			font->width(_text) + style::ConvertScale(16),
+			font->height + style::ConvertScale(6));
+		update();
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		auto bg = _color;
+		bg.setAlphaF(0.16);
+		p.setPen(Qt::NoPen);
+		p.setBrush(bg);
+		p.drawRoundedRect(rect(), height() / 2., height() / 2.);
+		p.setPen(_color);
+		p.setFont(st::normalFont);
+		p.drawText(rect(), Qt::AlignCenter, _text);
+	}
+
+private:
+	QString _text;
+	QColor _color;
+
+};
+
+void AddGuardCard(
+		not_null<Ui::GenericBox*> box,
+		const QString &title,
+		const QString &chip,
+		QColor color,
+		QStringList lines) {
+	const auto card = AddCard(box);
+	const auto head = card->add(
+		object_ptr<Ui::FixedHeightWidget>(card, style::ConvertScale(36)),
+		QMargins(st::exteraInstallCardPadding.left(), 6, st::exteraInstallCardPadding.left(), 0));
+	const auto label = Ui::CreateChild<Ui::FlatLabel>(
+		head,
+		title,
+		st::exteraThreatTitle);
+	const auto badge = chip.isEmpty()
+		? nullptr
+		: Ui::CreateChild<GuardChip>(head, chip, color);
+	head->widthValue() | rpl::on_next([=](int width) {
+		const auto chipWidth = badge ? (badge->width() + 8) : 0;
+		label->resizeToWidth(width - chipWidth);
+		label->moveToLeft(0, (head->height() - label->height()) / 2, width);
+		if (badge) {
+			badge->moveToRight(0, (head->height() - badge->height()) / 2, width);
+		}
+	}, head->lifetime());
+	for (const auto &line : lines) {
+		const auto text = card->add(
+			object_ptr<Ui::FlatLabel>(
+				card,
+				rpl::single(line),
+				st::exteraThreatAbout),
+			QMargins(st::exteraInstallCardPadding.left(), 2, st::exteraInstallCardPadding.left(), 2));
+		text->setSelectable(true);
+	}
+	Ui::AddSkip(card, 8);
+}
+
+void ShowGuardAnalysis(
+		not_null<Window::SessionController*> controller,
+		const QString &path,
+		Exd::PluginGuard::Report report) {
+	using namespace Exd::PluginGuard;
+	const auto meta = Call(u"metadata"_q, QJsonObject{
+		{ u"path"_q, path },
+	}).toObject();
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(tr::lng_exd_guard_analysis());
+		box->setWidth(st::exteraInstallWidth);
+		const auto color = GuardLevelColor(report.level);
+		const auto score = box->addRow(
+			object_ptr<Ui::FixedHeightWidget>(box, style::ConvertScale(92)),
+			st::exteraInstallCardMargin);
+		const auto name = meta.value(u"name"_q).toString();
+		const auto level = LevelTitle(report.level);
+		score->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(score);
+			auto hq = PainterHighQualityEnabler(p);
+			const auto side = score->height() - style::ConvertScale(12);
+			const auto circle = QRectF(6, 6, side, side);
+			auto pen = QPen(color);
+			pen.setWidthF(style::ConvertScale(5.));
+			auto back = color;
+			back.setAlphaF(0.18);
+			p.setPen(QPen(back, pen.widthF()));
+			p.drawEllipse(circle.marginsRemoved(QMarginsF(3, 3, 3, 3)));
+			p.setPen(pen);
+			p.drawArc(
+				circle.marginsRemoved(QMarginsF(3, 3, 3, 3)),
+				90 * 16,
+				-int(360 * 16 * report.score / 100.));
+			p.setFont(st::semiboldFont->f);
+			auto big = st::semiboldFont->f;
+			big.setPixelSize(style::ConvertScale(22));
+			p.setFont(big);
+			p.drawText(circle, Qt::AlignCenter, QString::number(report.score));
+			const auto left = int(circle.right()) + style::ConvertScale(14);
+			p.setPen(st::windowBoldFg);
+			p.setFont(st::semiboldFont);
+			p.drawText(
+				left,
+				score->height() / 2 - style::ConvertScale(4),
+				name);
+			p.setPen(color);
+			p.setFont(st::normalFont);
+			p.drawText(
+				left,
+				score->height() / 2 + st::normalFont->height,
+				level + u" \u00B7 "_q + QString::number(report.score) + u"/100"_q);
+		}, score->lifetime());
+
+		auto vectorLines = QStringList();
+		if (report.modelUsed) {
+			vectorLines.push_back(tr::lng_exd_guard_vector_similarity(
+				tr::now,
+				lt_mean,
+				QString::number(report.meanSimilarity, 'f', 3),
+				lt_min,
+				QString::number(report.minSimilarity, 'f', 3)));
+			vectorLines.push_back(tr::lng_exd_guard_vector_malware_sim(
+				tr::now,
+				lt_amount,
+				QString::number(report.maxMalwareSimilarity, 'f', 3)));
+			vectorLines.push_back(tr::lng_exd_guard_vector_chunks(
+				tr::now,
+				lt_amount,
+				QString::number(report.scannedChunks),
+				lt_count_malware,
+				QString::number(report.malwareChunks),
+				lt_count_suspicious,
+				QString::number(report.suspiciousChunks)));
+			vectorLines.push_back(tr::lng_exd_guard_vector_base(
+				tr::now,
+				lt_clean,
+				QString::number(report.cleanVectors),
+				lt_malware,
+				QString::number(report.malwareVectors)));
+		} else {
+			vectorLines.push_back(tr::lng_exd_guard_no_model(tr::now));
+		}
+		AddGuardCard(
+			box,
+			tr::lng_exd_guard_vector_title(tr::now)
+				+ (report.modelVersion.isEmpty()
+					? QString()
+					: (u" v"_q + report.modelVersion)),
+			VectorTitle(report.vectorVerdict),
+			(report.vectorVerdict == u"MALICIOUS"_q)
+				? ThreatColor(ThreatLevel::Danger)
+				: (report.vectorVerdict == u"ANOMALY"_q)
+				? ThreatColor(ThreatLevel::Attention)
+				: (report.vectorVerdict == u"CLEAN"_q)
+				? st::historyPeer2UserpicBg->c
+				: st::windowSubTextFg->c,
+			vectorLines);
+
+		auto llmLines = QStringList();
+		if (report.llmUsed) {
+			llmLines.push_back(tr::lng_exd_guard_llm_confidence(
+				tr::now,
+				lt_amount,
+				QString::number(int(std::round(report.llmConfidence * 100)))));
+			if (!report.llmReason.isEmpty()) {
+				llmLines.push_back(report.llmReason);
+			}
+		} else if (!report.llmError.isEmpty()) {
+			llmLines.push_back(report.llmError.left(300));
+		} else {
+			llmLines.push_back(tr::lng_exd_guard_llm_off_about(tr::now));
+		}
+		AddGuardCard(
+			box,
+			tr::lng_exd_guard_llm(tr::now),
+			LlmTitle(report),
+			!report.llmUsed
+				? st::windowSubTextFg->c
+				: (report.llmVerdict == u"MALICIOUS"_q)
+				? ThreatColor(ThreatLevel::Danger)
+				: (report.llmVerdict == u"SUSPICIOUS"_q)
+				? ThreatColor(ThreatLevel::Attention)
+				: st::historyPeer2UserpicBg->c,
+			llmLines);
+
+		const auto threats = AddCard(box);
+		const auto threatsTitle = threats->add(
+			object_ptr<Ui::FlatLabel>(
+				threats,
+				tr::lng_exd_guard_threats(
+					tr::now,
+					lt_amount,
+					QString::number(report.findings.size())),
+				st::exteraThreatTitle),
+			QMargins(st::exteraInstallCardPadding.left(), 12, st::exteraInstallCardPadding.left(), 4));
+		(void)threatsTitle;
+		if (report.findings.empty()) {
+			threats->add(
+				object_ptr<Ui::FlatLabel>(
+					threats,
+					tr::lng_exd_guard_threats_none(),
+					st::exteraThreatAbout),
+				QMargins(st::exteraInstallCardPadding.left(), 0, st::exteraInstallCardPadding.left(), 0));
+		}
+		for (const auto &finding : report.findings) {
+			const auto row = threats->add(
+				object_ptr<Ui::VerticalLayout>(threats),
+				QMargins(st::exteraInstallCardPadding.left(), 6, st::exteraInstallCardPadding.left(), 0));
+			const auto head = row->add(
+				object_ptr<Ui::FixedHeightWidget>(row, style::ConvertScale(26)));
+			const auto chip = Ui::CreateChild<GuardChip>(
+				head,
+				FindingLevelTitle(finding.level),
+				FindingColor(finding.level));
+			const auto title = Ui::CreateChild<Ui::FlatLabel>(
+				head,
+				RuleTitle(finding.rule),
+				st::exteraThreatTitle);
+			head->widthValue() | rpl::on_next([=](int width) {
+				chip->moveToLeft(0, (head->height() - chip->height()) / 2, width);
+				const auto left = chip->width() + 8;
+				title->resizeToWidth(width - left);
+				title->moveToLeft(left, (head->height() - title->height()) / 2, width);
+			}, head->lifetime());
+			auto details = finding.detail;
+			if (finding.line > 0) {
+				details += u" \u00B7 "_q + tr::lng_exd_guard_line(
+					tr::now,
+					lt_amount,
+					QString::number(finding.line));
+			}
+			if (!details.trimmed().isEmpty()) {
+				const auto label = row->add(object_ptr<Ui::FlatLabel>(
+					row,
+					rpl::single(details),
+					st::exteraThreatAbout));
+				label->setSelectable(true);
+			}
+		}
+		Ui::AddSkip(threats, 10);
+
+		if (!report.endpoints.isEmpty()) {
+			AddGuardCard(
+				box,
+				tr::lng_exd_guard_network(tr::now),
+				QString::number(report.endpoints.size()),
+				st::windowSubTextFg->c,
+				report.endpoints);
+		}
+		auto capabilities = QStringList();
+		for (const auto &threat : CollectThreats(
+				meta.value(u"capabilities"_q).toObject())) {
+			capabilities.push_back(threat.title);
+		}
+		if (!capabilities.isEmpty()) {
+			AddGuardCard(
+				box,
+				tr::lng_exd_guard_capabilities(tr::now),
+				QString::number(capabilities.size()),
+				st::windowSubTextFg->c,
+				capabilities);
+		}
+		AddGuardCard(
+			box,
+			u"SHA-256"_q,
+			QString(),
+			QColor(),
+			{ report.sha256 });
+
+		if (report.level != u"clean"_q) {
+			box->addLeftButton(tr::lng_exd_guard_report(), [=] {
+				SendGuardReport(controller, path, report);
+				box->closeBox();
+			});
+		}
+		box->addButton(tr::lng_close(), [=] { box->closeBox(); });
+	}));
+}
+
+void FillGuardSummary(
+		not_null<Ui::VerticalLayout*> container,
+		not_null<Window::SessionController*> controller,
+		const QString &path,
+		const Exd::PluginGuard::Report *report,
+		Fn<void()> startManual) {
+	using namespace Exd::PluginGuard;
+	container->clear();
+	const auto card = container->add(
+		object_ptr<Ui::VerticalLayout>(container),
+		st::exteraInstallCardMargin);
+	PaintCardBackground(card);
+	if (!report) {
+		const auto row = card->add(object_ptr<ThreatRow>(
+			card,
+			st::windowSubTextFg->c,
+			st::exteraThreatOk,
+			startManual
+				? tr::lng_exd_guard_run(tr::now)
+				: tr::lng_exd_guard_checking(tr::now),
+			tr::lng_exd_guard_checking_about(tr::now),
+			startManual ? Chevron::Right : Chevron::None));
+		if (startManual) {
+			row->setClickedCallback(startManual);
+		} else {
+			row->setAttribute(Qt::WA_TransparentForMouseEvents);
+		}
+	} else if (!report->ok) {
+		const auto row = card->add(object_ptr<ThreatRow>(
+			card,
+			st::windowSubTextFg->c,
+			st::exteraThreatAlert,
+			tr::lng_exd_guard_failed(tr::now),
+			report->error,
+			Chevron::None));
+		row->setAttribute(Qt::WA_TransparentForMouseEvents);
+	} else {
+		const auto about = LevelTitle(report->level)
+			+ u" \u00B7 "_q
+			+ tr::lng_exd_guard_vector_short(tr::now)
+			+ u": "_q
+			+ VectorTitle(report->vectorVerdict).toLower()
+			+ u" \u00B7 "_q
+			+ tr::lng_exd_guard_llm_short(tr::now)
+			+ u": "_q
+			+ LlmTitle(*report).toLower();
+		const auto row = card->add(object_ptr<ThreatRow>(
+			card,
+			GuardLevelColor(report->level),
+			(report->level == u"clean"_q || report->level == u"low"_q)
+				? st::exteraThreatOk
+				: st::exteraThreatAlert,
+			tr::lng_exd_guard_result(
+				tr::now,
+				lt_level,
+				tr::lng_exd_guard_name(tr::now),
+				lt_score,
+				QString::number(report->score)),
+			about,
+			Chevron::Right));
+		const auto copy = *report;
+		const auto weak = base::make_weak(controller);
+		row->setClickedCallback([=] {
+			if (const auto strong = weak.get()) {
+				ShowGuardAnalysis(strong, path, copy);
+			}
+		});
+	}
+	container->resizeToWidth(container->width());
+	container->showChildren();
+	for (const auto child : container->findChildren<QWidget*>()) {
+		if (!child->testAttribute(Qt::WA_WState_ExplicitShowHide)) {
+			child->show();
+		}
+	}
+}
+
 void ShowInstallBoxResolved(
 		not_null<Window::SessionController*> controller,
 		const QString &path,
-		bool trusted) {
+		bool trusted,
+		std::optional<QString> blocked = std::nullopt,
+		bool runGuard = false) {
 	const auto meta = Call(u"metadata"_q, QJsonObject{
 		{ u"path"_q, path },
 	}).toObject();
@@ -1718,10 +2877,19 @@ void ShowInstallBoxResolved(
 			label->setMarkedText(line, context);
 			SetupLinks(label, box);
 		}
-		AddSourcePill(box, controller, trusted);
+		if (meta.value(u"ported_from"_q).toString().isEmpty()) {
+			AddSourcePill(box, controller, trusted);
+		}
+		if (meta.value(u"desktop"_q).toBool()) {
+			AddDesktopPill(
+				box,
+				meta.value(u"ported_from"_q).toString().isEmpty()
+					? QString()
+					: PortedLabel(meta));
+		}
 
 		const auto description = meta.value(u"description"_q).toString();
-		AddTopActions(box, controller, path, description);
+		const auto addReport = AddTopActions(box, controller, path, description);
 		if (!description.isEmpty()) {
 			AddDescription(box, WithLinks(description), context);
 		}
@@ -1730,15 +2898,125 @@ void ShowInstallBoxResolved(
 			controller,
 			path,
 			CollectThreats(meta.value(u"capabilities"_q).toObject()));
+		const auto guardMode = Exd::PluginGuard::Mode();
+		const auto guardBox = (guardMode == 2)
+			? nullptr
+			: box->addRow(
+				object_ptr<Ui::VerticalLayout>(box),
+				style::margins());
+		const auto installText = box->lifetime().make_state<
+			rpl::variable<QString>>(exists
+				? tr::lng_extera_plugins_update(tr::now)
+				: tr::lng_extera_plugins_install(tr::now));
+		const auto installButton = box->lifetime().make_state<
+			QPointer<Ui::RoundButton>>();
+		const auto reportSlot = box->lifetime().make_state<
+			QPointer<Ui::VerticalLayout>>();
+		const auto startGuard = std::make_shared<Fn<void()>>();
+		*startGuard = [=] {
+			if (!guardBox) {
+				return;
+			}
+			FillGuardSummary(guardBox, controller, path, nullptr, nullptr);
+			if (*installButton) {
+				(*installButton)->setDisabled(true);
+				*installText = tr::lng_exd_guard_checking(tr::now);
+			}
+			const auto weakBox = base::make_weak(box.get());
+			Exd::PluginGuard::Scan(path, [=](Exd::PluginGuard::Report report) {
+				if (!weakBox) {
+					return;
+				}
+				FillGuardSummary(guardBox, controller, path, &report, nullptr);
+				const auto high = report.ok && (report.level == u"high"_q);
+				if (high) {
+					Exd::PluginGuard::MarkBlocked(report.sha256);
+				} else if (report.ok) {
+					Exd::PluginGuard::Unblock(report.sha256);
+				}
+				if (*installButton) {
+					(*installButton)->setDisabled(high);
+					*installText = high
+						? tr::lng_exd_guard_install_blocked(tr::now)
+						: exists
+						? tr::lng_extera_plugins_update(tr::now)
+						: tr::lng_extera_plugins_install(tr::now);
+				}
+				if (high || report.level == u"medium"_q) {
+					addReport([=] {
+						SendGuardReport(controller, path, report);
+						box->closeBox();
+					});
+				}
+			});
+		};
+		if (guardBox) {
+			if (runGuard) {
+				FillGuardSummary(guardBox, controller, path, nullptr, nullptr);
+			} else {
+				FillGuardSummary(
+					guardBox,
+					controller,
+					path,
+					nullptr,
+					[=] { (*startGuard)(); });
+			}
+		}
+		(void)reportSlot;
 
+		if (blocked) {
+			box->addRow(
+				object_ptr<Ui::FlatLabel>(
+					box,
+					tr::lng_exd_plugin_danger_title(),
+					st::exteraBlockedTitle),
+				st::exteraInstallVersionPadding,
+				style::al_top);
+			box->addRow(
+				object_ptr<Ui::FlatLabel>(
+					box,
+					rpl::single(*blocked),
+					st::exteraBlockedText),
+				st::exteraInstallVersionPadding,
+				style::al_top);
+			const auto close = box->addRow(
+				object_ptr<Ui::RoundButton>(
+					box,
+					tr::lng_close(),
+					st::exteraInstallCancel),
+				style::margins(
+					st::exteraInstallButtonMargin.left(),
+					st::exteraInstallButtonMargin.top(),
+					st::exteraInstallButtonMargin.right(),
+					st::exteraInstallCancelMargin.bottom()));
+			close->setFullRadius(true);
+			close->setTextTransform(
+				Ui::RoundButtonTextTransform::NoTransform);
+			box->widthValue() | rpl::on_next([=](int width) {
+				const auto margin = st::exteraInstallButtonMargin;
+				close->setFullWidth(width - margin.left() - margin.right());
+			}, close->lifetime());
+			close->setClickedCallback([=] { box->closeBox(); });
+			if (guardBox && runGuard) {
+				(*startGuard)();
+			}
+			return;
+		}
 		const auto install = box->addRow(
 			object_ptr<Ui::RoundButton>(
 				box,
-				exists
-					? tr::lng_extera_plugins_update()
-					: tr::lng_extera_plugins_install(),
+				installText->value(),
 				st::exteraInstallButton),
 			st::exteraInstallButtonMargin);
+		*installButton = install;
+		const auto port = Exd::PluginPorter::Suggested(meta)
+			? box->addRow(
+				object_ptr<Ui::RoundButton>(
+					box,
+					tr::lng_exd_port_action(),
+					st::exteraInstallCancel),
+				st::exteraInstallCancelMargin)
+			: nullptr;
 		const auto cancel = box->addRow(
 			object_ptr<Ui::RoundButton>(
 				box,
@@ -1749,22 +3027,49 @@ void ShowInstallBoxResolved(
 			button->setFullRadius(true);
 			button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 		}
+		if (port) {
+			port->setFullRadius(true);
+			port->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
+			port->setClickedCallback([=] {
+				const auto target = path;
+				const auto weakController = base::make_weak(controller);
+				crl::on_main([=] {
+					if (const auto strong = weakController.get()) {
+						Exd::PluginPorter::Start(strong, target);
+					}
+				});
+				box->closeBox();
+			});
+		}
 		box->widthValue() | rpl::on_next([=](int width) {
 			const auto margin = st::exteraInstallButtonMargin;
 			const auto full = width - margin.left() - margin.right();
 			install->setFullWidth(full);
 			cancel->setFullWidth(full);
+			if (port) {
+				port->setFullWidth(full);
+			}
 		}, install->lifetime());
 		cancel->setClickedCallback([=] { box->closeBox(); });
+		if (guardBox && runGuard) {
+			(*startGuard)();
+		}
 		install->setClickedCallback([=] {
+			if (install->isDisabled()) {
+				return;
+			}
 			const auto name = meta.value(u"name"_q).toString();
 			const auto info = Call(u"install"_q, QJsonObject{
 				{ u"path"_q, path },
 			}).toObject();
+			const auto window = controller;
+			const auto updated = exists;
 			box->closeBox();
 			notifyListChanged();
-			controller->showToast(info.value(u"error"_q).toString().isEmpty()
-				? (exists
+			window->showToast(info.value(u"installing"_q).toBool()
+				? tr::lng_exd_plugin_installing_deps_toast(tr::now, lt_name, name)
+				: info.value(u"error"_q).toString().isEmpty()
+				? (updated
 					? tr::lng_extera_plugins_updated(tr::now, lt_name, name)
 					: tr::lng_extera_plugins_installed_name(
 						tr::now,
@@ -1838,26 +3143,6 @@ void ShowSourceBox(
 	}));
 }
 
-void ShowDangerBox(not_null<Window::SessionController*> controller) {
-	controller->show(Ui::MakeInformBox({
-		.text = tr::lng_exd_plugin_danger_text(),
-		.title = tr::lng_exd_plugin_danger_title(),
-	}));
-}
-
-void ShowUnknownBlockedBox(
-		not_null<Window::SessionController*> controller) {
-	controller->show(Ui::MakeConfirmBox({
-		.text = tr::lng_exd_plugin_unknown_blocked(),
-		.confirmed = [=](Fn<void()> close) {
-			close();
-			UrlClickHandler::Open(u"tg://settings/extera/plugins"_q);
-		},
-		.confirmText = tr::lng_extera_safe_mode_open(),
-		.title = tr::lng_extera_plugins_unknown_source(),
-	}));
-}
-
 void ShowUnknownSourcesWarning(
 		not_null<Window::SessionController*> controller,
 		Fn<void(bool)> done) {
@@ -1870,14 +3155,42 @@ void ShowUnknownSourcesWarning(
 			int baseX = 0;
 		};
 		const auto state = box->lifetime().make_state<State>();
-		box->setTitle(tr::lng_extera_plugins_unknown());
+		box->setStyle(st::exteraInstallBox);
+		box->setWidth(st::exteraInstallWidth);
+		box->setNoContentMargin(true);
 		box->addRow(
 			object_ptr<Ui::FlatLabel>(
 				box,
-				tr::lng_exd_unknown_warning(tr::rich),
-				st::boxLabel),
-			st::boxRowPadding);
-		const auto confirm = box->addButton(
+				tr::lng_extera_plugins_unknown(),
+				st::exteraInstallName),
+			QMargins(22, 28, 22, 0),
+			style::al_top);
+		AddColorPill(
+			box,
+			tr::lng_extera_plugins_unknown_source(tr::now),
+			st::exteraInstallShield,
+			[] { return st::historyPeer1UserpicBg->c; });
+		AddGuardCard(
+			box,
+			tr::lng_exd_unknown_risk_title(tr::now),
+			QString(),
+			st::historyPeer1UserpicBg->c,
+			{
+				tr::lng_exd_unknown_risk_account(tr::now),
+				tr::lng_exd_unknown_risk_check(tr::now),
+			});
+		AddGuardCard(
+			box,
+			tr::lng_exd_unknown_protect_title(tr::now),
+			QString(),
+			st::boxTextFgGood->c,
+			{
+				QString::fromUtf8("\xE2\x80\xA2 ") + tr::lng_exd_unknown_protect_guard(tr::now),
+				QString::fromUtf8("\xE2\x80\xA2 ") + tr::lng_exd_unknown_protect_sandbox(tr::now),
+				QString::fromUtf8("\xE2\x80\xA2 ") + tr::lng_exd_unknown_protect_permissions(tr::now),
+			});
+		const auto confirm = AddPortButton(
+			box,
 			state->left.value() | rpl::map([](int left) {
 				return (left > 0)
 					? tr::lng_exd_unknown_allow_wait(
@@ -1886,8 +3199,8 @@ void ShowUnknownSourcesWarning(
 						QString::number(left))
 					: tr::lng_extera_plugins_unknown_allow(tr::now);
 			}),
-			[=] {},
-			st::attentionBoxButton);
+			true,
+			false);
 		confirm->setClickedCallback([=] {
 			if (state->left.current() > 0) {
 				if (!state->shake.animating()) {
@@ -1908,7 +3221,9 @@ void ShowUnknownSourcesWarning(
 			done(true);
 			box->closeBox();
 		});
-		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+		AddPortButton(box, tr::lng_cancel(), false, true)->setClickedCallback([=] {
+			box->closeBox();
+		});
 		state->timer.setCallback([=] {
 			const auto left = state->left.current() - 1;
 			state->left = std::max(left, 0);
@@ -1925,10 +3240,73 @@ void ShowUnknownSourcesWarning(
 	}));
 }
 
+void ShowGuarded(
+		not_null<Window::SessionController*> controller,
+		const QString &path,
+		bool trusted) {
+	ShowInstallBoxResolved(
+		controller,
+		path,
+		trusted,
+		std::nullopt,
+		Exd::PluginGuard::AutoOnInstall());
+}
+
+void RunGuard(
+		not_null<Window::SessionController*> controller,
+		const QString &path,
+		const QString &id) {
+	controller->showToast(tr::lng_exd_guard_checking(tr::now));
+	const auto weak = base::make_weak(controller);
+	Exd::PluginGuard::Scan(path, [=](Exd::PluginGuard::Report report) {
+		const auto strong = weak.get();
+		if (!strong) {
+			return;
+		}
+		if (!report.ok) {
+			strong->showToast(tr::lng_exd_guard_failed(tr::now));
+			return;
+		}
+		if (report.level == u"high"_q) {
+			Exd::PluginGuard::MarkBlocked(report.sha256);
+			Call(u"set_enabled"_q, QJsonObject{
+				{ u"id"_q, id },
+				{ u"enabled"_q, false },
+			});
+			notifyListChanged();
+			strong->showToast(tr::lng_exd_guard_disabled(tr::now));
+		} else {
+			Exd::PluginGuard::Unblock(report.sha256);
+		}
+		ShowGuardAnalysis(strong, path, report);
+	});
+}
+
 void ShowInstallBox(
 		not_null<Window::SessionController*> controller,
 		const QString &path,
 		bool trusted) {
+	if (const auto hash = Exd::PluginGuard::FileHash(path);
+		Exd::PluginGuard::IsBlocked(hash)) {
+		const auto weak = base::make_weak(controller);
+		Exd::PluginGuard::Scan(path, [=](Exd::PluginGuard::Report report) {
+			const auto strong = weak.get();
+			if (!strong) {
+				return;
+			}
+			if (report.ok && report.level != u"high"_q) {
+				Exd::PluginGuard::Unblock(hash);
+				ShowInstallBox(strong, path, trusted);
+				return;
+			}
+			ShowInstallBoxResolved(
+				strong,
+				path,
+				false,
+				tr::lng_exd_guard_blocked_before(tr::now));
+		});
+		return;
+	}
 	const auto meta = Call(u"metadata"_q, QJsonObject{
 		{ u"path"_q, path },
 	}).toObject();
@@ -1938,16 +3316,21 @@ void ShowInstallBox(
 	}
 	const auto capabilities = meta.value(u"capabilities"_q).toObject();
 	if (!capabilities.value(u"obfuscation"_q).toArray().isEmpty()) {
-		ShowDangerBox(controller);
+		ShowInstallBoxResolved(
+			controller,
+			path,
+			false,
+			tr::lng_exd_plugin_danger_text(tr::now),
+			true);
 		return;
 	}
 	if (trusted) {
 		Call(u"trust"_q, QJsonObject{ { u"path"_q, path } });
-		ShowInstallBoxResolved(controller, path, true);
+		ShowGuarded(controller, path, true);
 		return;
 	}
 	if (Call(u"is_trusted"_q, QJsonObject{ { u"path"_q, path } }).toBool()) {
-		ShowInstallBoxResolved(controller, path, true);
+		ShowGuarded(controller, path, true);
 		return;
 	}
 	controller->showToast(tr::lng_exd_plugin_checking_source(tr::now));
@@ -1959,11 +3342,22 @@ void ShowInstallBox(
 		}
 		if (ok) {
 			Call(u"trust"_q, QJsonObject{ { u"path"_q, path } });
-			ShowInstallBoxResolved(strong, path, true);
+			ShowGuarded(strong, path, true);
 		} else if (Extera::Bool(u"plugins_unknown_sources"_q)) {
-			ShowInstallBoxResolved(strong, path, false);
+			ShowGuarded(strong, path, false);
 		} else {
-			ShowUnknownBlockedBox(strong);
+			const auto again = base::make_weak(strong);
+			ShowUnknownSourcesWarning(strong, [=](bool allowed) {
+				const auto controller = again.get();
+				if (!allowed || !controller) {
+					return;
+				}
+				Config::Instance().setBool(u"plugins_unknown_sources"_q, true);
+				Call(u"unknown_sources"_q, QJsonObject{
+					{ u"enabled"_q, true },
+				});
+				ShowGuarded(controller, path, false);
+			});
 		}
 	});
 }
@@ -1972,7 +3366,7 @@ void ChooseAndInstall(not_null<Window::SessionController*> controller) {
 	FileDialog::GetOpenPath(
 		Core::App().getFileDialogParent(),
 		tr::lng_extera_plugins_install(tr::now),
-		u"exDesktop Plugin (*.plugin);;Python (*.py)"_q,
+		u"exDesktop Plugin (*.plugin *.elyx *.eaf);;Python (*.py)"_q,
 		[=](FileDialog::OpenResult &&result) {
 			if (!result.paths.isEmpty()) {
 				ShowInstallBox(controller, result.paths.front(), false);
@@ -1997,6 +3391,37 @@ void AddChatMenuItems(
 	}
 }
 
+void AddProfileMenuItems(
+		const Fn<void(QString, Fn<void()>)> &add,
+		not_null<PeerData*> peer) {
+	if (!Started()) {
+		return;
+	}
+	const auto dialog = DialogId(peer);
+	for (const auto &item : MenuItems(u"profile_action_menu"_q)) {
+		const auto id = item.id;
+		add(item.text, [=] {
+			ClickMenuItem(id, QJsonObject{
+				{ u"peer"_q, double(dialog) },
+			});
+		});
+	}
+}
+
+void AddDrawerMenuItems(const Fn<void(QString, Fn<void()>)> &add) {
+	if (!Started()) {
+		return;
+	}
+	for (const auto type : { u"drawer_menu"_q, u"main_menu"_q }) {
+		for (const auto &item : MenuItems(type)) {
+			const auto id = item.id;
+			add(item.text, [=] {
+				ClickMenuItem(id, QJsonObject());
+			});
+		}
+	}
+}
+
 void AddMessageMenuItems(
 		not_null<Ui::PopupMenu*> menu,
 		not_null<HistoryItem*> item) {
@@ -2016,6 +3441,1231 @@ void AddMessageMenuItems(
 			});
 		}, &st::menuIconBotCommands);
 	}
+}
+
+namespace {
+
+// Port
+
+[[nodiscard]] QString PortServiceName(int provider) {
+	using Phrase = tr::phrase<>;
+	static const auto names = std::array<const Phrase*, 10>{
+		&tr::lng_exd_port_provider_none,
+		&tr::lng_exd_port_provider_openai,
+		&tr::lng_exd_port_provider_anthropic,
+		&tr::lng_exd_port_provider_openrouter,
+		&tr::lng_exd_port_provider_groq,
+		&tr::lng_exd_port_provider_deepseek,
+		&tr::lng_exd_port_provider_ollama,
+		&tr::lng_exd_port_provider_lmstudio,
+		&tr::lng_exd_port_provider_custom,
+		&tr::lng_exd_port_provider_gemini,
+	};
+	return (provider >= 0 && provider < int(names.size()))
+		? (*names[provider])(tr::now)
+		: QString();
+}
+
+[[nodiscard]] QString PortSeconds(int ms) {
+	return tr::lng_exd_port_sec(
+		tr::now,
+		lt_seconds,
+		QString::number(std::max(ms, 0) / 1000));
+}
+
+void AddColorPill(
+		not_null<Ui::GenericBox*> box,
+		const QString &text,
+		const style::icon &icon,
+		Fn<QColor()> color) {
+	const auto &font = st::exteraInstallPillFont;
+	const auto padding = st::exteraInstallPillPadding;
+	const auto width = padding.left()
+		+ icon.width()
+		+ st::exteraInstallPillSkip
+		+ font->width(text)
+		+ padding.right();
+	const auto widget = box->addRow(
+		object_ptr<Ui::RpWidget>(box),
+		st::exteraInstallPillMargin);
+	widget->resize(width, st::exteraInstallPillHeight);
+	widget->paintRequest() | rpl::on_next([=, &icon] {
+		auto p = QPainter(widget);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto fg = color();
+		auto bg = fg;
+		bg.setAlphaF(0.16);
+		const auto left = (widget->width() - width) / 2;
+		const auto rect = QRect(left, 0, width, widget->height());
+		p.setPen(Qt::NoPen);
+		p.setBrush(bg);
+		p.drawRoundedRect(rect, rect.height() / 2., rect.height() / 2.);
+		const auto iconLeft = left + padding.left();
+		icon.paint(
+			p,
+			QPoint(iconLeft, (rect.height() - icon.height()) / 2),
+			widget->width(),
+			fg);
+		p.setPen(fg);
+		p.setFont(font);
+		p.drawText(
+			iconLeft + icon.width() + st::exteraInstallPillSkip,
+			(rect.height() - font->height) / 2 + font->ascent,
+			text);
+	}, widget->lifetime());
+}
+
+void AddPortHeader(
+		not_null<Ui::GenericBox*> box,
+		not_null<Window::SessionController*> controller,
+		const QJsonObject &meta) {
+	box->setStyle(st::exteraInstallBox);
+	box->setWidth(st::exteraInstallWidth);
+	box->setNoContentMargin(true);
+	AddInstallIcon(box, controller, meta.value(u"icon"_q).toString());
+	box->addRow(
+		object_ptr<Ui::FlatLabel>(
+			box,
+			rpl::single(meta.value(u"name"_q).toString()),
+			st::exteraInstallName),
+		st::exteraInstallNamePadding,
+		style::al_top);
+	auto line = QStringList();
+	if (const auto version = meta.value(u"version"_q).toString();
+		!version.isEmpty()) {
+		line.push_back(tr::lng_extera_plugins_version(tr::now)
+			+ ' '
+			+ version);
+	}
+	if (const auto author = meta.value(u"author"_q).toString();
+		!author.isEmpty()) {
+		line.push_back(author);
+	}
+	if (!line.isEmpty()) {
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				rpl::single(line.join(QString::fromUtf8(" \xE2\x80\xA2 "))),
+				st::exteraInstallVersion),
+			st::exteraInstallVersionPadding,
+			style::al_top);
+	}
+}
+
+[[nodiscard]] not_null<Ui::RoundButton*> AddPortButton(
+		not_null<Ui::GenericBox*> box,
+		rpl::producer<QString> text,
+		bool primary,
+		bool last) {
+	const auto button = box->addRow(
+		object_ptr<Ui::RoundButton>(
+			box,
+			std::move(text),
+			primary ? st::exteraInstallButton : st::exteraInstallCancel),
+		primary
+			? st::exteraInstallButtonMargin
+			: last
+			? st::exteraInstallCancelMargin
+			: style::margins(
+				st::exteraInstallCancelMargin.left(),
+				st::exteraInstallCancelMargin.top(),
+				st::exteraInstallCancelMargin.right(),
+				0));
+	button->setFullRadius(true);
+	button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
+	box->widthValue() | rpl::on_next([=](int width) {
+		const auto margin = st::exteraInstallButtonMargin;
+		button->setFullWidth(width - margin.left() - margin.right());
+	}, button->lifetime());
+	return button;
+}
+
+void AddPortStep(
+		not_null<Ui::VerticalLayout*> card,
+		const QString &title,
+		const QString &status,
+		QColor color,
+		const QStringList &details) {
+	const auto head = card->add(
+		object_ptr<Ui::FixedHeightWidget>(card, style::ConvertScale(34)),
+		QMargins(st::exteraInstallCardPadding.left(), 4, st::exteraInstallCardPadding.left(), 0));
+	const auto label = Ui::CreateChild<Ui::FlatLabel>(
+		head,
+		title,
+		st::exteraThreatTitle);
+	const auto chip = status.isEmpty()
+		? nullptr
+		: Ui::CreateChild<GuardChip>(head, status, color);
+	head->widthValue() | rpl::on_next([=](int width) {
+		const auto chipWidth = chip ? (chip->width() + 8) : 0;
+		label->resizeToWidth(width - chipWidth);
+		label->moveToLeft(0, (head->height() - label->height()) / 2, width);
+		if (chip) {
+			chip->moveToRight(0, (head->height() - chip->height()) / 2, width);
+		}
+	}, head->lifetime());
+	label->show();
+	if (chip) {
+		chip->show();
+	}
+	head->show();
+	for (const auto &line : details) {
+		const auto text = card->add(
+			object_ptr<Ui::FlatLabel>(
+				card,
+				rpl::single(line),
+				st::exteraThreatAbout),
+			QMargins(st::exteraInstallCardPadding.left(), 0, st::exteraInstallCardPadding.left(), 4));
+		text->setSelectable(true);
+		text->show();
+	}
+}
+
+struct PortStepView {
+	GuardChip *chip = nullptr;
+	Ui::SlideWrap<Ui::FlatLabel> *details = nullptr;
+	std::shared_ptr<rpl::variable<QString>> text;
+};
+
+struct PortStepsView {
+	PortStepView prepare;
+	PortStepView model;
+	PortStepView check;
+};
+
+[[nodiscard]] PortStepView AddPortStepView(
+		not_null<Ui::VerticalLayout*> card,
+		const QString &title) {
+	auto result = PortStepView{
+		.text = std::make_shared<rpl::variable<QString>>(),
+	};
+	const auto left = st::exteraInstallCardPadding.left();
+	const auto head = card->add(
+		object_ptr<Ui::FixedHeightWidget>(card, style::ConvertScale(34)),
+		QMargins(left, 4, left, 0));
+	const auto label = Ui::CreateChild<Ui::FlatLabel>(
+		head,
+		title,
+		st::exteraThreatTitle);
+	const auto chip = Ui::CreateChild<GuardChip>(
+		head,
+		tr::lng_exd_port_step_pending(tr::now),
+		st::windowSubTextFg->c);
+	rpl::combine(
+		head->widthValue(),
+		chip->widthValue()
+	) | rpl::on_next([=](int width, int chipWidth) {
+		label->resizeToWidth(width - chipWidth - 8);
+		label->moveToLeft(0, (head->height() - label->height()) / 2, width);
+		chip->moveToRight(0, (head->height() - chip->height()) / 2, width);
+	}, head->lifetime());
+	label->show();
+	chip->show();
+	head->show();
+	const auto details = card->add(
+		object_ptr<Ui::SlideWrap<Ui::FlatLabel>>(
+			card,
+			object_ptr<Ui::FlatLabel>(
+				card,
+				result.text->value(),
+				st::exteraThreatAbout),
+			QMargins(left, 0, left, 4)));
+	details->entity()->setSelectable(true);
+	details->toggle(false, anim::type::instant);
+	result.chip = chip;
+	result.details = details;
+	return result;
+}
+
+void UpdatePortStep(
+		const PortStepView &view,
+		const QString &status,
+		QColor color,
+		const QStringList &lines) {
+	view.chip->setContent(status, color);
+	const auto text = lines.join(u"\n"_q);
+	if (view.text->current() != text) {
+		*view.text = text;
+	}
+	view.details->toggle(!text.isEmpty(), anim::type::instant);
+}
+
+void UpdatePortSteps(
+		const PortStepsView &views,
+		const Exd::PluginPorter::Progress &progress,
+		int waiting) {
+	using Stage = Exd::PluginPorter::Progress::Stage;
+	const auto good = st::boxTextFgGood->c;
+	const auto active = st::windowActiveTextFg->c;
+	const auto muted = st::windowSubTextFg->c;
+	UpdatePortStep(
+		views.prepare,
+		tr::lng_exd_port_step_done(tr::now),
+		good,
+		{ tr::lng_exd_port_step_prepare_info(
+			tr::now,
+			lt_hints,
+			QString::number(progress.hints.size()),
+			lt_sections,
+			progress.sections.isEmpty()
+				? u"0"_q
+				: progress.sections.join(u", "_q)) });
+	const auto requesting = (progress.stage == Stage::Requesting)
+		|| (progress.stage == Stage::Fixing);
+	auto model = QStringList();
+	if (progress.attempt > 0) {
+		model.push_back(tr::lng_exd_port_step_attempt(
+			tr::now,
+			lt_attempt,
+			QString::number(progress.attempt),
+			lt_total,
+			QString::number(progress.attempts)));
+	}
+	if (requesting) {
+		model.push_back(tr::lng_exd_port_step_waiting_for(
+			tr::now,
+			lt_time,
+			PortSeconds(waiting)));
+	} else if (progress.elapsed > 0) {
+		model.push_back(tr::lng_exd_port_step_answered(
+			tr::now,
+			lt_time,
+			PortSeconds(progress.elapsed)));
+	}
+	if (!progress.requested.isEmpty()) {
+		model.push_back(tr::lng_exd_port_docs_requested(
+			tr::now,
+			lt_list,
+			progress.requested.join(u", "_q)));
+	}
+	UpdatePortStep(
+		views.model,
+		requesting
+			? tr::lng_exd_port_step_active(tr::now)
+			: tr::lng_exd_port_step_done(tr::now),
+		requesting ? active : good,
+		model);
+	auto check = QStringList();
+	if (progress.fixed > 0) {
+		check.push_back(tr::lng_exd_port_fixed(
+			tr::now,
+			lt_value,
+			QString::number(progress.fixed)));
+	}
+	for (const auto &error : progress.errors.mid(0, 3)) {
+		check.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + error);
+	}
+	const auto checking = (progress.stage == Stage::Checking);
+	const auto fixing = (progress.stage == Stage::Fixing);
+	UpdatePortStep(
+		views.check,
+		checking
+			? tr::lng_exd_port_step_active(tr::now)
+			: fixing
+			? tr::lng_exd_port_step_fixing(tr::now)
+			: tr::lng_exd_port_step_pending(tr::now),
+		(checking || fixing) ? active : muted,
+		check);
+}
+
+void ShowPortResult(
+		not_null<Window::SessionController*> controller,
+		const QString &path,
+		const QJsonObject &meta,
+		const Exd::PluginPorter::Progress &progress,
+		const Exd::PluginPorter::Info &info) {
+	using Stage = Exd::PluginPorter::Progress::Stage;
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		AddPortHeader(box, controller, meta);
+		const auto good = st::boxTextFgGood->c;
+		const auto attention = st::historyPeer3UserpicBg->c;
+		const auto bad = st::historyPeer1UserpicBg->c;
+		const auto stats = tr::lng_exd_port_stats(
+			tr::now,
+			lt_attempts,
+			QString::number(std::max(progress.attempt, 1)),
+			lt_time,
+			PortSeconds(progress.total),
+			lt_model,
+			PortServiceName(info.provider)
+				+ (info.model.isEmpty() ? QString() : (u" / "_q + info.model)));
+		const auto list = [&](const QString &key) {
+			auto result = QStringList();
+			for (const auto &value : progress.report.value(key).toArray()) {
+				result.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + value.toString());
+			}
+			return result;
+		};
+		if (progress.stage == Stage::Done) {
+			AddColorPill(
+				box,
+				tr::lng_exd_plugin_ported_os(tr::now, lt_os, DesktopOsName(QString())),
+				st::exteraInstallTranslate,
+				[] { return st::boxTextFgGood->c; });
+			AddGuardCard(
+				box,
+				tr::lng_exd_port_done(tr::now),
+				QString(),
+				good,
+				QStringList{
+					tr::lng_exd_port_done_about(tr::now),
+					stats,
+				} + (progress.library
+					? QStringList{ tr::lng_exd_port_library(tr::now) }
+					: QStringList()));
+			const auto kept = list(u"kept"_q);
+			const auto changed = list(u"changed"_q);
+			const auto dropped = list(u"dropped"_q);
+			if (!kept.isEmpty()) {
+				AddGuardCard(
+					box,
+					tr::lng_exd_port_kept(tr::now),
+					QString::number(kept.size()),
+					good,
+					kept);
+			}
+			if (!changed.isEmpty()) {
+				AddGuardCard(
+					box,
+					tr::lng_exd_port_changed(tr::now),
+					QString::number(changed.size()),
+					st::windowActiveTextFg->c,
+					changed);
+			}
+			if (!dropped.isEmpty()) {
+				AddGuardCard(
+					box,
+					tr::lng_exd_port_dropped(tr::now),
+					QString::number(dropped.size()),
+					attention,
+					dropped);
+			}
+			const auto install = AddPortButton(
+				box,
+				tr::lng_extera_plugins_install(),
+				true,
+				false);
+			const auto saved = progress.path;
+			install->setClickedCallback([=] {
+				const auto target = saved;
+				const auto weakController = base::make_weak(controller);
+				Call(u"trust"_q, QJsonObject{ { u"path"_q, target } });
+				crl::on_main([=] {
+					if (const auto strong = weakController.get()) {
+						ShowInstallBox(strong, target, false);
+					}
+				});
+				box->closeBox();
+			});
+			AddPortButton(box, tr::lng_close(), false, true)->setClickedCallback([=] {
+				box->closeBox();
+			});
+			return;
+		}
+		const auto nothing = (progress.stage == Stage::Nothing);
+		AddColorPill(
+			box,
+			nothing
+				? tr::lng_exd_port_nothing_title(tr::now)
+				: tr::lng_exd_port_failed(tr::now),
+			st::exteraInstallShield,
+			[=] { return nothing ? st::historyPeer3UserpicBg->c : st::historyPeer1UserpicBg->c; });
+		if (nothing) {
+			auto lines = QStringList{ tr::lng_exd_port_nothing(tr::now) };
+			AddGuardCard(
+				box,
+				tr::lng_exd_port_nothing_title(tr::now),
+				QString(),
+				attention,
+				lines);
+			const auto dropped = list(u"dropped"_q);
+			if (!dropped.isEmpty()) {
+				AddGuardCard(
+					box,
+					tr::lng_exd_port_dropped(tr::now),
+					QString::number(dropped.size()),
+					attention,
+					dropped);
+			}
+		} else {
+			auto lines = QStringList();
+			if (progress.limit) {
+				lines.push_back(tr::lng_exd_port_error_limit(tr::now));
+			}
+			if (!progress.error.isEmpty()) {
+				lines.push_back(progress.error.left(600));
+			}
+			if (!progress.errors.isEmpty()) {
+				lines.push_back(tr::lng_exd_port_failed_checks(tr::now));
+				for (const auto &error : progress.errors.mid(0, 8)) {
+					lines.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + error);
+				}
+			}
+			AddGuardCard(
+				box,
+				tr::lng_exd_port_failed(tr::now),
+				QString(),
+				bad,
+				lines);
+			if (info.local || progress.limit) {
+				AddGuardCard(
+					box,
+					tr::lng_exd_port_advice(tr::now),
+					QString(),
+					st::windowActiveTextFg->c,
+					{ tr::lng_exd_port_advice_text(tr::now) });
+			}
+		}
+		AddGuardCard(box, tr::lng_exd_port_service(tr::now), QString(), st::windowSubTextFg->c, { stats });
+		AddPortButton(box, tr::lng_exd_port_open_settings(), false, false)->setClickedCallback([=] {
+			box->closeBox();
+			UrlClickHandler::Open(u"tg://settings/extera/plugins/engine"_q);
+		});
+		AddPortButton(box, tr::lng_close(), false, true)->setClickedCallback([=] {
+			box->closeBox();
+		});
+	}));
+}
+
+[[nodiscard]] QString PartialArea(const QString &hook) {
+	const auto cls = hook.section('.', 0, 0);
+	const auto has = [&](std::initializer_list<const char*> names) {
+		for (const auto name : names) {
+			if (cls.contains(QString::fromLatin1(name))) {
+				return true;
+			}
+		}
+		return false;
+	};
+	if (has({ "ChatMessageCell", "ChatActionCell", "Cell" })) {
+		return tr::lng_exd_partial_area_cells(tr::now);
+	} else if (has({ "ChatActivityEnterView", "EditText" })) {
+		return tr::lng_exd_partial_area_input(tr::now);
+	} else if (has({ "ChatActivity", "ChatAvatarContainer" })) {
+		return tr::lng_exd_partial_area_chat(tr::now);
+	} else if (has({ "DialogsActivity", "Dialog" })) {
+		return tr::lng_exd_partial_area_dialogs(tr::now);
+	} else if (has({ "Profile" })) {
+		return tr::lng_exd_partial_area_profile(tr::now);
+	} else if (has({ "PhotoViewer", "Camera", "ChatAttachAlert", "Story", "Stories" })) {
+		return tr::lng_exd_partial_area_media(tr::now);
+	} else if (has({ "ActionBar", "Theme", "View", "Layout", "Drawer", "Launch" })) {
+		return tr::lng_exd_partial_area_ui(tr::now);
+	} else if (has({ "UserConfig", "MessagesController", "Controller", "Premium" })) {
+		return tr::lng_exd_partial_area_data(tr::now);
+	}
+	return tr::lng_exd_partial_area_other(tr::now);
+}
+
+void ShowPartialStyled(
+		not_null<Window::SessionController*> controller,
+		const QJsonObject &info,
+		const QStringList &items) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		AddPortHeader(box, controller, info);
+		const auto attention = st::historyPeer3UserpicBg->c;
+		AddColorPill(
+			box,
+			tr::lng_exd_plugin_partial(tr::now),
+			st::exteraInstallShield,
+			[] { return st::historyPeer3UserpicBg->c; });
+		AddGuardCard(
+			box,
+			tr::lng_exd_partial_why(tr::now),
+			QString(),
+			st::windowActiveTextFg->c,
+			{ tr::lng_exd_plugin_partial_about(tr::now) });
+		auto groups = std::vector<std::pair<QString, QStringList>>();
+		for (const auto &item : items) {
+			const auto area = PartialArea(item);
+			auto found = ranges::find(groups, area, &std::pair<QString, QStringList>::first);
+			if (found == groups.end()) {
+				groups.push_back({ area, {} });
+				found = groups.end() - 1;
+			}
+			found->second.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + item);
+		}
+		for (const auto &[area, lines] : groups) {
+			AddGuardCard(
+				box,
+				area,
+				QString::number(lines.size()),
+				attention,
+				lines);
+		}
+		auto works = QStringList();
+		if (info.value(u"has_settings"_q).toBool()) {
+			works.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + tr::lng_exd_partial_works_settings(tr::now));
+		}
+		works.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + tr::lng_exd_partial_works_api(tr::now));
+		AddGuardCard(
+			box,
+			tr::lng_exd_partial_works(tr::now),
+			QString(),
+			st::boxTextFgGood->c,
+			works);
+		const auto path = info.value(u"path"_q).toString();
+		if (Exd::PluginPorter::Suggested(info)) {
+			AddPortButton(box, tr::lng_exd_port_action(), true, false)->setClickedCallback([=] {
+				const auto target = path;
+				const auto weakController = base::make_weak(controller);
+				crl::on_main([=] {
+					if (const auto strong = weakController.get()) {
+						Exd::PluginPorter::Start(strong, target);
+					}
+				});
+				box->closeBox();
+			});
+		}
+		AddPortButton(box, tr::lng_close(), false, true)->setClickedCallback([=] {
+			box->closeBox();
+		});
+	}));
+}
+
+struct PortTask {
+	QString path;
+	QJsonObject meta;
+	Exd::PluginPorter::Info info;
+	std::shared_ptr<Exd::PluginPorter::Job> job;
+	Exd::PluginPorter::Progress progress;
+	base::weak_ptr<Window::SessionController> controller;
+	base::Timer timer;
+	crl::time requested = 0;
+	bool finished = false;
+	bool boxOpen = false;
+	rpl::event_stream<> updates;
+};
+
+[[nodiscard]] std::shared_ptr<PortTask> &CurrentPort() {
+	static auto &result = *new std::shared_ptr<PortTask>();
+	return result;
+}
+
+[[nodiscard]] rpl::variable<PortBarState> &PortBarVariable() {
+	static auto &result = *new rpl::variable<PortBarState>();
+	return result;
+}
+
+[[nodiscard]] int PortWaiting(const std::shared_ptr<PortTask> &task) {
+	return task->requested ? int(crl::now() - task->requested) : 0;
+}
+
+[[nodiscard]] QString PortTaskName(const std::shared_ptr<PortTask> &task) {
+	const auto name = task->meta.value(u"name"_q).toString();
+	return name.isEmpty() ? QFileInfo(task->path).completeBaseName() : name;
+}
+
+[[nodiscard]] float64 PortFraction(
+		const Exd::PluginPorter::Progress &progress) {
+	using Stage = Exd::PluginPorter::Progress::Stage;
+	const auto total = std::max(progress.attempts, 1);
+	const auto done = std::clamp(progress.attempt - 1, 0, total);
+	const auto part = (progress.stage == Stage::Checking) ? 0.8 : 0.3;
+	return std::clamp((done + part) / total, 0.05, 0.95);
+}
+
+void RefreshPortBar() {
+	using Stage = Exd::PluginPorter::Progress::Stage;
+	const auto task = CurrentPort();
+	if (!task) {
+		PortBarVariable() = PortBarState();
+		return;
+	}
+	const auto &progress = task->progress;
+	auto state = PortBarState{
+		.name = PortTaskName(task),
+		.active = true,
+		.finished = task->finished,
+	};
+	if (task->finished) {
+		state.failed = (progress.stage == Stage::Failed);
+		state.progress = 1.;
+		state.status = (progress.stage == Stage::Done)
+			? tr::lng_exd_port_bar_done(tr::now)
+			: (progress.stage == Stage::Nothing)
+			? tr::lng_exd_port_bar_nothing(tr::now)
+			: tr::lng_exd_port_bar_failed(tr::now);
+	} else {
+		state.progress = PortFraction(progress);
+		auto parts = QStringList();
+		if (progress.stage == Stage::Checking) {
+			parts.push_back(tr::lng_exd_port_step_check(tr::now));
+		} else {
+			if (progress.attempt > 0) {
+				parts.push_back(tr::lng_exd_port_step_attempt(
+					tr::now,
+					lt_attempt,
+					QString::number(progress.attempt),
+					lt_total,
+					QString::number(progress.attempts)));
+			}
+			if (progress.stage == Stage::Fixing) {
+				parts.push_back(tr::lng_exd_port_step_fixing(tr::now));
+			}
+			parts.push_back(PortSeconds(PortWaiting(task)));
+		}
+		state.status = parts.join(QString::fromUtf8(" \xE2\x80\xA2 "));
+	}
+	PortBarVariable() = std::move(state);
+}
+
+void ClearPort() {
+	CurrentPort() = nullptr;
+	RefreshPortBar();
+}
+
+void ShowTaskResult(
+		not_null<Window::SessionController*> controller,
+		std::shared_ptr<PortTask> task) {
+	const auto path = task->path;
+	const auto meta = task->meta;
+	const auto progress = task->progress;
+	const auto info = task->info;
+	if (CurrentPort() == task) {
+		ClearPort();
+	}
+	ShowPortResult(controller, path, meta, progress, info);
+}
+
+void FinishPort(const std::shared_ptr<PortTask> &task) {
+	task->finished = true;
+	task->timer.cancel();
+	RefreshPortBar();
+	task->updates.fire({});
+	if (!task->boxOpen) {
+		if (const auto strong = task->controller.get()) {
+			strong->showToast(tr::lng_exd_port_finished_toast(
+				tr::now,
+				lt_name,
+				PortTaskName(task)));
+		}
+	}
+}
+
+void OpenPortBox(
+		not_null<Window::SessionController*> controller,
+		std::shared_ptr<PortTask> task) {
+	if (task->finished) {
+		ShowTaskResult(controller, task);
+		return;
+	}
+	const auto meta = task->meta;
+	const auto info = task->info;
+	const auto weakTask = std::weak_ptr<PortTask>(task);
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		AddPortHeader(box, controller, meta);
+		AddColorPill(
+			box,
+			PortServiceName(info.provider)
+				+ (info.model.isEmpty() ? QString() : (u" / "_q + info.model)),
+			st::exteraInstallPuzzle,
+			[] { return st::windowActiveTextFg->c; });
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_port_title(),
+				st::exteraThreatSectionTitle),
+			st::exteraThreatSectionPadding);
+		const auto card = AddCard(box);
+		Ui::AddSkip(card, 6);
+		const auto views = std::make_shared<PortStepsView>();
+		views->prepare = AddPortStepView(
+			card,
+			tr::lng_exd_port_step_prepare(tr::now));
+		views->model = AddPortStepView(
+			card,
+			tr::lng_exd_port_step_model(tr::now));
+		views->check = AddPortStepView(
+			card,
+			tr::lng_exd_port_step_check(tr::now));
+		Ui::AddSkip(card, 8);
+		const auto hints = box->addRow(
+			object_ptr<Ui::VerticalLayout>(box),
+			style::margins());
+		if (info.local) {
+			AddGuardCard(
+				box,
+				tr::lng_exd_port_local_title(tr::now),
+				QString(),
+				st::historyPeer3UserpicBg->c,
+				{ tr::lng_exd_port_warning(tr::now) });
+		}
+		AddPortButton(
+			box,
+			tr::lng_exd_port_minimize(),
+			true,
+			false
+		)->setClickedCallback([=] {
+			box->closeBox();
+		});
+		AddPortButton(
+			box,
+			tr::lng_exd_port_cancel(),
+			false,
+			true
+		)->setClickedCallback([=] {
+			if (const auto strong = weakTask.lock()) {
+				if (CurrentPort() == strong) {
+					Exd::PluginPorter::Cancel(strong->job);
+					strong->finished = true;
+					ClearPort();
+				}
+			}
+			box->closeBox();
+		});
+		const auto hintsShown = std::make_shared<bool>(false);
+		const auto refresh = [=] {
+			const auto strong = weakTask.lock();
+			if (!strong) {
+				return;
+			}
+			UpdatePortSteps(*views, strong->progress, PortWaiting(strong));
+			if (!*hintsShown && !strong->progress.hints.isEmpty()) {
+				*hintsShown = true;
+				auto lines = QStringList();
+				for (const auto &hint : strong->progress.hints) {
+					lines.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + hint);
+				}
+				const auto inner = hints->add(
+					object_ptr<Ui::VerticalLayout>(hints),
+					st::exteraInstallCardMargin);
+				PaintCardBackground(inner);
+				AddPortStep(
+					inner,
+					tr::lng_exd_port_hints(tr::now),
+					QString::number(lines.size()),
+					st::windowActiveTextFg->c,
+					lines);
+				Ui::AddSkip(inner, 8);
+				inner->show();
+				hints->resizeToWidth(box->width());
+			}
+		};
+		task->boxOpen = true;
+		task->updates.events(
+		) | rpl::on_next([=] {
+			const auto strong = weakTask.lock();
+			if (!strong) {
+				return;
+			}
+			if (strong->finished) {
+				const auto weak = base::make_weak(controller);
+				crl::on_main([=] {
+					if (const auto window = weak.get()) {
+						if (CurrentPort() == strong) {
+							ShowTaskResult(window, strong);
+						}
+					}
+				});
+				box->closeBox();
+				return;
+			}
+			refresh();
+		}, box->lifetime());
+		box->boxClosing() | rpl::on_next([=] {
+			const auto strong = weakTask.lock();
+			if (!strong || !strong->boxOpen) {
+				return;
+			}
+			strong->boxOpen = false;
+			if (!strong->finished && CurrentPort() == strong) {
+				controller->showToast(tr::lng_exd_port_background(tr::now));
+			}
+		}, box->lifetime());
+		refresh();
+	}));
+}
+
+} // namespace
+
+void ShowPortBox(
+		not_null<Window::SessionController*> controller,
+		const QString &path) {
+	using Stage = Exd::PluginPorter::Progress::Stage;
+	if (const auto task = CurrentPort(); task && !task->finished) {
+		if (task->path != path) {
+			controller->showToast(tr::lng_exd_port_busy(tr::now));
+		}
+		OpenPortBox(controller, task);
+		return;
+	}
+	auto task = std::make_shared<PortTask>();
+	task->path = path;
+	task->meta = Call(u"metadata"_q, QJsonObject{
+		{ u"path"_q, path },
+	}).toObject();
+	task->info = Exd::PluginPorter::CurrentInfo();
+	task->controller = base::make_weak(controller);
+	const auto weak = std::weak_ptr<PortTask>(task);
+	auto error = QString();
+	task->job = Exd::PluginPorter::Run(path, [=](
+			const Exd::PluginPorter::Progress &progress) {
+		const auto strong = weak.lock();
+		if (!strong || strong->finished) {
+			return;
+		}
+		const auto restart = (progress.stage == Stage::Requesting
+			|| progress.stage == Stage::Fixing)
+			&& (progress.attempt != strong->progress.attempt
+				|| strong->progress.stage == Stage::Checking
+				|| !strong->requested);
+		strong->progress = progress;
+		if (restart) {
+			strong->requested = crl::now();
+		}
+		if (progress.stage == Stage::Done
+			|| progress.stage == Stage::Nothing
+			|| progress.stage == Stage::Failed) {
+			FinishPort(strong);
+			return;
+		}
+		RefreshPortBar();
+		strong->updates.fire({});
+	}, &error);
+	if (!task->job) {
+		controller->showToast((error == u"format"_q)
+			? tr::lng_exd_port_error_format(tr::now)
+			: (error == u"size"_q)
+			? tr::lng_exd_port_error_size(tr::now)
+			: tr::lng_extera_plugins_bad_file(tr::now));
+		return;
+	}
+	task->timer.setCallback([=] {
+		if (const auto strong = weak.lock()) {
+			RefreshPortBar();
+			strong->updates.fire({});
+		}
+	});
+	task->timer.callEach(1000);
+	CurrentPort() = task;
+	RefreshPortBar();
+	OpenPortBox(controller, task);
+}
+
+rpl::producer<PortBarState> PortBarValue() {
+	return PortBarVariable().value();
+}
+
+void OpenPortTask(not_null<Window::SessionController*> controller) {
+	if (const auto task = CurrentPort()) {
+		OpenPortBox(controller, task);
+	}
+}
+
+void ShowPortSetupBox(
+		not_null<Window::SessionController*> controller,
+		const QString &path) {
+	if (const auto task = CurrentPort(); task && !task->finished) {
+		OpenPortBox(controller, task);
+		return;
+	}
+	const auto meta = Call(u"metadata"_q, QJsonObject{
+		{ u"path"_q, path },
+	}).toObject();
+	const auto prepared = Call(u"port_prepare"_q, QJsonObject{
+		{ u"path"_q, path },
+	}).toObject();
+	if (const auto error = prepared.value(u"error"_q).toString();
+		!error.isEmpty()) {
+		controller->showToast((error == u"format"_q)
+			? tr::lng_exd_port_error_format(tr::now)
+			: (error == u"size"_q)
+			? tr::lng_exd_port_error_size(tr::now)
+			: tr::lng_extera_plugins_bad_file(tr::now));
+		return;
+	}
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		AddPortHeader(box, controller, meta);
+		AddColorPill(
+			box,
+			tr::lng_exd_plugin_ported_os(tr::now, lt_os, DesktopOsName(QString())),
+			st::exteraInstallTranslate,
+			[] { return st::windowActiveTextFg->c; });
+
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_port_setup_plan(),
+				st::exteraThreatSectionTitle),
+			st::exteraThreatSectionPadding);
+		const auto plan = AddCard(box);
+		Ui::AddSkip(plan, 6);
+		const auto hints = prepared.value(u"hints"_q).toArray();
+		const auto sections = prepared.value(u"sections"_q).toArray();
+		auto names = QStringList();
+		for (const auto &value : sections) {
+			names.push_back(value.toString());
+		}
+		const auto size = prepared.value(u"system"_q).toString().size()
+			+ prepared.value(u"user"_q).toString().size();
+		auto lines = QStringList{
+			tr::lng_exd_port_step_prepare_info(
+				tr::now,
+				lt_hints,
+				QString::number(hints.size()),
+				lt_sections,
+				names.isEmpty() ? u"0"_q : names.join(u", "_q)),
+			tr::lng_exd_port_setup_size(
+				tr::now,
+				lt_value,
+				QString::number(std::max(1, int(size / 4000)))),
+		};
+		if (prepared.value(u"library"_q).toBool()) {
+			lines.push_back(tr::lng_exd_port_setup_library(tr::now));
+		}
+		for (const auto &hint : hints) {
+			lines.push_back(QString::fromUtf8("\xE2\x80\xA2 ") + hint.toString());
+		}
+		AddPortStep(
+			plan,
+			tr::lng_exd_port_setup_request(tr::now),
+			QString(),
+			st::windowActiveTextFg->c,
+			lines);
+		Ui::AddSkip(plan, 8);
+
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_port_setup_service(),
+				st::exteraThreatSectionTitle),
+			st::exteraThreatSectionPadding);
+		const auto service = AddCard(box);
+		const auto provider = std::make_shared<rpl::variable<int>>(
+			std::max(Int(u"port_llm_provider"_q), 0));
+		const auto model = std::make_shared<rpl::variable<QString>>(
+			String(u"port_llm_model"_q));
+		const auto key = std::make_shared<rpl::variable<QString>>(
+			String(u"port_llm_key"_q));
+		const auto agent = std::make_shared<rpl::variable<bool>>(
+			Int(u"port_llm_mode"_q) == 0);
+		auto options = std::vector<QString>();
+		for (auto i = 1; i < Exd::PluginPorter::ProvidersCount(); ++i) {
+			options.push_back(PortServiceName(i));
+		}
+		const auto serviceButton = Settings::AddButtonWithLabel(
+			service,
+			tr::lng_exd_port_setup_provider(),
+			provider->value() | rpl::map([](int value) {
+				return value ? PortServiceName(value) : tr::lng_exd_port_provider_none(tr::now);
+			}),
+			st::settingsButtonNoIcon);
+		serviceButton->setClickedCallback([=] {
+			controller->show(Box([=](not_null<Ui::GenericBox*> inner) {
+				SingleChoiceBox(inner, {
+					.title = tr::lng_exd_port_setup_provider(),
+					.options = options,
+					.initialSelection = std::max(provider->current() - 1, 0),
+					.callback = [=](int value) {
+						if (provider->current() != value + 1) {
+							*provider = value + 1;
+							*model = QString();
+						}
+					},
+				});
+			}));
+		});
+		const auto modelButton = Settings::AddButtonWithLabel(
+			service,
+			tr::lng_exd_port_setup_model(),
+			rpl::combine(
+				provider->value(),
+				model->value()
+			) | rpl::map([](int value, const QString &name) {
+				const auto fallback = Exd::PluginPorter::DefaultModel(value);
+				return !name.isEmpty()
+					? name
+					: !fallback.isEmpty()
+					? fallback
+					: tr::lng_exd_port_setup_model_none(tr::now);
+			}),
+			st::settingsButtonNoIcon);
+		modelButton->setClickedCallback([=] {
+			const auto current = model->current().isEmpty()
+				? Exd::PluginPorter::DefaultModel(provider->current())
+				: model->current();
+			ShowInput(
+				controller,
+				tr::lng_exd_port_setup_model(tr::now),
+				current,
+				false,
+				[=](QString value) { *model = value; });
+		});
+		const auto keyButton = Settings::AddButtonWithLabel(
+			service,
+			tr::lng_exd_port_setup_key(),
+			rpl::combine(
+				provider->value(),
+				key->value()
+			) | rpl::map([](int value, const QString &text) {
+				return (value > 0 && Exd::PluginPorter::ProviderLocal(value))
+					? tr::lng_exd_port_setup_key_local(tr::now)
+					: text.isEmpty()
+					? tr::lng_exd_port_setup_key_empty(tr::now)
+					: tr::lng_exd_port_setup_key_set(tr::now);
+			}),
+			st::settingsButtonNoIcon);
+		keyButton->setClickedCallback([=] {
+			ShowInput(
+				controller,
+				tr::lng_exd_port_setup_key(tr::now),
+				key->current(),
+				false,
+				[=](QString value) { *key = value; });
+		});
+		const auto modeButton = service->add(object_ptr<Ui::SettingsButton>(
+			service,
+			tr::lng_exd_port_setup_agent(),
+			st::settingsButtonNoIcon));
+		modeButton->toggleOn(rpl::single(agent->current()));
+		modeButton->toggledChanges(
+		) | rpl::on_next([=](bool value) {
+			*agent = value;
+		}, modeButton->lifetime());
+		Ui::AddSkip(service, 8);
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_port_setup_about(),
+				st::exteraInstallVersion),
+			st::exteraInstallVersionPadding,
+			style::al_top);
+
+		AddPortButton(
+			box,
+			tr::lng_exd_port_setup_start(),
+			true,
+			false
+		)->setClickedCallback([=] {
+			auto &config = Config::Instance();
+			config.setInt(u"port_llm_provider"_q, provider->current());
+			config.setString(u"port_llm_model"_q, model->current().trimmed());
+			config.setString(u"port_llm_key"_q, key->current().trimmed());
+			config.setInt(u"port_llm_mode"_q, agent->current() ? 0 : 1);
+			if (!Exd::PluginPorter::Configured()) {
+				controller->showToast(tr::lng_exd_port_not_configured(tr::now));
+				return;
+			}
+			const auto window = controller;
+			const auto target = path;
+			box->closeBox();
+			crl::on_main(window, [=] {
+				ShowPortBox(window, target);
+			});
+		});
+		AddPortButton(
+			box,
+			tr::lng_cancel(),
+			false,
+			true
+		)->setClickedCallback([=] {
+			box->closeBox();
+		});
+	}));
+}
+
+void ShowPermissionAlert(
+		not_null<Window::SessionController*> controller,
+		const QJsonObject &data,
+		Fn<void(QJsonValue)> answer) {
+	const auto extra = data.value(u"exd"_q).toObject();
+	const auto kind = extra.value(u"kind"_q).toString();
+	const auto net = (kind == u"net"_q) || (kind == u"udp"_q);
+	const auto leak = (kind == u"leak"_q);
+	const auto plugin = extra.value(u"plugin"_q).toString();
+	const auto target = extra.value(u"target"_q).toString();
+	const auto leakCategory = target.section('|', 0, 0);
+	const auto leakTarget = target.section('|', 1);
+	const auto message = leak
+		? tr::lng_exd_perm_leak_text(tr::now, lt_target, leakTarget)
+		: data.value(u"message"_q).toString();
+	auto meta = QJsonObject();
+	for (const auto &entry : Call(u"list"_q).toArray()) {
+		const auto info = entry.toObject();
+		if (info.value(u"id"_q).toString() == plugin) {
+			meta = info;
+			break;
+		}
+	}
+	if (meta.value(u"name"_q).toString().isEmpty()) {
+		meta.insert(u"name"_q, plugin);
+	}
+	auto ordered = std::vector<std::pair<int, QString>>();
+	const auto buttons = data.value(u"buttons"_q).toArray();
+	for (const auto which : { -1, -3, -4, -2 }) {
+		for (const auto &value : buttons) {
+			const auto entry = value.toObject();
+			if (entry.value(u"which"_q).toInt() == which) {
+				ordered.emplace_back(which, entry.value(u"text"_q).toString());
+			}
+		}
+	}
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		AddPortHeader(box, controller, meta);
+		const auto color = [=] {
+			return leak
+				? st::attentionButtonFg->c
+				: net
+				? st::windowActiveTextFg->c
+				: st::historyPeer3UserpicBg->c;
+		};
+		AddColorPill(
+			box,
+			leak
+				? tr::lng_exd_perm_request_leak(tr::now)
+				: (kind == u"udp"_q)
+				? tr::lng_exd_perm_request_udp(tr::now)
+				: net
+				? tr::lng_exd_perm_request_lan(tr::now)
+				: tr::lng_exd_perm_request_files(tr::now),
+			st::exteraInstallPuzzle,
+			color);
+		const auto card = AddCard(box);
+		Ui::AddSkip(card, 6);
+		AddPortStep(
+			card,
+			leak
+				? LeakCategoryTitle(leakCategory)
+				: net
+				? tr::lng_exd_perm_device(tr::now)
+				: tr::lng_exd_perm_folder(tr::now),
+			leak
+				? tr::lng_exd_perm_leak_chip(tr::now)
+				: tr::lng_exd_perm_chip(tr::now),
+			color(),
+			{
+				leak
+					? leakTarget
+					: net
+					? (target.startsWith(u"udp:"_q) ? target.mid(4) : target)
+					: QDir::toNativeSeparators(target),
+				message,
+			});
+		Ui::AddSkip(card, 8);
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_perm_request_about(),
+				st::exteraInstallVersion),
+			st::exteraInstallVersionPadding,
+			style::al_top);
+		for (auto i = 0; i != int(ordered.size()); ++i) {
+			const auto which = ordered[i].first;
+			AddPortButton(
+				box,
+				rpl::single(ordered[i].second),
+				(i == 0),
+				(i + 1 == int(ordered.size()))
+			)->setClickedCallback([=] {
+				answer(which);
+				box->closeBox();
+			});
+		}
+		box->boxClosing() | rpl::on_next([=] {
+			answer(u"dismiss"_q);
+		}, box->lifetime());
+	}));
 }
 
 } // namespace Extera::Plugins

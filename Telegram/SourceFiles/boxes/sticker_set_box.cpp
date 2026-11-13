@@ -871,6 +871,50 @@ void StickerSetBox::updateButtons() {
 				_session->createInternalLinkFull(
 					part + '/' + _inner->shortName()));
 		};
+		const auto openPackOwner = [=] {
+			const auto id = _inner->setId();
+			auto owner = uint64(id >> 32);
+			if (((id >> 16) & 0xFF) == 0x3F) {
+				owner |= 0x80000000ULL;
+			}
+			if ((id >> 24) & 0xFF) {
+				owner += 0x100000000ULL;
+			}
+			const auto userId = UserId(owner);
+			const auto show = _show;
+			const auto session = _session;
+			const auto fallback = [=] {
+				QGuiApplication::clipboard()->setText(
+					QString::number(owner));
+				show->showToast(tr::lng_exd_pack_owner_copied(tr::now));
+			};
+			const auto open = [=](not_null<UserData*> user) {
+				if (const auto window = show->resolveWindow()) {
+					window->showPeerInfo(user);
+				} else {
+					fallback();
+				}
+			};
+			if (const auto user = session->data().userLoaded(userId)) {
+				if (user->isLoaded()) {
+					open(user);
+					return;
+				}
+			}
+			session->api().request(MTPusers_GetUsers(
+				MTP_vector<MTPInputUser>(1, MTP_inputUser(
+					MTP_long(owner),
+					MTP_long(0)))
+			)).done([=](const MTPVector<MTPUser> &result) {
+				session->data().processUsers(result);
+				const auto user = session->data().userLoaded(userId);
+				if (user && user->isLoaded()) {
+					open(user);
+				} else {
+					fallback();
+				}
+			}).fail(fallback).send();
+		};
 		const auto copyLink = [=] {
 			copyStickersLink();
 			const auto text = (type == Data::StickersType::Emoji)
@@ -1003,7 +1047,7 @@ void StickerSetBox::updateButtons() {
 			});
 		}();
 		if (_inner->notInstalled()) {
-			if (!_session->premium()
+			if (!_session->premiumEmoji()
 				&& _session->premiumPossible()
 				&& _inner->premiumEmojiSet()) {
 				const auto &st = st::premiumPreviewDoubledLimitsBox;
@@ -1099,6 +1143,10 @@ void StickerSetBox::updateButtons() {
 					tr::lng_context_copy_link(tr::now),
 					copyLink,
 					&st::menuIconCopy);
+				raw->addAction(
+					tr::lng_exd_pack_owner(tr::now),
+					[=] { openPackOwner(); },
+					&st::menuIconProfile);
 				if (fillSetCreatorMenu) {
 					fillSetCreatorMenu(raw);
 				}

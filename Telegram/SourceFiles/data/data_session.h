@@ -11,9 +11,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/timer.h"
 #include "data/data_cloud_file.h"
 #include "data/data_groups.h"
+#include "data/data_location.h"
 #include "data/data_star_gift.h"
 #include "dialogs/dialogs_main_list.h"
-#include "history/history_location_manager.h"
 #include "storage/storage_databases.h"
 
 class Image;
@@ -378,11 +378,15 @@ public:
 	struct ItemVisibilityQuery {
 		not_null<HistoryItem*> item;
 		not_null<bool*> isVisible;
+		const ViewElement *view = nullptr;
 	};
-	[[nodiscard]] bool queryItemVisibility(not_null<HistoryItem*> item) const;
+	[[nodiscard]] bool queryItemVisibility(
+		not_null<HistoryItem*> item,
+		const ViewElement *view = nullptr) const;
 	[[nodiscard]] bool queryDocumentVisibility(not_null<DocumentData*> document) const;
 	[[nodiscard]] rpl::producer<ItemVisibilityQuery> itemVisibilityQueries() const;
 	void itemVisibilitiesUpdated();
+	[[nodiscard]] rpl::producer<> itemVisibilitiesUpdates() const;
 
 	struct IdChange {
 		FullMsgId newId;
@@ -421,6 +425,20 @@ public:
 	void requestItemShowHighlight(not_null<HistoryItem*> item);
 	[[nodiscard]] rpl::producer<not_null<HistoryItem*>> itemShowHighlightRequest() const;
 	void requestItemViewRefresh(not_null<const HistoryItem*> item);
+	void exteraRefreshAllViews();
+	void exteraReapplyPremiumEmoji();
+	[[nodiscard]] bool exteraIsDeleted(FullMsgId id) const;
+	void exteraRemember(PeerId peerId, MsgId id, const MTPMessage &message);
+	void exteraMarkDeleted(FullMsgId id);
+	void exteraClearDeleted();
+	void exdRememberEdit(FullMsgId id, TimeId date, const QString &text);
+	[[nodiscard]] std::vector<std::pair<TimeId, QString>> exdEditsFor(
+		FullMsgId id);
+	void exteraKeepLocally(const MessageIdsList &ids);
+	[[nodiscard]] bool exteraTakeKeep(FullMsgId id);
+	[[nodiscard]] bool exteraSaveFor(not_null<HistoryItem*> item) const;
+	[[nodiscard]] const std::map<MsgId, QByteArray> &exteraDeletedFor(
+		PeerId peerId);
 	[[nodiscard]] rpl::producer<not_null<const HistoryItem*>> itemViewRefreshRequest() const;
 	void requestItemTextRefresh(not_null<HistoryItem*> item);
 	void requestUnreadReactionsAnimation(not_null<HistoryItem*> item);
@@ -755,8 +773,6 @@ public:
 		const MTPWebDocument &data,
 		const ImageLocation &thumbnailLocation,
 		const ImageLocation &videoThumbnailLocation);
-	[[nodiscard]] not_null<DocumentData*> venueIconDocument(
-		const QString &icon);
 
 	[[nodiscard]] not_null<WebPageData*> webpage(WebPageId id);
 	not_null<WebPageData*> processWebpage(const MTPWebPage &data);
@@ -1217,6 +1233,7 @@ private:
 	rpl::event_stream<not_null<UserData*>> _userIsBotChanges;
 	rpl::event_stream<not_null<PeerData*>> _botCommandsChanges;
 	rpl::event_stream<ItemVisibilityQuery> _itemVisibilityQueries;
+	rpl::event_stream<> _itemVisibilitiesUpdates;
 	rpl::event_stream<IdChange> _itemIdChanges;
 	rpl::event_stream<not_null<const HistoryItem*>> _itemLayoutChanges;
 	rpl::event_stream<not_null<const ViewElement*>> _viewLayoutChanges;
@@ -1341,7 +1358,6 @@ private:
 		FullStoryId,
 		base::flat_set<not_null<HistoryItem*>>> _storyItems;
 	base::flat_map<uint64, not_null<HistoryItem*>> _highlightings;
-	base::flat_map<QString, not_null<DocumentData*>> _venueIcons;
 
 	base::flat_set<not_null<WebPageData*>> _webpagesUpdated;
 	base::flat_set<not_null<GameData*>> _gamesUpdated;
@@ -1368,6 +1384,13 @@ private:
 	std::unordered_map<
 		not_null<const HistoryItem*>,
 		std::vector<not_null<ViewElement*>>> _views;
+	base::flat_set<FullMsgId> _exteraDeleted;
+	std::map<FullMsgId, QByteArray> _exteraRaw;
+	base::flat_set<FullMsgId> _exteraKeep;
+	std::map<
+		PeerId,
+		std::map<MsgId, std::vector<std::pair<TimeId, QString>>>> _exdEdits;
+	std::map<PeerId, std::map<MsgId, QByteArray>> _exteraStored;
 
 	rpl::event_stream<> _pinnedDialogsOrderUpdated;
 

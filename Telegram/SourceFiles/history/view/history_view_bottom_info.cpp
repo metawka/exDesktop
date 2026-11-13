@@ -271,9 +271,14 @@ void BottomInfo::paint(
 		int outerWidth,
 		bool unread,
 		bool inverted,
+		bool leftToRight,
 		const PaintContext &context) const {
 	const auto st = context.st;
 	const auto stm = context.messageStyle();
+	// RTL mirrors icons around outer width; this one leaves an icon in place.
+	const auto outer = [&](int left, const style::icon &icon) {
+		return leftToRight ? (2 * left + icon.width()) : outerWidth;
+	};
 
 	auto right = position.x() + width();
 	const auto firstLineBottom = position.y() + st::msgDateFont->height;
@@ -292,7 +297,7 @@ void BottomInfo::paint(
 		icon.paint(
 			p,
 			QPoint(right, firstLineBottom) + st::historySendStatePosition,
-			outerWidth);
+			outer(right + st::historySendStatePosition.x(), icon));
 		right -= st::historySendStateSpace;
 	}
 
@@ -314,7 +319,7 @@ void BottomInfo::paint(
 			p,
 			right,
 			firstLineBottom + st::historySilentTop,
-			outerWidth);
+			outer(right, icon));
 	}
 	if (_data.flags & Data::Flag::Ephemeral) {
 		const auto &icon = inverted
@@ -325,7 +330,7 @@ void BottomInfo::paint(
 			p,
 			right,
 			firstLineBottom + st::historyEphemeralStateTop,
-			outerWidth);
+			outer(right, icon));
 	}
 
 	if (_data.flags & Data::Flag::Pinned) {
@@ -337,7 +342,7 @@ void BottomInfo::paint(
 			p,
 			right,
 			firstLineBottom + st::historyPinTop,
-			outerWidth);
+			outer(right, icon));
 	}
 	if (!_views.isEmpty()) {
 		const auto viewsWidth = _views.maxWidth();
@@ -352,7 +357,7 @@ void BottomInfo::paint(
 			p,
 			right,
 			firstLineBottom + st::historyViewsTop,
-			outerWidth);
+			outer(right, icon));
 	}
 	if (!_replies.isEmpty()) {
 		const auto repliesWidth = _replies.maxWidth();
@@ -367,7 +372,7 @@ void BottomInfo::paint(
 			p,
 			right,
 			firstLineBottom + st::historyViewsTop,
-			outerWidth);
+			outer(right, icon));
 	}
 	if ((_data.flags & Data::Flag::Sending)
 		&& !(_data.flags & Data::Flag::OutLayout)) {
@@ -379,7 +384,7 @@ void BottomInfo::paint(
 			p,
 			right,
 			firstLineBottom + st::historyViewsTop,
-			outerWidth);
+			outer(right, icon));
 	}
 	if (_effect) {
 		auto left = position.x();
@@ -503,11 +508,18 @@ void BottomInfo::layoutDateText() {
 		: _data.scheduleRepeatPeriod
 		? (SchedulePeriodText(_data.scheduleRepeatPeriod) + ' ')
 		: QString();
+	const auto deletedMark = Extera::Int(u"deleted_mark"_q);
+	const auto deleted = (!(_data.flags & Data::Flag::ExteraDeleted)
+		|| deletedMark <= 0)
+		? QString()
+		: (deletedMark == 1)
+		? (tr::lng_exd_message_deleted(tr::now) + ' ')
+		: (QString(QChar(0x2716)) + ' ');
 	const auto author = _data.author;
 	const auto prefix = !author.isEmpty() ? u", "_q : QString();
 	const auto date = editedPrimary
 		? FormatEditedDate(_data.date, _data.editedDate)
-		: edited + ((_data.flags
+		: deleted + edited + ((_data.flags
 			& (Data::Flag::ForwardedDate | Data::Flag::FullDate))
 		? Ui::FormatDateTimeSavedFrom(_data.date)
 		: Extera::FormatTime(_data.date.time()));
@@ -552,12 +564,25 @@ void BottomInfo::layoutDateText() {
 	const auto markerAt = Extera::Bool(u"edited_icon"_q)
 		? full.indexOf(marker)
 		: -1;
-	if (markerAt >= 0) {
-		marked.append(full.left(markerAt));
+	const auto trash = QString(QChar(0x2716)) + ' ';
+	const auto trashAt = (deletedMark >= 2) ? full.indexOf(trash) : -1;
+	auto rest = full;
+	if (trashAt >= 0) {
+		marked.append(rest.left(trashAt));
+		marked.append(Ui::Text::IconEmoji((deletedMark == 3)
+			? &st::exteraDeletedCrossIconEmoji
+			: (deletedMark == 4)
+			? &st::exteraDeletedEyeIconEmoji
+			: &st::exteraDeletedIconEmoji));
+		rest = rest.mid(trashAt + trash.size());
+	}
+	const auto editAt = (markerAt >= 0) ? rest.indexOf(marker) : -1;
+	if (editAt >= 0) {
+		marked.append(rest.left(editAt));
 		marked.append(Ui::Text::IconEmoji(&st::exteraEditedIconEmoji));
-		marked.append(full.mid(markerAt + marker.size()));
+		marked.append(rest.mid(editAt + marker.size()));
 	} else {
-		marked.append(full);
+		marked.append(rest);
 	}
 	_authorEditedDate.setMarkedText(
 		st::msgDateTextStyle,
@@ -702,6 +727,9 @@ BottomInfo::Data BottomInfoDataFromMessage(not_null<Message*> message) {
 	}
 	if (item->isPinned() && message->context() != Context::Pinned) {
 		result.flags |= Flag::Pinned;
+	}
+	if (item->history()->owner().exteraIsDeleted(item->fullId())) {
+		result.flags |= Flag::ExteraDeleted;
 	}
 	if (message->context() == Context::ShortcutMessages) {
 		result.flags |= Flag::Shortcut;

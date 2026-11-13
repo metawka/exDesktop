@@ -9,6 +9,9 @@
 #include "core/version.h"
 #include "window/notifications_manager.h"
 #include "extera/extera_app_icon.h"
+#include "ui/new_badges.h"
+#include "ui/widgets/popup_menu.h"
+#include "base/event_filter.h"
 #include "extera/extera_ws_proxy.h"
 #include "ui/style/style_core_font.h"
 #include "core/core_settings.h"
@@ -21,6 +24,11 @@
 #include "data/data_channel.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
+#include "api/api_common.h"
+#include "apiwrap.h"
+#include "base/call_delayed.h"
+#include "history/history.h"
+#include "info/profile/info_profile_emoji_status_panel.h"
 #include "extera/extera_menu.h"
 #include "history/view/media/history_view_sticker.h"
 #include "ui/filter_icons.h"
@@ -48,6 +56,7 @@
 #include "data/stickers/data_custom_emoji.h"
 #include "ui/userpic_view.h"
 #include "ui/painter.h"
+#include "ui/effects/animations.h"
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 #include <QtSvg/QSvgRenderer>
@@ -138,9 +147,23 @@ void AddToggle(
 		}, label->lifetime());
 	}
 	if (button) {
+		const auto controller = builder.controller();
 		button->toggledValue(
 		) | rpl::on_next([=](bool value) {
+			const auto changed = (Extera::Bool(key) != value);
 			Config().setBool(key, value);
+			static const auto restart = QStringList{
+				u"hide_stories"_q,
+				u"sender_mini_avatars"_q,
+				u"local_premium"_q,
+			};
+			if (changed && controller && restart.contains(key)) {
+				controller->show(Ui::MakeConfirmBox({
+					.text = tr::lng_extera_restart_required(),
+					.confirmed = [] { Core::Restart(); },
+					.confirmText = tr::lng_extera_restart(),
+				}));
+			}
 		}, button->lifetime());
 	}
 }
@@ -150,7 +173,8 @@ void AddChoice(
 		const QString &key,
 		const Phrase &title,
 		std::vector<const Phrase*> options,
-		QStringList keywords = {}) {
+		QStringList keywords = {},
+		Fn<void(QPainter&, QRect, int)> paintOption = nullptr) {
 	const auto controller = builder.controller();
 	const auto optionText = [=](int index) {
 		return (index >= 0 && index < int(options.size()))
@@ -176,6 +200,40 @@ void AddChoice(
 						Config().setInt(key, index);
 					},
 				});
+				if (!paintOption) {
+					return;
+				}
+				const auto layout = box->verticalLayout();
+				auto index = 0;
+				for (auto i = 0; i != layout->count(); ++i) {
+					const auto radio = dynamic_cast<Ui::Radiobutton*>(
+						layout->widgetAt(i).get());
+					if (!radio) {
+						continue;
+					}
+					const auto value = index++;
+					const auto preview = Ui::CreateChild<Ui::RpWidget>(
+						layout.get());
+					preview->setAttribute(Qt::WA_TransparentForMouseEvents);
+					rpl::combine(
+						radio->geometryValue(),
+						layout->widthValue()
+					) | rpl::on_next([=](QRect geometry, int outer) {
+						const auto width = style::ConvertScale(120);
+						preview->setGeometry(
+							outer - st::boxPadding.right() - width,
+							geometry.y(),
+							width,
+							geometry.height());
+						preview->raise();
+					}, preview->lifetime());
+					preview->paintRequest(
+					) | rpl::on_next([=] {
+						auto p = QPainter(preview);
+						paintOption(p, preview->rect(), value);
+					}, preview->lifetime());
+					preview->show();
+				}
 			}));
 		},
 		.keywords = std::move(keywords),
@@ -718,6 +776,168 @@ void PaintGesturesPreview(
 		Extera::Int(u"double_click_outgoing"_q));
 }
 
+void AddBetaBadge(
+		not_null<Ui::RpWidget*> button,
+		rpl::producer<QString> text,
+		const style::SettingsButton &st) {
+	const auto badge = Ui::NewBadge::CreateNewBadge(
+		button,
+		tr::lng_exd_beta());
+	rpl::combine(
+		std::move(text),
+		button->widthValue()
+	) | rpl::on_next([=, &st](const QString &text, int width) {
+		const auto left = st.padding.left()
+			+ st.style.font->width(text)
+			+ st.style.font->spacew;
+		badge->setVisible(width - left - st.padding.right() >= badge->width());
+		badge->moveToLeft(
+			left,
+			st.padding.top()
+				+ st.style.font->ascent
+				- st::settingsPremiumNewBadge.style.font->ascent
+				- st::settingsPremiumNewBadgePadding.top(),
+			width);
+	}, badge->lifetime());
+}
+
+[[nodiscard]] not_null<Ui::RpWidget*> CreateMarqueeLabel(
+		not_null<QWidget*> parent,
+		not_null<Main::Session*> session,
+		const style::FlatLabel &st,
+		TextWithEntities text) {
+	struct State {
+		Ui::Text::String text;
+		Ui::Animations::Basic animation;
+		crl::time started = 0;
+	};
+	const auto result = Ui::CreateChild<Ui::RpWidget>(parent.get());
+	const auto state = result->lifetime().make_state<State>();
+	state->text.setMarkedText(
+		st.style,
+		text,
+		kMarkupTextOptions,
+		Core::TextContext({
+			.session = session,
+			.repaint = [=] { result->update(); },
+		}));
+	result->resize(result->width(), st.style.font->height);
+	state->animation.init([=](crl::time) {
+		result->update();
+	});
+	result->setAttribute(Qt::WA_TransparentForMouseEvents);
+	result->paintRequest() | rpl::on_next([=] {
+		auto p = Painter(result);
+		const auto width = result->width();
+		const auto full = state->text.maxWidth();
+		const auto now = crl::now();
+		p.setPen(st.textFg);
+		if (full <= width) {
+			state->animation.stop();
+			state->text.draw(p, {
+				.position = QPoint(0, 0),
+				.availableWidth = width,
+				.now = now,
+			});
+			return;
+		}
+		if (!state->animation.animating()) {
+			state->started = now;
+			state->animation.start();
+		}
+		const auto gap = style::ConvertScale(40);
+		const auto period = full + gap;
+		const auto speed = style::ConvertScale(36);
+		const auto pause = crl::time(1600);
+		const auto travel = crl::time(period) * 1000 / std::max(speed, 1);
+		const auto elapsed = (now - state->started) % (pause + travel);
+		const auto offset = (elapsed < pause)
+			? 0
+			: int((elapsed - pause) * speed / 1000);
+		p.setClipRect(result->rect());
+		for (const auto shift : { -offset, period - offset }) {
+			if (shift >= width || shift + full <= 0) {
+				continue;
+			}
+			state->text.draw(p, {
+				.position = QPoint(shift, 0),
+				.availableWidth = full,
+				.now = now,
+			});
+		}
+		const auto fade = std::min(style::ConvertScale(18), width / 4);
+		auto gradient = QLinearGradient(0, 0, width, 0);
+		const auto bg = st::windowBgOver->c;
+		auto transparent = bg;
+		transparent.setAlpha(0);
+		const auto edge = fade / float64(std::max(width, 1));
+		gradient.setColorAt(0., (offset > 0) ? bg : transparent);
+		gradient.setColorAt(edge, transparent);
+		gradient.setColorAt(1. - edge, transparent);
+		gradient.setColorAt(1., bg);
+		p.fillRect(result->rect(), gradient);
+	}, result->lifetime());
+	return result;
+}
+
+void AddSupportSteps(not_null<Ui::GenericBox*> box) {
+	const auto step = [&](
+			const style::icon *icon,
+			rpl::producer<QString> title,
+			rpl::producer<TextWithEntities> text) {
+		const auto row = box->addRow(
+			object_ptr<Ui::VerticalLayout>(box),
+			st::exteraBadgeStepPadding);
+		const auto titleLabel = row->add(
+			object_ptr<Ui::FlatLabel>(
+				row,
+				std::move(title),
+				st::exteraBadgeStepTitle),
+			st::exteraBadgeStepLabelPadding);
+		const auto textLabel = row->add(
+			object_ptr<Ui::FlatLabel>(
+				row,
+				std::move(text),
+				st::exteraBadgeStepText),
+			st::exteraBadgeStepLabelPadding);
+		textLabel->setClickHandlerFilter([=](const auto &...) {
+			crl::on_main(box, [=] { box->closeBox(); });
+			return true;
+		});
+		const auto iconWidget = Ui::CreateChild<Ui::RpWidget>(row);
+		iconWidget->resize(icon->width(), icon->height());
+		iconWidget->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(iconWidget);
+			icon->paint(p, 0, 0, iconWidget->width(), st::windowFg->c);
+		}, iconWidget->lifetime());
+		titleLabel->topValue() | rpl::on_next([=](int top) {
+			iconWidget->moveToLeft(0, top);
+		}, iconWidget->lifetime());
+	};
+	step(
+		&st::menuIconEarn,
+		tr::lng_exd_support_step1_title(),
+		tr::lng_exd_support_step1_text(
+			lt_link,
+			rpl::single(Ui::Text::Link(
+				tr::lng_exd_support_other(tr::now),
+				u"tg://settings/extera/other?highlight=extera/donate_card"_q)),
+			tr::marked));
+	step(
+		&st::menuIconPhoto,
+		tr::lng_exd_support_step2_title(),
+		tr::lng_exd_support_step2_text(
+			lt_user,
+			rpl::single(Ui::Text::Link(
+				u"@metawka"_q,
+				u"https://t.me/metawka"_q)),
+			tr::marked));
+	step(
+		&st::menuIconPremium,
+		tr::lng_exd_support_step3_title(),
+		tr::lng_exd_support_step3_text(tr::rich));
+}
+
 void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setWidth(st::boxWideWidth);
@@ -753,47 +973,7 @@ void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
 			st::exteraBadgeTextPadding,
 			style::al_top);
 
-		const auto step = [&](
-				const style::icon *icon,
-				rpl::producer<QString> title,
-				rpl::producer<TextWithEntities> text) {
-			const auto row = box->addRow(
-				object_ptr<Ui::VerticalLayout>(box),
-				st::exteraBadgeStepPadding);
-			const auto titleLabel = row->add(
-				object_ptr<Ui::FlatLabel>(
-					row,
-					std::move(title),
-					st::exteraBadgeStepTitle),
-				st::exteraBadgeStepLabelPadding);
-			row->add(
-				object_ptr<Ui::FlatLabel>(
-					row,
-					std::move(text),
-					st::exteraBadgeStepText),
-				st::exteraBadgeStepLabelPadding);
-			const auto iconWidget = Ui::CreateChild<Ui::RpWidget>(row);
-			iconWidget->resize(icon->width(), icon->height());
-			iconWidget->paintRequest() | rpl::on_next([=] {
-				auto p = QPainter(iconWidget);
-				icon->paint(p, 0, 0, iconWidget->width(), st::windowFg->c);
-			}, iconWidget->lifetime());
-			titleLabel->topValue() | rpl::on_next([=](int top) {
-				iconWidget->moveToLeft(0, top);
-			}, iconWidget->lifetime());
-		};
-		step(
-			&st::menuIconEarn,
-			tr::lng_exd_support_step1_title(),
-			tr::lng_exd_support_step1_text(tr::rich));
-		step(
-			&st::menuIconPhoto,
-			tr::lng_exd_support_step2_title(),
-			tr::lng_exd_support_step2_text(tr::rich));
-		step(
-			&st::menuIconPremium,
-			tr::lng_exd_support_step3_title(),
-			tr::lng_exd_support_step3_text(tr::rich));
+		AddSupportSteps(box);
 
 		const auto preview = box->addRow(
 			object_ptr<Ui::FixedHeightWidget>(box, st::exteraBadgePreviewHeight),
@@ -801,18 +981,25 @@ void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
 		const auto user = session->user();
 		const auto view = preview->lifetime().make_state<
 			Ui::PeerUserpicView>();
-		const auto badgeId = Extera::BadgeTypeEmoji(u"donor"_q);
+		const auto badgeId = [&] {
+			if (const auto own = Extera::BadgeEmoji(user)) {
+				return own;
+			} else if (const auto donor = Extera::BadgeTypeEmoji(u"donor"_q)) {
+				return donor;
+			}
+			return Extera::BadgeTypeEmoji(u"default"_q);
+		}();
 		auto nameText = TextWithEntities{ user->name() };
 		if (badgeId) {
 			nameText.append(' ').append(Data::SingleCustomEmoji(badgeId));
+		} else {
+			nameText.append(QString::fromUtf8(" \xE2\x9D\xA4\xEF\xB8\x8F"));
 		}
-		const auto name = Ui::CreateChild<Ui::FlatLabel>(
+		const auto name = CreateMarqueeLabel(
 			preview,
-			st::exteraBadgePreviewName);
-		name->setMarkedText(nameText, Core::TextContext({
-			.session = session,
-			.repaint = [=] { name->update(); },
-		}));
+			session,
+			st::exteraBadgePreviewName,
+			nameText);
 		const auto message = Ui::CreateChild<Ui::FlatLabel>(
 			preview,
 			tr::lng_exd_support_preview(),
@@ -820,7 +1007,9 @@ void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
 		preview->widthValue() | rpl::on_next([=](int width) {
 			const auto left = st::exteraBadgePreviewUserpic
 				+ st::exteraBadgePreviewSkip * 3;
-			name->resizeToWidth(width - left - st::exteraBadgePreviewSkip);
+			name->resize(
+				width - left - st::exteraBadgePreviewSkip,
+				name->height());
 			message->resizeToWidth(width - left - st::exteraBadgePreviewSkip);
 			name->moveToLeft(left, st::exteraBadgePreviewSkip);
 			message->moveToLeft(
@@ -839,7 +1028,7 @@ void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
 				(preview->height() - size) / 2,
 				size);
 			p.setPen(Qt::NoPen);
-			p.setBrush(st::msgInBg);
+			p.setBrush(st::windowBgOver);
 			const auto left = size + skip * 2;
 			p.drawRoundedRect(
 				QRect(left, 0, preview->width() - left, preview->height()),
@@ -1254,6 +1443,77 @@ void PartGeneral0(SectionBuilder &builder) {
 	builder.addDivider();
 }
 
+void ShowWsProxySettings(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(tr::lng_exd_ws_settings());
+		box->setWidth(st::boxWideWidth);
+		const auto field = [&](
+				const QString &key,
+				rpl::producer<QString> placeholder,
+				bool number) {
+			const auto value = number
+				? QString::number(Extera::Int(key))
+				: Extera::String(key);
+			const auto result = box->addRow(object_ptr<Ui::InputField>(
+				box,
+				st::defaultInputField,
+				std::move(placeholder),
+				value));
+			return std::make_pair(key, result);
+		};
+		const auto check = [&](const QString &key, rpl::producer<QString> text) {
+			const auto result = box->addRow(
+				object_ptr<Ui::Checkbox>(
+					box,
+					std::move(text),
+					Extera::Bool(key),
+					st::defaultBoxCheckbox),
+				st::boxRowPadding + QMargins(0, st::boxLittleSkip, 0, 0));
+			return std::make_pair(key, result);
+		};
+		const auto numbers = std::vector{
+			field(u"ws_proxy_port"_q, tr::lng_exd_ws_port(), true),
+			field(u"ws_proxy_pool"_q, tr::lng_exd_ws_pool(), true),
+			field(u"ws_proxy_buf_kb"_q, tr::lng_exd_ws_buffer(), true),
+		};
+		const auto strings = std::vector{
+			field(u"ws_proxy_dc_ip"_q, tr::lng_exd_ws_dc_ip(), false),
+			field(u"ws_proxy_cf_domain"_q, tr::lng_exd_ws_cf_domain(), false),
+			field(u"ws_proxy_cf_worker"_q, tr::lng_exd_ws_cf_worker(), false),
+			field(u"ws_proxy_fake_tls"_q, tr::lng_exd_ws_fake_tls(), false),
+		};
+		const auto checks = std::vector{
+			check(u"ws_proxy_cf"_q, tr::lng_exd_ws_cf()),
+			check(u"ws_proxy_h2"_q, tr::lng_exd_ws_h2()),
+			check(u"ws_proxy_secure"_q, tr::lng_exd_ws_secure()),
+			check(u"ws_proxy_log"_q, tr::lng_exd_ws_log()),
+		};
+		Ui::AddSkip(box->verticalLayout());
+		box->addRow(object_ptr<Ui::FlatLabel>(
+			box,
+			tr::lng_exd_ws_settings_about(),
+			st::boxDividerLabel));
+		box->addButton(tr::lng_settings_save(), [=] {
+			for (const auto &[key, input] : numbers) {
+				auto ok = false;
+				const auto value = input->getLastText().trimmed().toInt(&ok);
+				if (ok && value >= 0) {
+					Config().setInt(key, value);
+				}
+			}
+			for (const auto &[key, input] : strings) {
+				Config().setString(key, input->getLastText().trimmed());
+			}
+			for (const auto &[key, checkbox] : checks) {
+				Config().setBool(key, checkbox->checked());
+			}
+			Extera::WsProxy::Restart();
+			box->closeBox();
+		});
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+	}));
+}
+
 void PartGeneral1(SectionBuilder &builder) {
 	[[maybe_unused]] const auto controller = builder.controller();
 	[[maybe_unused]] const auto settings = &Core::App().settings();
@@ -1267,6 +1527,17 @@ void PartGeneral1(SectionBuilder &builder) {
 				tr::lng_exd_ws_proxy(),
 				[] { return Extera::WsProxy::Enabled(); },
 				[](bool v) { Extera::WsProxy::SetEnabled(v); });
+			builder.addButton({
+				.id = u"extera/ws_proxy_settings"_q,
+				.title = tr::lng_exd_ws_settings(),
+				.st = &st::settingsButtonNoIcon,
+				.onClick = [=] {
+					if (controller) {
+						ShowWsProxySettings(controller);
+					}
+				},
+				.keywords = { u"proxy"_q, u"websocket"_q },
+			});
 		});
 		builder.addAbout(tr::lng_exd_ws_proxy_about());
 	}
@@ -1456,6 +1727,11 @@ void PartGeneral6(SectionBuilder &builder) {
 	builder.card([&] {
 		AddToggle(
 			builder,
+			u"profile_music_cover"_q,
+			tr::lng_exd_profile_music_cover(),
+			{ u"music"_q, u"profile"_q });
+		AddToggle(
+			builder,
 			u"relative_last_seen"_q,
 			tr::lng_extera_relative_last_seen(),
 			{},
@@ -1469,6 +1745,14 @@ void PartGeneral6(SectionBuilder &builder) {
 			builder,
 			u"hide_phone"_q,
 			tr::lng_extera_hide_phone());
+		AddChoice(
+			builder,
+			u"hide_phone_mode"_q,
+			tr::lng_exd_hide_phone_mode,
+			{
+				&tr::lng_exd_hide_phone_blur,
+				&tr::lng_exd_hide_phone_unknown,
+			});
 		AddChoice(
 			builder,
 			u"show_id_dc"_q,
@@ -1508,6 +1792,16 @@ void PartGeneral7(SectionBuilder &builder) {
 		}
 	});
 	AddAbout(builder, tr::lng_extera_hide_archive_about());
+
+	builder.addSkip();
+	builder.card([&] {
+		AddToggle(
+			builder,
+			u"capture_protection"_q,
+			tr::lng_exd_capture_protection(),
+			{ u"screenshot"_q, u"capture"_q });
+	});
+	AddAbout(builder, tr::lng_exd_capture_protection_about());
 }
 
 void PartAppearance0(SectionBuilder &builder) {
@@ -1630,6 +1924,7 @@ void PartAppearance4(SectionBuilder &builder) {
 				settings->setCustomFontFamily(v
 					? style::SystemFontTag()
 					: QString());
+				Core::App().saveSettings();
 				controller->show(Ui::MakeConfirmBox({
 					.text = tr::lng_extera_restart_required(),
 					.confirmed = [] { Core::Restart(); },
@@ -1712,11 +2007,48 @@ void PartChats1(SectionBuilder &builder) {
 
 	builder.addSkip();
 	builder.card([&] {
-		builder.addSectionButton({
+		const auto aiController = builder.controller();
+		const auto aiShowOther = builder.showOther();
+		const auto aiButton = builder.addButton({
+			.id = u"extera/ai_chat_open"_q,
 			.title = tr::lng_extera_ai_chat(),
-			.targetSection = ExteraAiChatId(),
 			.icon = { &st::menuIconBotCommands },
+			.onClick = [=] {
+				if (aiController) {
+					Extera::ShowAiChat(aiController);
+				}
+			},
+			.keywords = { u"ai"_q, u"chat"_q },
 		});
+		if (aiButton) {
+			AddBetaBadge(aiButton, tr::lng_extera_ai_chat(), st::settingsButton);
+			const auto controller = builder.controller();
+			const auto menu = aiButton->lifetime().make_state<
+				base::unique_qptr<Ui::PopupMenu>>();
+			base::install_event_filter(aiButton, [=](not_null<QEvent*> e) {
+				if (e->type() != QEvent::ContextMenu) {
+					return base::EventFilterResult::Continue;
+				}
+				*menu = base::make_unique_q<Ui::PopupMenu>(
+					aiButton,
+					st::popupMenuWithIcons);
+				(*menu)->addAction(tr::lng_exd_ai_settings(tr::now), [=] {
+					if (aiShowOther) {
+						aiShowOther(ExteraAiChatId());
+					}
+				}, &st::menuIconSettings);
+				(*menu)->addAction(tr::lng_exd_ai_show_main(tr::now), [=] {
+					Config().setBool(u"ai_chat_main"_q, true);
+					aiButton->hide();
+					if (controller) {
+						controller->showToast(
+							tr::lng_exd_ai_returned(tr::now));
+					}
+				}, &st::menuIconUnarchive);
+				(*menu)->popup(QCursor::pos());
+				return base::EventFilterResult::Cancel;
+			});
+		}
 	});
 	AddAbout(builder, tr::lng_extera_ai_settings_about());
 }
@@ -1753,13 +2085,6 @@ void PartChats2(SectionBuilder &builder) {
 			builder,
 			u"unlimited_recent_stickers"_q,
 			tr::lng_extera_unlimited_stickers());
-		AddToggle(
-			builder,
-			u"local_premium_emoji"_q,
-			tr::lng_extera_local_premium(),
-			{ u"premium"_q, u"emoji"_q },
-			tr::lng_extera_local_premium_about(),
-			true);
 		AddSwitchGroup(
 			builder,
 			u"hide_reactions"_q,
@@ -1795,6 +2120,16 @@ void PartChats3(SectionBuilder &builder) {
 			builder,
 			u"double_click_outgoing"_q,
 			tr::lng_extera_double_click_outgoing,
+			actions);
+		AddChoice(
+			builder,
+			u"right_click_incoming"_q,
+			tr::lng_exd_right_click_incoming,
+			actions);
+		AddChoice(
+			builder,
+			u"right_click_outgoing"_q,
+			tr::lng_exd_right_click_outgoing,
 			actions);
 		AddLivePreview(
 			builder,
@@ -1926,6 +2261,14 @@ void PartChats5(SectionBuilder &builder) {
 			tr::lng_extera_edited_icon());
 		AddToggle(
 			builder,
+			u"disable_colorful_replies"_q,
+			tr::lng_exd_disable_colorful_replies());
+		AddToggle(
+			builder,
+			u"translucent_deleted"_q,
+			tr::lng_exd_translucent_deleted());
+		AddToggle(
+			builder,
 			u"online_indicator"_q,
 			tr::lng_extera_online_indicator());
 		AddToggle(
@@ -2029,6 +2372,201 @@ void PartChats7(SectionBuilder &builder) {
 	AddAbout(builder, tr::lng_extera_auto_pause_about());
 }
 
+void ShowStringBox(
+		not_null<Window::SessionController*> controller,
+		const QString &key,
+		rpl::producer<QString> title,
+		rpl::producer<QString> placeholder) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(std::move(title));
+		const auto field = box->addRow(object_ptr<Ui::InputField>(
+			box,
+			st::defaultInputField,
+			std::move(placeholder),
+			Extera::String(key)));
+		box->setFocusCallback([=] { field->setFocusFast(); });
+		const auto save = [=] {
+			Config().setString(key, field->getLastText().trimmed());
+			box->closeBox();
+		};
+		field->submits() | rpl::on_next(save, field->lifetime());
+		box->addButton(tr::lng_settings_save(), save);
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+	}));
+}
+
+void PartPluginsGuard(SectionBuilder &builder) {
+	const auto controller = builder.controller();
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_guard_title());
+	builder.card([&] {
+		AddChoice(
+			builder,
+			u"plugins_guard"_q,
+			tr::lng_exd_guard_mode,
+			{
+				&tr::lng_exd_guard_mode_auto,
+				&tr::lng_exd_guard_mode_manual,
+				&tr::lng_exd_guard_mode_off,
+			},
+			{ u"security"_q, u"guard"_q, u"plugins"_q });
+		AddChoice(
+			builder,
+			u"guard_llm_provider"_q,
+			tr::lng_exd_guard_llm,
+			{
+				&tr::lng_exd_guard_llm_none,
+				&tr::lng_exd_guard_llm_groq,
+				&tr::lng_exd_guard_llm_openrouter,
+				&tr::lng_exd_guard_llm_deepseek,
+				&tr::lng_exd_guard_llm_openai,
+				&tr::lng_exd_guard_llm_mistral,
+			},
+			{ u"ai"_q, u"llm"_q });
+		builder.addButton({
+			.id = u"extera/guard_llm_key"_q,
+			.title = tr::lng_exd_guard_llm_key(),
+			.st = &st::settingsButtonNoIcon,
+			.label = Config().stringChanges(
+				u"guard_llm_key"_q
+			) | rpl::map([](const QString &key) {
+				return key.trimmed().isEmpty()
+					? tr::lng_exd_streamer_hotkey_none(tr::now)
+					: tr::lng_exd_premium_gemini_set(tr::now);
+			}),
+			.onClick = [=] {
+				if (controller) {
+					ShowStringBox(
+						controller,
+						u"guard_llm_key"_q,
+						tr::lng_exd_guard_llm_key(),
+						tr::lng_exd_guard_llm_key_placeholder());
+				}
+			},
+		});
+		builder.addButton({
+			.id = u"extera/guard_llm_model"_q,
+			.title = tr::lng_exd_guard_llm_model(),
+			.st = &st::settingsButtonNoIcon,
+			.label = Config().stringChanges(
+				u"guard_llm_model"_q
+			) | rpl::map([](const QString &model) {
+				return model.trimmed().isEmpty()
+					? tr::lng_exd_guard_llm_model_default(tr::now)
+					: model.trimmed();
+			}),
+			.onClick = [=] {
+				if (controller) {
+					ShowStringBox(
+						controller,
+						u"guard_llm_model"_q,
+						tr::lng_exd_guard_llm_model(),
+						tr::lng_exd_guard_llm_model_placeholder());
+				}
+			},
+		});
+	});
+	AddAbout(builder, tr::lng_exd_guard_about());
+}
+
+void PartPluginsPort(SectionBuilder &builder) {
+	const auto controller = builder.controller();
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_port_section());
+	builder.card([&] {
+		AddChoice(
+			builder,
+			u"port_llm_provider"_q,
+			tr::lng_exd_port_provider,
+			{
+				&tr::lng_exd_port_provider_none,
+				&tr::lng_exd_port_provider_openai,
+				&tr::lng_exd_port_provider_anthropic,
+				&tr::lng_exd_port_provider_openrouter,
+				&tr::lng_exd_port_provider_groq,
+				&tr::lng_exd_port_provider_deepseek,
+				&tr::lng_exd_port_provider_ollama,
+				&tr::lng_exd_port_provider_lmstudio,
+				&tr::lng_exd_port_provider_custom,
+				&tr::lng_exd_port_provider_gemini,
+			},
+			{ u"ai"_q, u"port"_q, u"llm"_q });
+		builder.addButton({
+			.id = u"extera/port_llm_key"_q,
+			.title = tr::lng_exd_port_key(),
+			.st = &st::settingsButtonNoIcon,
+			.label = Config().stringChanges(
+				u"port_llm_key"_q
+			) | rpl::map([](const QString &key) {
+				return key.trimmed().isEmpty()
+					? tr::lng_exd_streamer_hotkey_none(tr::now)
+					: tr::lng_exd_premium_gemini_set(tr::now);
+			}),
+			.onClick = [=] {
+				if (controller) {
+					ShowStringBox(
+						controller,
+						u"port_llm_key"_q,
+						tr::lng_exd_port_key(),
+						tr::lng_exd_port_key_placeholder());
+				}
+			},
+		});
+		builder.addButton({
+			.id = u"extera/port_llm_model"_q,
+			.title = tr::lng_exd_port_model(),
+			.st = &st::settingsButtonNoIcon,
+			.label = Config().stringChanges(
+				u"port_llm_model"_q
+			) | rpl::map([](const QString &model) {
+				return model.trimmed().isEmpty()
+					? tr::lng_exd_guard_llm_model_default(tr::now)
+					: model.trimmed();
+			}),
+			.onClick = [=] {
+				if (controller) {
+					ShowStringBox(
+						controller,
+						u"port_llm_model"_q,
+						tr::lng_exd_port_model(),
+						tr::lng_exd_guard_llm_model_placeholder());
+				}
+			},
+		});
+		builder.addButton({
+			.id = u"extera/port_llm_endpoint"_q,
+			.title = tr::lng_exd_port_endpoint(),
+			.st = &st::settingsButtonNoIcon,
+			.label = Config().stringChanges(
+				u"port_llm_endpoint"_q
+			) | rpl::map([](const QString &endpoint) {
+				return endpoint.trimmed().isEmpty()
+					? tr::lng_exd_guard_llm_model_default(tr::now)
+					: endpoint.trimmed();
+			}),
+			.onClick = [=] {
+				if (controller) {
+					ShowStringBox(
+						controller,
+						u"port_llm_endpoint"_q,
+						tr::lng_exd_port_endpoint(),
+						tr::lng_exd_port_endpoint_placeholder());
+				}
+			},
+		});
+		AddChoice(
+			builder,
+			u"port_llm_mode"_q,
+			tr::lng_exd_port_mode,
+			{
+				&tr::lng_exd_port_mode_agent,
+				&tr::lng_exd_port_mode_single,
+			},
+			{ u"ai"_q, u"port"_q });
+	});
+	AddAbout(builder, tr::lng_exd_port_about());
+}
+
 void PartPlugins0(SectionBuilder &builder) {
 	[[maybe_unused]] const auto controller = builder.controller();
 
@@ -2114,6 +2652,24 @@ void PartOther0(SectionBuilder &builder) {
 		});
 	});
 	AddAbout(builder, tr::lng_exd_badge_about());
+
+	builder.addSkip();
+	builder.card([&] {
+		builder.addButton({
+			.id = u"extera/default_client"_q,
+			.title = tr::lng_exd_default_client(),
+			.icon = { &st::menuIconLink },
+			.onClick = [=] {
+				Extera::AppIcon::MakeDefaultClient();
+				if (controller) {
+					controller->showToast(tr::lng_exd_default_client_done(
+						tr::now));
+				}
+			},
+			.keywords = { u"default"_q, u"tg"_q, u"links"_q },
+		});
+	});
+	AddAbout(builder, tr::lng_exd_default_client_about());
 }
 
 void PartOther1(SectionBuilder &builder) {
@@ -2130,17 +2686,24 @@ void PartOther1(SectionBuilder &builder) {
 				.id = u"extera/donate_"_q + id,
 				.title = std::move(title),
 				.icon = { &st::menuIconCopy },
-				.label = rpl::single(address.left(6)
-					+ QString::fromUtf8("\xE2\x80\xA6")
-					+ address.right(4)),
+				.label = rpl::single((id == u"card"_q)
+					? address
+					: (address.left(6)
+						+ QString::fromUtf8("\xE2\x80\xA6")
+						+ address.right(4))),
 				.onClick = [=] {
-					QGuiApplication::clipboard()->setText(address);
+					QGuiApplication::clipboard()->setText(
+						QString(address).remove(' '));
 					controller->showToast(
 						tr::lng_exd_donate_copied(tr::now));
 				},
 				.keywords = { u"donate"_q, u"crypto"_q },
 			});
 		};
+		wallet(
+			u"card"_q,
+			tr::lng_exd_donate_card(),
+			u"2200 7021 9261 6667"_q);
 		wallet(
 			u"ton"_q,
 			tr::lng_exd_donate_ton(),
@@ -2187,6 +2750,17 @@ void PartOther2(SectionBuilder &builder) {
 				});
 			},
 			.keywords = { u"update"_q, u"version"_q },
+		});
+		builder.addButton({
+			.id = u"extera/refresh_badges"_q,
+			.title = tr::lng_exd_refresh_badges(),
+			.icon = { &st::menuIconRestore },
+			.onClick = [=] {
+				Extera::RefreshBadges();
+				controller->showToast(
+					tr::lng_exd_refresh_badges_done(tr::now));
+			},
+			.keywords = { u"badges"_q, u"refresh"_q },
 		});
 		builder.addButton({
 			.id = u"extera/changelog"_q,
@@ -2738,7 +3312,12 @@ void AddCategoryGrid(SectionBuilder &builder) {
 		});
 		const auto count = int(cards->size());
 		const auto rows = (count + 1) / 2;
-		const auto cardHeight = st::exteraCategoryCardHeight;
+		const auto cardHeight = std::max(
+			st::exteraCategoryCardHeight,
+			(st::exteraCategoryCardPadding * 3 / 2
+				+ st::semiboldFont->height
+				+ st::exteraCategoryAboutSkip
+				+ 2 * st::exteraCategoryAboutFont->height));
 		const auto skip = st::exteraCategoryCardSkip;
 		auto result = object_ptr<Ui::FixedHeightWidget>(
 			ctx.container,
@@ -2791,10 +3370,14 @@ void AddCategoryGrid(SectionBuilder &builder) {
 			for (auto i = 0; i != count; ++i) {
 				const auto rect = cardRect(i);
 				p.setPen(Qt::NoPen);
-				p.setBrush((i == state->over)
-					? st::windowBgRipple
-					: st::windowBgOver);
+				p.setBrush(st::windowBgOver);
 				p.drawRoundedRect(rect, radius, radius);
+				if (i == state->over) {
+					auto over = st::windowFg->c;
+					over.setAlphaF(0.07);
+					p.setBrush(over);
+					p.drawRoundedRect(rect, radius, radius);
+				}
 				const auto tileRect = QRect(
 					rect.x() + padding,
 					rect.y() + (rect.height() - tile) / 2,
@@ -2832,7 +3415,35 @@ void AddCategoryGrid(SectionBuilder &builder) {
 				const auto textLeft = tileRect.x() + tile + st::exteraCategoryTitleSkip;
 				const auto textWidth = rect.x() + rect.width() - padding - textLeft;
 				const auto &aboutFont = st::exteraCategoryAboutFont;
-				const auto aboutLines = (aboutFont->width(state->abouts[i]) > textWidth) ? 2 : 1;
+				const auto aboutText = [&] {
+					const auto &text = state->abouts[i];
+					if (aboutFont->width(text) <= textWidth) {
+						return QStringList{ text };
+					}
+					auto first = QString();
+					const auto words = text.split(' ', Qt::SkipEmptyParts);
+					auto used = 0;
+					for (; used != int(words.size()); ++used) {
+						const auto next = first.isEmpty()
+							? words[used]
+							: (first + ' ' + words[used]);
+						if (aboutFont->width(next) > textWidth) {
+							break;
+						}
+						first = next;
+					}
+					if (first.isEmpty()) {
+						return QStringList{ aboutFont->elided(text, textWidth) };
+					}
+					const auto rest = QStringList(
+						words.begin() + used,
+						words.end()).join(' ');
+					return QStringList{
+						first,
+						aboutFont->elided(rest, textWidth),
+					};
+				}();
+				const auto aboutLines = int(aboutText.size());
 				const auto textHeight = st::semiboldFont->height
 					+ st::exteraCategoryAboutSkip
 					+ aboutLines * aboutFont->height;
@@ -2852,8 +3463,8 @@ void AddCategoryGrid(SectionBuilder &builder) {
 						top,
 						textWidth,
 						aboutLines * aboutFont->height),
-					Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
-					state->abouts[i]);
+					Qt::AlignLeft | Qt::AlignTop,
+					aboutText.join(QChar('\n')));
 			}
 		}, grid->lifetime());
 		grid->setMouseTracking(true);
@@ -2958,6 +3569,11 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 			builder,
 			u"plugins_no_auto_safe"_q,
 			tr::lng_exd_no_auto_safe());
+		AddToggle(
+			builder,
+			u"sbx_leak_tokens"_q,
+			tr::lng_exd_sbx_leak_tokens(),
+			{ u"token"_q, u"sandbox"_q });
 		builder.addButton({
 			.id = u"extera/plugins_export"_q,
 			.title = tr::lng_exd_plugins_export(),
@@ -3040,6 +3656,8 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 		}
 	});
 	AddAbout(builder, tr::lng_exd_trusted_sources_about());
+	PartPluginsGuard(builder);
+	PartPluginsPort(builder);
 }
 
 // AI Chat
@@ -3050,13 +3668,25 @@ void BuildAiChat(SectionBuilder &builder) {
 	builder.add([=](const WidgetContext &ctx) {
 		auto header = object_ptr<Ui::VerticalLayout>(ctx.container);
 		const auto raw = header.data();
-		raw->add(
+		const auto aiTitle = raw->add(
 			object_ptr<Ui::FlatLabel>(
 				raw,
 				tr::lng_extera_ai_chat(),
 				st::exteraInstallName),
 			st::exteraAiHeaderTitlePadding,
 			style::al_top);
+		{
+			const auto badge = Ui::NewBadge::CreateNewBadge(
+				raw,
+				tr::lng_exd_beta());
+			aiTitle->geometryValue(
+			) | rpl::on_next([=](QRect geometry) {
+				badge->move(
+					geometry.x() + geometry.width() + st::normalFont->spacew,
+					geometry.y()
+						+ (geometry.height() - badge->height()) / 2);
+			}, badge->lifetime());
+		}
 		raw->add(
 			object_ptr<Ui::FlatLabel>(
 				raw,
@@ -3199,6 +3829,8 @@ void BuildMessages(SectionBuilder &builder) {
 	});
 }
 
+void PartPremium(SectionBuilder &builder);
+
 void BuildAppearance(SectionBuilder &builder) {
 	AddCategorySearch(builder, {
 		ExteraAppearanceId(),
@@ -3211,6 +3843,7 @@ void BuildAppearance(SectionBuilder &builder) {
 		PartAppearance4(builder);
 		PartGeneral3(builder);
 		PartChats0(builder);
+		PartPremium(builder);
 		builder.addSkip();
 		builder.card([&] {
 			builder.addSectionButton({
@@ -3237,8 +3870,260 @@ void BuildPlugins(SectionBuilder &builder) {
 		PartPlugins0(builder);
 		PartPlugins1(builder);
 		PartPlugins2(builder);
-		PartChats1(builder);
+		if (!Extera::Bool(u"ai_chat_main"_q)) {
+			PartChats1(builder);
+		}
 	});
+}
+
+void PartAyuInner(SectionBuilder &builder);
+
+void PartAyu(SectionBuilder &builder) {
+	builder.addSkip();
+	builder.card([&] {
+		AddToggle(
+			builder,
+			u"ayu_features"_q,
+			tr::lng_exd_ayu_features(),
+			{ u"ayugram"_q, u"ghost"_q, u"deleted"_q });
+	});
+	AddAbout(builder, tr::lng_exd_ayu_features_about());
+	builder.scope(
+		[&] { PartAyuInner(builder); },
+		Extera::Config::Instance().boolChanges(u"ayu_features"_q));
+}
+
+void PartAyuInner(SectionBuilder &builder) {
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_ayu_ghost());
+	builder.card([&] {
+		AddSwitchGroup(
+			builder,
+			u"ghost_mode"_q,
+			tr::lng_exd_ayu_ghost_mode,
+			{
+				{ u"ghost_read"_q, &tr::lng_exd_ayu_ghost_read },
+				{ u"ghost_stories"_q, &tr::lng_exd_ayu_ghost_stories },
+				{ u"ghost_online"_q, &tr::lng_exd_ayu_ghost_online },
+				{ u"ghost_typing"_q, &tr::lng_exd_ayu_ghost_typing },
+				{ u"ghost_offline"_q, &tr::lng_exd_ayu_ghost_offline },
+			});
+		AddToggle(
+			builder,
+			u"ayu_ghost_read_after"_q,
+			tr::lng_exd_ayu_ghost_read_after());
+	});
+	AddAbout(builder, tr::lng_exd_ayu_ghost_about());
+
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_ayu_spy());
+	builder.card([&] {
+		AddToggle(
+			builder,
+			u"ayu_keep_deleted"_q,
+			tr::lng_exd_ayu_save_deleted(),
+			{ u"deleted"_q });
+		AddToggle(
+			builder,
+			u"ayu_edit_history"_q,
+			tr::lng_exd_ayu_edit_history(),
+			{ u"edit"_q, u"history"_q });
+		AddToggle(
+			builder,
+			u"ayu_save_bots"_q,
+			tr::lng_exd_ayu_save_bots());
+		AddToggle(
+			builder,
+			u"translucent_deleted"_q,
+			tr::lng_exd_translucent_deleted());
+		AddPreview(
+			builder,
+			u"deleted_mark"_q,
+			st::exteraPreviewBubble + st::exteraPreviewSkip * 2,
+			[](QPainter &p, QRect frame, int mark) {
+				const auto skip = st::exteraPreviewSkip;
+				const auto &font = st::msgDateFont;
+				const auto padding = style::ConvertScale(12);
+				const auto gap = style::ConvertScale(4);
+				const auto time = QLocale().toString(
+					QTime(12, 30),
+					QLocale::ShortFormat);
+				const auto label = tr::lng_exd_message_deleted(tr::now);
+				const auto &icon = (mark == 3)
+					? st::exteraDeletedCrossIconEmoji.icon
+					: (mark == 4)
+					? st::exteraDeletedEyeIconEmoji.icon
+					: st::exteraDeletedIconEmoji.icon;
+				const auto markWidth = (mark == 1)
+					? (font->width(label) + font->spacew)
+					: (mark >= 2)
+					? (icon.width() + gap)
+					: 0;
+				const auto meta = markWidth + font->width(time);
+				const auto bars = int(frame.width() * 0.3);
+				const auto width = std::min(
+					frame.width() - skip * 2,
+					padding + bars + style::ConvertScale(16) + meta + padding);
+				const auto bubble = QRectF(
+					frame.x() + skip,
+					frame.y() + skip,
+					width,
+					st::exteraPreviewBubble);
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::msgInBg);
+				p.drawRoundedRect(
+					bubble,
+					st::bubbleRadiusLarge,
+					st::bubbleRadiusLarge);
+				const auto vertical = style::ConvertScale(8);
+				PaintTextBars(
+					p,
+					QRectF(
+						bubble.x() + padding,
+						bubble.y() + vertical,
+						bars,
+						bubble.height() - vertical * 2),
+					st::msgInDateFg,
+					1);
+				auto right = int(bubble.right()) - padding;
+				const auto baseline = int(bubble.bottom()) - vertical;
+				p.setFont(font);
+				p.setPen(st::msgInDateFg);
+				right -= font->width(time);
+				p.drawText(right, baseline, time);
+				if (mark == 1) {
+					right -= markWidth;
+					p.drawText(right, baseline, label);
+				} else if (mark >= 2) {
+					right -= markWidth;
+					icon.paint(
+						p,
+						right,
+						baseline - font->ascent + (font->ascent - icon.height()) / 2 + style::ConvertScale(1),
+						frame.width(),
+						st::msgInDateFg->c);
+				}
+			});
+		AddChoice(
+			builder,
+			u"deleted_mark"_q,
+			tr::lng_exd_deleted_mark,
+			{
+				&tr::lng_exd_deleted_mark_none,
+				&tr::lng_exd_deleted_mark_text,
+				&tr::lng_exd_deleted_mark_trash,
+				&tr::lng_exd_deleted_mark_cross,
+				&tr::lng_exd_deleted_mark_eye,
+			},
+			{ u"deleted"_q, u"mark"_q },
+			[](QPainter &p, QRect rect, int mark) {
+				const auto &font = st::msgDateFont;
+				const auto color = st::windowSubTextFg->c;
+				if (mark == 1) {
+					const auto label = tr::lng_exd_message_deleted(tr::now);
+					p.setFont(font);
+					p.setPen(color);
+					p.drawText(
+						rect.x() + rect.width() - font->width(label),
+						rect.y() + (rect.height() + font->ascent - font->descent) / 2,
+						label);
+				} else if (mark >= 2) {
+					const auto &icon = (mark == 3)
+						? st::exteraDeletedCrossIconEmoji.icon
+						: (mark == 4)
+						? st::exteraDeletedEyeIconEmoji.icon
+						: st::exteraDeletedIconEmoji.icon;
+					icon.paint(
+						p,
+						rect.x() + rect.width() - icon.width(),
+						rect.y() + (rect.height() - icon.height()) / 2,
+						rect.width(),
+						color);
+				}
+			});
+		const auto controller = builder.controller();
+		builder.addButton({
+			.id = u"extera/ayu_clear_deleted"_q,
+			.title = tr::lng_exd_ayu_clear_deleted(),
+			.st = &st::settingsAttentionButton,
+			.onClick = [=] {
+				if (!controller) {
+					return;
+				}
+				controller->show(Ui::MakeConfirmBox({
+					.text = tr::lng_exd_ayu_clear_deleted_sure(),
+					.confirmed = [=](Fn<void()> close) {
+						controller->session().data().exteraClearDeleted();
+						close();
+					},
+					.confirmText = tr::lng_exd_ayu_clear_deleted_button(),
+					.confirmStyle = &st::attentionBoxButton,
+				}));
+			},
+		});
+	});
+	AddAbout(builder, tr::lng_exd_ayu_about());
+}
+
+void PartPremium(SectionBuilder &builder) {
+	const auto controller = builder.controller();
+	const auto settings = &Core::App().settings();
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_premium_title());
+	builder.card([&] {
+		AddToggle(
+			builder,
+			u"local_premium"_q,
+			tr::lng_exd_premium_limits(),
+			{ u"premium"_q },
+			tr::lng_exd_premium_limits_about(),
+			true);
+		AddToggle(
+			builder,
+			u"premium_no_ads"_q,
+			tr::lng_exd_premium_no_ads(),
+			{ u"premium"_q, u"ads"_q });
+		AddToggle(
+			builder,
+			u"local_premium_emoji"_q,
+			tr::lng_extera_local_premium(),
+			{ u"premium"_q, u"emoji"_q },
+			tr::lng_extera_local_premium_about(),
+			true);
+		AddCoreToggle(
+			builder,
+			u"premium_translate_chats"_q,
+			tr::lng_exd_premium_translate(),
+			[=] { return settings->translateChatEnabled(); },
+			[=](bool v) { settings->setTranslateChatEnabled(v); });
+		AddChoice(
+			builder,
+			u"transcribe_provider"_q,
+			tr::lng_exd_premium_transcribe,
+			{
+				&tr::lng_exd_premium_transcribe_telegram,
+				&tr::lng_exd_premium_transcribe_gemini,
+			},
+			{ u"voice"_q, u"transcribe"_q });
+		builder.addButton({
+			.id = u"extera/premium_gemini_key"_q,
+			.title = tr::lng_exd_premium_gemini_key(),
+			.st = &st::settingsButtonNoIcon,
+			.label = Config().stringChanges(
+				u"ai_chat_key"_q
+			) | rpl::map([](const QString &key) {
+				return key.trimmed().isEmpty()
+					? tr::lng_exd_streamer_hotkey_none(tr::now)
+					: tr::lng_exd_premium_gemini_set(tr::now);
+			}),
+			.onClick = [=] {
+				if (controller) {
+					Extera::ShowKeyBox(controller);
+				}
+			},
+		});
+	});
+	AddAbout(builder, tr::lng_exd_premium_about());
 }
 
 void BuildPrivacy(SectionBuilder &builder) {
@@ -3246,6 +4131,7 @@ void BuildPrivacy(SectionBuilder &builder) {
 		PartGeneral0(builder);
 		PartGeneral6(builder);
 		PartGeneral7(builder);
+		PartAyu(builder);
 	});
 }
 
@@ -3468,8 +4354,281 @@ rpl::producer<QString> ExteraSection<Index>::title() {
 
 } // namespace
 
+void ShowExteraAppIconBox(not_null<Window::SessionController*> controller) {
+	ShowAppIconBox(controller);
+}
+
 void ShowExteraSupportBox(not_null<Window::SessionController*> controller) {
 	ShowBadgeInfoBox(controller);
+}
+
+void SendBadgeCommand(
+		not_null<Main::Session*> session,
+		DocumentId emoji,
+		const QString &name) {
+	auto text = TextWithTags{ u"/set "_q };
+	if (emoji) {
+		text.text += u"emoji="_q + QString::number(emoji) + ' ';
+	}
+	text.text += name;
+	const auto send = [=](not_null<PeerData*> bot) {
+		auto message = Api::MessageToSend(
+			Api::SendAction(session->data().history(bot)));
+		message.textWithTags = text;
+		session->api().sendMessage(std::move(message));
+		base::call_delayed(crl::time(90000), session, [] {
+			Extera::RefreshBadges();
+		});
+	};
+	const auto username = u"exDesktop_bot"_q;
+	if (const auto bot = session->data().peerByUsername(username)) {
+		send(bot);
+		return;
+	}
+	session->api().request(MTPcontacts_ResolveUsername(
+		MTP_flags(0),
+		MTP_string(username),
+		MTP_string()
+	)).done([=](const MTPcontacts_ResolvedPeer &result) {
+		session->data().processUsers(result.data().vusers());
+		session->data().processChats(result.data().vchats());
+		if (const auto bot = session->data().peerLoaded(
+				peerFromMTP(result.data().vpeer()))) {
+			send(bot);
+		}
+	}).send();
+}
+
+void ShowBadgeEditBox(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		const auto session = &controller->session();
+		const auto user = session->user();
+		box->setTitle(tr::lng_exd_badge_edit_title());
+		box->setWidth(st::boxWideWidth);
+
+		struct State {
+			DocumentId chosen = 0;
+			DocumentId initial = 0;
+			std::unique_ptr<Ui::Text::CustomEmoji> emoji;
+			Info::Profile::EmojiStatusPanel panel;
+		};
+		const auto state = box->lifetime().make_state<State>();
+		state->initial = state->chosen = Extera::BadgeEmoji(user);
+
+		const auto button = box->addRow(
+			object_ptr<Ui::SettingsButton>(
+				box,
+				tr::lng_exd_badge_edit_emoji(),
+				st::settingsButtonNoIcon),
+			style::margins());
+		const auto preview = Ui::CreateChild<Ui::RpWidget>(button);
+		const auto previewSize = Data::FrameSizeFromTag(
+			Data::CustomEmojiManager::SizeTag::Large
+		) / style::DevicePixelRatio();
+		preview->resize(previewSize, previewSize);
+		preview->setAttribute(Qt::WA_TransparentForMouseEvents);
+		const auto refresh = [=] {
+			state->emoji = state->chosen
+				? session->data().customEmojiManager().create(
+					state->chosen,
+					[=] { preview->update(); },
+					Data::CustomEmojiManager::SizeTag::Large)
+				: nullptr;
+			preview->update();
+		};
+		refresh();
+		button->sizeValue() | rpl::on_next([=](QSize outer) {
+			preview->moveToRight(
+				st::settingsButtonNoIcon.padding.right(),
+				(outer.height() - preview->height()) / 2);
+		}, preview->lifetime());
+		preview->paintRequest() | rpl::on_next([=] {
+			if (!state->emoji) {
+				return;
+			}
+			auto p = QPainter(preview);
+			state->emoji->paint(p, {
+				.textColor = st::windowFg->c,
+				.now = crl::now(),
+				.position = QPoint(0, 0),
+			});
+		}, preview->lifetime());
+		button->setClickedCallback([=] {
+			state->panel.show({
+				.controller = controller,
+				.button = preview,
+				.channelStatusMode = true,
+			});
+		});
+		state->panel.someCustomChosen(
+		) | rpl::on_next([=](const Info::Profile::EmojiStatusPanel::CustomChosen &chosen) {
+			if (chosen.id.documentId) {
+				state->chosen = chosen.id.documentId;
+				refresh();
+			}
+		}, box->lifetime());
+
+		const auto initialName = Extera::BadgeCustomText(user);
+		const auto field = box->addRow(
+			object_ptr<Ui::InputField>(
+				box,
+				st::defaultInputField,
+				tr::lng_exd_badge_edit_name(),
+				initialName),
+			st::boxRowPadding + QMargins(0, st::boxLittleSkip, 0, 0));
+		field->setMaxLength(40);
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_badge_edit_about(),
+				st::boxDividerLabel),
+			st::boxRowPadding + QMargins(0, st::boxLittleSkip, 0, 0));
+
+		const auto save = [=] {
+			const auto name = field->getLastText().trimmed();
+			const auto emoji = (state->chosen != state->initial)
+				? state->chosen
+				: DocumentId();
+			const auto text = (name != initialName) ? name : QString();
+			if (!emoji && text.isEmpty()) {
+				box->closeBox();
+				return;
+			}
+			SendBadgeCommand(session, emoji, text);
+			controller->showToast(tr::lng_exd_badge_edit_sent(tr::now));
+			box->closeBox();
+		};
+		field->submits() | rpl::on_next(save, field->lifetime());
+		box->addButton(tr::lng_settings_save(), save);
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+		box->setFocusCallback([=] { field->setFocusFast(); });
+	}));
+}
+
+void ShowExteraBadgeBox(
+		not_null<Window::SessionController*> controller,
+		not_null<PeerData*> peer,
+		const QString &text,
+		bool supporter) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setStyle(st::exteraInstallBox);
+		box->setWidth(st::boxWideWidth);
+		box->setNoContentMargin(true);
+		box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); });
+		const auto session = &controller->session();
+		const auto own = peer->isSelf();
+		const auto bot = peer->isUser() && peer->asUser()->isBot();
+		const auto number = bot ? 0 : Extera::BadgeNumber(peer);
+		const auto holders = bot ? 0 : Extera::BadgeHolders(peer);
+		const auto emojiId = Extera::BadgeEmoji(peer);
+
+		const auto size = st::exteraBadgeLogoSize;
+		const auto badge = box->addRow(
+			object_ptr<Ui::FixedHeightWidget>(box, size),
+			st::exteraBadgeLogoPadding);
+		struct State {
+			std::unique_ptr<Ui::Text::CustomEmoji> emoji;
+		};
+		const auto state = badge->lifetime().make_state<State>();
+		if (emojiId) {
+			state->emoji = session->data().customEmojiManager().create(
+				emojiId,
+				[=] { badge->update(); },
+				Data::CustomEmojiManager::SizeTag::Isolated,
+				size);
+		}
+		badge->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(badge);
+			auto hq = PainterHighQualityEnabler(p);
+			const auto left = (badge->width() - size) / 2;
+			if (state->emoji && state->emoji->ready()) {
+				state->emoji->paint(p, {
+					.textColor = st::windowFg->c,
+					.now = crl::now(),
+					.position = QPoint(left, 0),
+				});
+			} else if (!state->emoji) {
+				static const auto image = QImage(u":/gui/art/logo_256.png"_q);
+				p.drawImage(QRect(left, 0, size, size), image);
+			}
+		}, badge->lifetime());
+
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				(number
+					? tr::lng_exd_badge_box_number(
+						lt_number,
+						rpl::single(QString::number(number)))
+					: tr::lng_exd_badge_box_plain()),
+				st::exteraBadgeTitle),
+			st::exteraBadgeTitlePadding,
+			style::al_top);
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				rpl::single(text),
+				st::exteraBadgeText),
+			st::exteraBadgeTextPadding,
+			style::al_top);
+
+		if (holders > 0) {
+			box->addRow(
+				object_ptr<Ui::FlatLabel>(
+					box,
+					(holders == 1)
+						? tr::lng_exd_badge_unique()
+						: tr::lng_exd_badge_holders(
+							lt_count_decimal,
+							rpl::single(float64(holders))),
+					st::exteraBadgeStepText),
+				st::exteraBadgeTextPadding,
+				style::al_top);
+		}
+
+		const auto add = [&](
+				rpl::producer<QString> title,
+				const style::RoundButton &st,
+				style::margins margin,
+				Fn<void()> callback) {
+			const auto button = box->addRow(
+				object_ptr<Ui::RoundButton>(box, std::move(title), st),
+				margin);
+			button->setFullRadius(true);
+			button->setTextTransform(
+				Ui::RoundButtonTextTransform::NoTransform);
+			button->setClickedCallback(std::move(callback));
+			box->widthValue() | rpl::on_next([=](int width) {
+				button->setFullWidth(width - margin.left() - margin.right());
+			}, button->lifetime());
+		};
+		if (own && Extera::BadgeIsCustom(peer)) {
+			add(
+				tr::lng_exd_badge_box_change(),
+				st::exteraInstallButton,
+				st::exteraInstallButtonMargin,
+				[=] {
+					box->closeBox();
+					ShowBadgeEditBox(controller);
+				});
+		} else if (!own) {
+			add(
+				(supporter
+					? tr::lng_exd_badge_invite_support()
+					: tr::lng_exd_badge_invite_get()),
+				st::exteraInstallButton,
+				st::exteraInstallButtonMargin,
+				[=] {
+					box->closeBox();
+					UrlClickHandler::Open(u"tg://support"_q);
+				});
+		}
+		add(
+			tr::lng_close(),
+			st::exteraInstallCancel,
+			st::exteraInstallCancelMargin,
+			[=] { box->closeBox(); });
+	}));
 }
 
 Type ExteraId() {

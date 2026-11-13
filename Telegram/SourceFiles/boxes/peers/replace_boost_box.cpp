@@ -35,6 +35,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/empty_userpic.h"
 #include "ui/dynamic_image.h"
 #include "ui/painter.h"
+#include "ui/userpic_view.h"
 #include "ui/top_background_gradient.h"
 #include "styles/style_boxes.h"
 #include "styles/style_credits.h"
@@ -687,7 +688,7 @@ object_ptr<Ui::RpWidget> CreateUserpicsTransfer(
 		for (const auto &button : state->buttons) {
 			q.setPen(pen);
 			q.setBrush(Qt::NoBrush);
-			q.drawEllipse(button->geometry());
+			Ui::DrawUserpicShape(q, QRectF(button->geometry()));
 			const auto position = button->pos();
 			button->render(&q, position, QRegion(), QWidget::DrawChildren);
 		}
@@ -846,7 +847,7 @@ object_ptr<Ui::RpWidget> CreateUserpicsWithMoreBadge(
 		const auto paintOne = [&](not_null<Ui::UserpicButton*> button) {
 			q.setPen(pen);
 			q.setBrush(Qt::NoBrush);
-			q.drawEllipse(button->geometry());
+			Ui::DrawUserpicShape(q, QRectF(button->geometry()));
 			const auto position = button->pos();
 			button->render(&q, position, QRegion(), QWidget::DrawChildren);
 		};

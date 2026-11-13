@@ -27,7 +27,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_saved_messages.h"
 #include "data/data_saved_sublist.h"
 #include "data/data_shared_media.h"
-#include "data/data_message_reactions.h"
 #include "data/data_folder.h"
 #include "data/data_changes.h"
 #include "data/stickers/data_custom_emoji.h"
@@ -139,7 +138,7 @@ rpl::producer<TextWithEntities> PhoneValue(not_null<UserData*> user) {
 	) | rpl::map([=] {
 		using PhoneMode = Extera::Streamer::PhoneMode;
 		if (user->isSelf()) {
-			switch (Extera::Streamer::Phone()) {
+			switch (Extera::Streamer::SelfPhone()) {
 			case PhoneMode::Unknown:
 				return tr::marked(tr::lng_extera_unknown_number(tr::now));
 			case PhoneMode::Spoiler:
@@ -189,12 +188,19 @@ rpl::producer<TextWithEntities> PhoneWithSpoilerValue(
 	return rpl::combine(
 		std::move(phone),
 		user->session().settings().phoneNumberHiddenValue(),
-		Extera::Config::Instance().boolChanges(u"hide_phone"_q)
+		Extera::Config::Instance().boolChanges(u"hide_phone"_q),
+		Extera::Config::Instance().intChanges(u"hide_phone_mode"_q)
 	) | rpl::map([](
 			const TextWithEntities &phone,
 			bool hidden,
-			bool exteraHidden) {
-		return (hidden || exteraHidden)
+			bool,
+			int) {
+		using Mode = Extera::Streamer::PhoneMode;
+		const auto mode = Extera::Streamer::SelfPhone();
+		if (mode == Mode::Unknown) {
+			return tr::marked(tr::lng_extera_unknown_number(tr::now));
+		}
+		return (hidden || mode == Mode::Spoiler)
 			? Ui::Text::Wrapped(phone, EntityType::Spoiler)
 			: phone;
 	});
@@ -370,6 +376,7 @@ rpl::producer<bool> NotificationsEnabledValue(
 	if (!topic) {
 		return NotificationsEnabledValue(thread->peer());
 	}
+	const auto weak = base::make_weak(topic);
 	return rpl::merge(
 		topic->session().changes().topicFlagsValue(
 			topic,
@@ -380,7 +387,9 @@ rpl::producer<bool> NotificationsEnabledValue(
 			UpdateFlag::Notifications
 		) | rpl::to_empty,
 		topic->owner().notifySettings().defaultUpdates(topic->peer())
-	) | rpl::map([=] {
+	) | rpl::filter([=] {
+		return (weak.get() != nullptr);
+	}) | rpl::map([=] {
 		return !topic->owner().notifySettings().isMuted(topic);
 	}) | rpl::distinct_until_changed();
 }
@@ -730,16 +739,6 @@ rpl::producer<bool> CanAddMemberValue(not_null<PeerData*> peer) {
 	return rpl::single(false);
 }
 
-rpl::producer<int> FullReactionsCountValue(
-		not_null<Main::Session*> session) {
-	const auto reactions = &session->data().reactions();
-	return rpl::single(rpl::empty) | rpl::then(
-		reactions->defaultUpdates()
-	) | rpl::map([=] {
-		return int(reactions->list(Data::Reactions::Type::Active).size());
-	}) | rpl::distinct_until_changed();
-}
-
 rpl::producer<bool> CanViewParticipantsValue(
 		not_null<ChannelData*> megagroup) {
 	if (megagroup->amCreator()) {
@@ -773,7 +772,8 @@ rpl::producer<BadgeType> BadgeValueFromFlags(Peer peer) {
 			? BadgeType::Direct
 			: (value & Flag::Verified)
 			? BadgeType::Verified
-			: premium
+			: (premium
+				&& (!peer->asUser() || peer->asUser()->isPremiumReal()))
 			? BadgeType::Premium
 			: BadgeType::None;
 	});
@@ -796,6 +796,21 @@ rpl::producer<EmojiStatusId> EmojiStatusIdValue(not_null<PeerData*> peer) {
 		peer,
 		Data::PeerUpdate::Flag::EmojiStatus
 	) | rpl::map([=] { return peer->emojiStatusId(); });
+}
+
+rpl::producer<EmojiStatusId> ShownEmojiStatusIdValue(
+		not_null<PeerData*> peer) {
+	if (peer->isChat()) {
+		return rpl::single(EmojiStatusId());
+	}
+	return rpl::merge(
+		EmojiStatusIdValue(peer) | rpl::to_empty,
+		peer->barSettingsValue() | rpl::to_empty
+	) | rpl::map([=] {
+		return peer->hideEmojiStatus()
+			? EmojiStatusId()
+			: peer->emojiStatusId();
+	}) | rpl::distinct_until_changed();
 }
 
 rpl::producer<QString> BirthdayLabelText(

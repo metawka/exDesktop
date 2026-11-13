@@ -409,7 +409,7 @@ def _detect_obfuscation(source: str) -> List[str]:
     return []
 
 
-_MAX_SOURCE_BYTES = 4 * 1024 * 1024
+_MAX_SOURCE_BYTES = 16 * 1024 * 1024
 _MAX_ARCHIVE_BYTES = 16 * 1024 * 1024
 _SOURCE_MEMBER_SUFFIXES = (".py", ".pyc")
 

@@ -21,6 +21,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mainwindow.h"
 #include "tray.h"
 #include "window/window_controller.h"
+#include "extera/extera_config.h"
+#include "extera/extera_streamer.h"
 
 
 #include <QtCore/QAbstractNativeEventFilter>
@@ -88,6 +90,18 @@ void WindowsIntegration::createCustomJumpList() {
 		CLSID_DestinationList);
 	if (_jumpList) {
 		refreshCustomJumpList();
+		Extera::Config::Instance().changes(
+		) | rpl::filter([](const QString &key) {
+			return (key == u"streamer_mode"_q)
+				|| (key == u"ayu_features"_q)
+				|| key.startsWith(u"ghost_"_q);
+		}) | rpl::on_next([=] {
+			crl::on_main([=] {
+				if (_jumpList) {
+					refreshCustomJumpList();
+				}
+			});
+		}, _exdJumpListLifetime);
 	}
 }
 
@@ -107,46 +121,73 @@ void WindowsIntegration::refreshCustomJumpList() {
 		}
 	});
 
-	auto shellLink = base::WinRT::TryCreateInstance<IShellLink>(
-		CLSID_ShellLink);
-	if (!shellLink) {
-		return;
-	}
-
-	// Set the path to your application and the command-line argument for quitting
 	const auto exe = QDir::toNativeSeparators(cExeDir() + cExeName());
 	const auto dir = QDir::toNativeSeparators(QDir(cWorkingDir()).absolutePath());
-	const auto icon = Tray::QuitJumpListIconPath();
-	shellLink->SetArguments(L"-quit");
-	shellLink->SetPath(exe.toStdWString().c_str());
-	shellLink->SetWorkingDirectory(dir.toStdWString().c_str());
-	shellLink->SetIconLocation(icon.toStdWString().c_str(), 0);
-
-	if (const auto propertyStore = shellLink.try_as<IPropertyStore>()) {
-		auto appIdPropVar = PROPVARIANT();
-		hr = InitPropVariantFromString(
-			AppUserModelId::Id().c_str(),
-			&appIdPropVar);
-		if (SUCCEEDED(hr)) {
-			hr = propertyStore->SetValue(
-				AppUserModelId::Key(),
-				appIdPropVar);
-			PropVariantClear(&appIdPropVar);
+	const auto makeLink = [&](
+			const QString &arguments,
+			const QString &title,
+			const QString &icon) {
+		auto shellLink = base::WinRT::TryCreateInstance<IShellLink>(
+			CLSID_ShellLink);
+		if (!shellLink) {
+			return shellLink;
 		}
-		auto titlePropVar = PROPVARIANT();
-		hr = InitPropVariantFromString(
-			tr::lng_quit_from_tray(tr::now).toStdWString().c_str(),
-			&titlePropVar);
-		if (SUCCEEDED(hr)) {
-			hr = propertyStore->SetValue(PKEY_Title, titlePropVar);
-			PropVariantClear(&titlePropVar);
+		shellLink->SetArguments(arguments.toStdWString().c_str());
+		shellLink->SetPath(exe.toStdWString().c_str());
+		shellLink->SetWorkingDirectory(dir.toStdWString().c_str());
+		shellLink->SetIconLocation(icon.toStdWString().c_str(), 0);
+		if (const auto propertyStore = shellLink.try_as<IPropertyStore>()) {
+			auto appIdPropVar = PROPVARIANT();
+			auto result = InitPropVariantFromString(
+				AppUserModelId::Id().c_str(),
+				&appIdPropVar);
+			if (SUCCEEDED(result)) {
+				propertyStore->SetValue(AppUserModelId::Key(), appIdPropVar);
+				PropVariantClear(&appIdPropVar);
+			}
+			auto titlePropVar = PROPVARIANT();
+			result = InitPropVariantFromString(
+				title.toStdWString().c_str(),
+				&titlePropVar);
+			if (SUCCEEDED(result)) {
+				propertyStore->SetValue(PKEY_Title, titlePropVar);
+				PropVariantClear(&titlePropVar);
+			}
+			propertyStore->Commit();
 		}
-		propertyStore->Commit();
-	}
+		return shellLink;
+	};
 
 	auto collection = base::WinRT::TryCreateInstance<IObjectCollection>(
 		CLSID_EnumerableObjectCollection);
 	if (!collection) {
+		return;
+	}
+	const auto streamer = makeLink(
+		u"-- tg://exd_toggle?mode=streamer"_q,
+		(Extera::Streamer::Active()
+			? tr::lng_exd_jump_streamer_off
+			: tr::lng_exd_jump_streamer_on)(tr::now),
+		exe);
+	if (streamer) {
+		collection->AddObject(streamer.get());
+	}
+	if (Extera::Bool(u"ayu_features"_q)) {
+		const auto ghost = makeLink(
+			u"-- tg://exd_toggle?mode=ghost"_q,
+			(Extera::GhostActive()
+				? tr::lng_exd_jump_ghost_off
+				: tr::lng_exd_jump_ghost_on)(tr::now),
+			exe);
+		if (ghost) {
+			collection->AddObject(ghost.get());
+		}
+	}
+	const auto shellLink = makeLink(
+		u"-quit"_q,
+		tr::lng_quit_from_tray(tr::now),
+		Tray::QuitJumpListIconPath());
+	if (!shellLink) {
 		return;
 	}
 	collection->AddObject(shellLink.get());

@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "extera/extera_feed.h"
 #include "extera/extera_navigation.h"
 #include "extera/extera_streamer.h"
+#include "extera/extera_plugins_ui.h"
 #include "core/version.h"
 
 #include "apiwrap.h"
@@ -19,7 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qt_signal_producer.h"
 #include "boxes/about_box.h"
 #include "core/update_channel.h"
-#include "boxes/peer_list_controllers.h"
+#include "boxes/contacts_box.h"
 #include "boxes/premium_preview_box.h"
 #include "calls/group/calls_group_common.h"
 #include "calls/calls_box_controller.h"
@@ -877,10 +878,10 @@ void MainMenu::setupMenu() {
 	});
 	tag("settings");
 
-	addAction(
+	const auto streamer = addAction(
 		tr::lng_extera_streamer_mode(),
-		{ &st::menuIconUserHide }
-	)->toggleOn(
+		{ &st::menuIconUserHide });
+	streamer->toggleOn(
 		Extera::Config::Instance().boolChanges(u"streamer_mode"_q)
 	)->toggledChanges(
 	) | rpl::filter([](bool enabled) {
@@ -888,7 +889,35 @@ void MainMenu::setupMenu() {
 	}) | rpl::on_next([](bool enabled) {
 		Extera::Config::Instance().setBool(u"streamer_mode"_q, enabled);
 	}, lifetime());
+	streamer->events(
+	) | rpl::filter([](not_null<QEvent*> e) {
+		return e->type() == QEvent::ContextMenu;
+	}) | rpl::on_next([=] {
+		Extera::Streamer::ShowMenu(controller);
+	}, streamer->lifetime());
 	tag("streamer");
+
+	if (Extera::Bool(u"ayu_features"_q)) {
+		addAction(
+			tr::lng_exd_ayu_ghost_mode(),
+			{ &st::menuIconStealth }
+		)->toggleOn(
+			Extera::GhostActiveValue()
+		)->toggledChanges(
+		) | rpl::filter([](bool enabled) {
+			return enabled != Extera::GhostActive();
+		}) | rpl::on_next([](bool enabled) {
+			Extera::SetGhostAll(enabled);
+		}, lifetime());
+		tag("ghost");
+	}
+
+	Extera::Plugins::AddDrawerMenuItems([&](QString text, Fn<void()> handler) {
+		addAction(
+			rpl::single(std::move(text)),
+			{ &st::menuIconBotCommands }
+		)->setClickedCallback(std::move(handler));
+	});
 
 	_nightThemeToggle = addAction(
 		tr::lng_menu_night_mode(),

@@ -864,6 +864,7 @@ void Header::rebuildVolumeControls(
 		st::storiesVolumeSlider);
 	slider->setMoveByWheel(true);
 	slider->setAlwaysDisplayMarker(true);
+	slider->setMaterialStyle(false);
 	using Direction = Ui::MediaSlider::Direction;
 	slider->setDirection(horizontal
 		? Direction::Horizontal

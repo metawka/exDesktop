@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history.h"
 
+#include "extera/extera_config.h"
+
 #include "history/view/history_view_element.h"
 #include "history/view/history_view_item_preview.h"
 #include "history/view/history_view_translate_tracker.h"
@@ -71,6 +73,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_shared_media.h"
 #include "storage/storage_account.h"
 #include "support/support_helper.h"
+#include "tgw/tgw_storage.h"
 #include "ui/image/image.h"
 #include "ui/text/text_options.h"
 #include "ui/text/text_utilities.h"
@@ -627,6 +630,7 @@ not_null<HistoryItem*> History::createItem(
 	const auto result = message.match([&](const auto &data) {
 		return makeMessage(id, data, localFlags);
 	});
+	owner().exteraRemember(peer->id, id, message);
 	if (newMessage && result->out() && result->isRegular()) {
 		session().topPeers().increment(peer, result->date());
 		if (result->starsPaid()) {
@@ -755,6 +759,7 @@ void History::destroyMessage(not_null<HistoryItem*> item) {
 }
 
 void History::destroyMessagesByDates(TimeId minDate, TimeId maxDate) {
+	Tgw::ClearDatesStorage(this, minDate, maxDate);
 	auto toDestroy = std::vector<not_null<HistoryItem*>>();
 	toDestroy.reserve(_items.size());
 	for (const auto &message : _items) {
@@ -1898,7 +1903,75 @@ void History::addEdgesToSharedMedia() {
 	}
 }
 
-void History::addOlderSlice(const QVector<MTPMessage> &slice) {
+QVector<MTPMessage> History::exteraMergeDeleted(
+		const QVector<MTPMessage> &slice,
+		MsgId lower,
+		MsgId upper,
+		bool includeExisting) {
+	if (!Extera::SaveDeleted()) {
+		return slice;
+	}
+	const auto &stored = owner().exteraDeletedFor(peer->id);
+	if (stored.empty()) {
+		return slice;
+	}
+	auto result = slice;
+	auto present = base::flat_set<MsgId>();
+	for (const auto &message : slice) {
+		present.emplace(IdFromMessage(message));
+	}
+	auto added = false;
+	for (auto i = stored.lower_bound(lower); i != end(stored); ++i) {
+		const auto id = i->first;
+		if (upper && id >= upper) {
+			break;
+		} else if (present.contains(id)
+			|| (!includeExisting && owner().message(peer, id))) {
+			continue;
+		}
+		const auto &bytes = i->second;
+		if (bytes.size() % sizeof(mtpPrime)) {
+			continue;
+		}
+		auto buffer = mtpBuffer(bytes.size() / sizeof(mtpPrime));
+		memcpy(buffer.data(), bytes.constData(), bytes.size());
+		auto from = buffer.constData();
+		auto message = MTPMessage();
+		if (!message.read(from, from + buffer.size())) {
+			continue;
+		}
+		owner().exteraMarkDeleted(FullMsgId(peer->id, id));
+		result.push_back(message);
+		added = true;
+	}
+	if (added) {
+		std::stable_sort(result.begin(), result.end(), [](
+				const MTPMessage &a,
+				const MTPMessage &b) {
+			return IdFromMessage(a) > IdFromMessage(b);
+		});
+	}
+	return result;
+}
+
+void History::addOlderSlice(const QVector<MTPMessage> &original) {
+	auto slice = original;
+	if (!original.isEmpty() && Extera::SaveDeleted()) {
+		auto lowest = IdFromMessage(original.front());
+		auto highest = lowest;
+		for (const auto &message : original) {
+			const auto id = IdFromMessage(message);
+			lowest = std::min(lowest, id);
+			highest = std::max(highest, id);
+		}
+		const auto last = lastMessage();
+		const auto bottom = !last || (last->id <= highest);
+		const auto oldest = minMsgId();
+		slice = exteraMergeDeleted(
+			original,
+			lowest,
+			oldest ? oldest : bottom ? MsgId(0) : (highest + 1));
+	}
 	if (slice.isEmpty()) {
 		_loadedAtTop = true;
 		checkLocalMessages();
@@ -1947,7 +2020,24 @@ void History::addCreatedOlderSlice(
 	addToSharedMedia(items);
 }
 
-void History::addNewerSlice(const QVector<MTPMessage> &slice) {
+void History::addNewerSlice(const QVector<MTPMessage> &original) {
+	auto slice = original;
+	if (!original.isEmpty() && Extera::SaveDeleted()) {
+		auto lowest = IdFromMessage(original.front());
+		auto highest = lowest;
+		for (const auto &message : original) {
+			const auto id = IdFromMessage(message);
+			lowest = std::min(lowest, id);
+			highest = std::max(highest, id);
+		}
+		const auto last = lastMessage();
+		const auto bottom = !last || (last->id <= highest);
+		const auto newest = maxMsgId();
+		slice = exteraMergeDeleted(
+			original,
+			newest ? (newest + 1) : lowest,
+			bottom ? MsgId(0) : (highest + 1));
+	}
 	bool wasLoadedAtBottom = loadedAtBottom();
 
 	if (slice.isEmpty()) {
@@ -1992,8 +2082,8 @@ void History::checkLastMessage() {
 
 void History::addItemsToLists(
 		const std::vector<not_null<HistoryItem*>> &items) {
-	std::deque<not_null<UserData*>> *lastAuthors = nullptr;
-	base::flat_set<not_null<PeerData*>> *markupSenders = nullptr;
+	auto lastAuthors = (std::deque<not_null<UserData*>>*)nullptr;
+	auto markupSenders = (base::flat_set<not_null<PeerData*>>*)nullptr;
 	if (peer->isChat()) {
 		lastAuthors = &peer->asChat()->lastAuthors;
 		markupSenders = &peer->asChat()->markupSenders;
@@ -3482,8 +3572,13 @@ bool History::shouldBeInChatList() const {
 			return true;
 		}
 	}
+	const auto last = lastMessage();
 	return !lastMessageKnown()
-		|| (lastMessage() != nullptr);
+		|| (last != nullptr && !isNewPeerMessage(last));
+}
+
+bool History::isNewPeerMessage(not_null<HistoryItem*> item) const {
+	return (item == _newPeerPhotoChange) || (item == _newPeerNameChange);
 }
 
 void History::unknownMessageDeleted(MsgId messageId) {
@@ -4217,6 +4312,7 @@ void History::checkNewPeerMessages() {
 	if (name && !_newPeerNameChange) {
 		_newPeerNameChange = add(tr::lng_new_contact_updated_name, name);
 	}
+	updateChatListExistence();
 }
 
 void History::insertMessageToBlocks(not_null<HistoryItem*> item) {
@@ -4504,6 +4600,7 @@ void History::clear(ClearType type, bool markEmpty) {
 }
 
 void History::clearUpTill(MsgId availableMinId) {
+	Tgw::ClearHistoryStorage(this, availableMinId);
 	auto remove = std::vector<not_null<HistoryItem*>>();
 	remove.reserve(_items.size());
 	for (const auto &item : _items) {
@@ -4511,6 +4608,7 @@ void History::clearUpTill(MsgId availableMinId) {
 		if (!item->isRegular()) {
 			continue;
 		} else if (itemId == availableMinId) {
+			Tgw::DeleteMessageStorage(item.get());
 			owner().scheduleItemPhotoCacheClear(item.get());
 			item->applyEditionToHistoryCleared();
 		} else if (itemId < availableMinId) {
@@ -4632,6 +4730,7 @@ void History::refreshHiddenLinksItems() {
 	for (const auto &id : refresh) {
 		if (const auto item = owner->message(id)) {
 			item->setHasHiddenLinks(false);
+			item->updateDependentServiceText();
 			owner->requestItemViewRefresh(item);
 		}
 	}

@@ -1,3 +1,74 @@
+7.4.3.1 (13.11.26)
+- Updated to Telegram Desktop 7.4.3: search for apps, channels, posts and media in search tabs, HTML widgets in bots, camera and microphone access in mini apps, many fixes.
+- The version number now follows the Telegram Desktop version.
+- macOS builds for Intel and Apple Silicon.
+- Plugins connect to the Internet without requests. Sending protected data is paused with a choice to deny, allow once, allow always or disable the plugin: session keys, login codes, account phone number, contact phone numbers, seed phrases, private keys, browser data, hardware addresses.
+- Optional protection of bot tokens and API keys sent by plugins.
+- Folders outside the user profile are requested once per folder, local network and UDP still require permission.
+- Plugin menu section with permissions and an activity log: Internet, clipboard, notifications, links without confirmation, connections, folders and blocked actions.
+- PluginGuard reports fewer false alarms.
+- Chats open faster with plugins installed.
+- Ghost mode: groups load after long inactivity, read marks update without a reply.
+- Full member list in groups.
+- Ad hiding covers search results and "Proxy sponsor" channels and works without client restrictions.
+- A reply to a deleted message adds a quote with the author and text.
+- "Keep locally" is remembered for each chat.
+- Album cover in the profile music button.
+- Avatars with a custom corner radius in reaction menus and gifts.
+- Screen capture protection for media from protected chats is a setting, off by default.
+- Deleted mark previews in the selection window.
+- Client restrictions are off by default and are turned off once after the update, the Premium star is shown only with real Premium.
+
+7.3.3.11 (08.11.26)
+- Reworked plugin sandbox: access decisions are made in the client core, plugins can no longer disable the protection.
+- Plugins no longer get the computer name, user name, processor model, MAC address, registry data or screen captures.
+- UDP and local network access from plugins requires permission.
+- Account requests are blocked for plugins: sign-in and sessions, two-step verification, phone change, account deletion, Passport, payments, stars and gifts.
+- Links opened by plugins require confirmation.
+- Native modules in plugin dependencies are limited to known packages.
+- PluginGuard blocks plugins that try to bypass the sandbox.
+
+7.3.3.10 (07.11.26)
+- Compatibility with exteraGram plugins: Java and Android emulation, messages, notifications, files, images, plugin libraries and the Elyx format.
+- Android hooks for messages, chat, profile and chat list screens, external links and the app window.
+- AI port of Android plugins with your own API key, running in the background with a check of the result.
+- Plugin sandbox with permissions for websites and folders.
+- Plugin dependencies are installed in the background.
+- Plugin labels, plugin button in the chat header, Markdown in plugin descriptions.
+- Plugin engine on Linux and macOS: bundled Python packages and launch fixes.
+- Work on plugin compatibility continues: about 61% of exteraGram plugins work fully and 29% partially.
+- Badge window with number and rarity, badge editing.
+- Message count in chat search, Jump List actions for streamer and ghost mode.
+- Streamer mode no longer slows down the client.
+- AyuGram features are controlled by one switch, updates no longer turn them back on.
+- The installer hung while exDesktop was running in the tray.
+
+7.3.3.9 (06.11.26)
+- Plugin security check: static rules, PluginGuard vector model and optional AI arbiter, full analysis, installation block and plugin reports.
+- AyuGram features: ghost mode, saved deleted messages, edit history, deleted marks, "Keep locally" on deletion.
+- Local Telegram Premium: client limits, no ads, Premium emoji, chat translation, voice transcription via Telegram or Gemini.
+- AI Chat as a separate conversation in the main settings.
+- Streamer mode: hidden avatars, names and messages everywhere, presets, side menu actions, global shortcuts for toggle and screenshot.
+- Default client for tg://, tonsite:// and ton:// links.
+- Double right click actions.
+- TG WS Proxy settings.
+- Pack owner in the sticker and emoji set menu.
+- App Icon in Telegram chat settings.
+- Material Design 3 sliders everywhere.
+- Linux and macOS installation with one curl command.
+- exDesktop badges for bots, default badge emoji, readable badges in light themes.
+- Faster downloads.
+- Forwarding from another account keeps the original sender.
+- Phone number hiding everywhere with blur or Unknown Number.
+- Better ID recognition.
+- Plugin icons from emoji and emoji packs.
+- Unlimited recent stickers, system emoji and system font did not work.
+- Plugin engine did not work on Linux and macOS.
+- Unpin icon in the quick actions bar.
+- Black trace around rounded avatars.
+- Plugin cards lost icons and buttons.
+- Crash when forwarding from another account.
+
 7.3.3.8 (01.11.26)
 - Option to mute inactive switches in Material Design 3 settings.
 - Plugins forwarded from trusted channels are verified by the original post.

@@ -68,6 +68,7 @@ private:
 	QImage _frame;
 	std::unique_ptr<Subscribed> _subscribed;
 	bool _forceRound = false;
+	int _corners = -1;
 
 };
 
@@ -318,7 +319,11 @@ QImage PeerUserpic::image(int size) {
 	const auto good = (_frame.width() == size * _frame.devicePixelRatio());
 	const auto key = _peer->userpicUniqueKey(_subscribed->view);
 	const auto paletteVersion = style::PaletteVersion();
+	const auto corners = Ui::UserpicCorners();
+	const auto cornersChanged = (_corners != corners);
+	_corners = corners;
 	if (!good
+		|| cornersChanged
 		|| (_subscribed->paletteVersion != paletteVersion
 			&& _peer->useEmptyUserpic(_subscribed->view))
 		|| (_subscribed->key != key && !waitingUserpicLoad())) {

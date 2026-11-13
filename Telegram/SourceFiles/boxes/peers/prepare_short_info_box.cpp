@@ -232,10 +232,9 @@ void ProcessFullPhoto(
 				: QString()),
 			.phone = !user
 				? QString()
-				: (user->isSelf()
-					&& Extera::Streamer::Phone()
-						!= Extera::Streamer::PhoneMode::Shown)
-				? tr::lng_extera_unknown_number(tr::now)
+				: user->isSelf()
+				? Extera::Streamer::SelfPhoneText(
+					Ui::FormatPhone(user->phone()))
 				: Ui::FormatPhone(user->phone()),
 			.link = ((user || username.isEmpty())
 				? QString()

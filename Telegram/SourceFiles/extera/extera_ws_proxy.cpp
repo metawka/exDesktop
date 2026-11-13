@@ -5,9 +5,13 @@
 #include "core/core_settings.h"
 #include "mtproto/mtproto_proxy_data.h"
 #include "base/timer.h"
+#include "platform/platform_specific.h"
 
 #include <QtCore/QProcess>
+#include <QtCore/QFile>
+#include <QtCore/QStandardPaths>
 #include <QtCore/QRandomGenerator>
+#include <QtCore/QRegularExpression>
 #include <QtNetwork/QTcpServer>
 
 namespace Extera::WsProxy {
@@ -32,6 +36,12 @@ State &Instance() {
 }
 
 [[nodiscard]] QString PythonDir() {
+#ifdef Q_OS_MAC
+	const auto resources = cExeDir() + u"../Resources/python/"_q;
+	if (QFile::exists(resources + u"tgws/exd_tgws.py"_q)) {
+		return resources;
+	}
+#endif
 	return cExeDir() + u"python/"_q;
 }
 
@@ -39,7 +49,12 @@ State &Instance() {
 #ifdef Q_OS_WIN
 	return PythonDir() + u"pythonw.exe"_q;
 #else
-	return PythonDir() + u"bin/python3"_q;
+	const auto bundled = PythonDir() + u"bin/python3"_q;
+	if (QFile::exists(bundled)) {
+		return bundled;
+	}
+	const auto system = QStandardPaths::findExecutable(u"python3"_q);
+	return system.isEmpty() ? bundled : system;
 #endif
 }
 
@@ -80,7 +95,7 @@ State &Instance() {
 [[nodiscard]] bool IsOurs(const MTP::ProxyData &proxy) {
 	return proxy.type == MTP::ProxyData::Type::Mtproto
 		&& proxy.host == u"127.0.0.1"_q
-		&& proxy.password.endsWith(Secret());
+		&& proxy.password.contains(Secret());
 }
 
 void Launch();
@@ -117,13 +132,61 @@ void Launch() {
 	state.proxy.type = MTP::ProxyData::Type::Mtproto;
 	state.proxy.host = u"127.0.0.1"_q;
 	state.proxy.port = uint32(port);
-	state.proxy.password = u"dd"_q + secret;
+	const auto fakeTls = Extera::String(u"ws_proxy_fake_tls"_q).trimmed();
+	state.proxy.password = fakeTls.isEmpty()
+		? (u"dd"_q + secret)
+		: (u"ee"_q + secret + QString::fromLatin1(fakeTls.toUtf8().toHex()));
+	auto extra = QStringList();
+	const auto list = [](const QString &key) {
+		return Extera::String(key).split(
+			QRegularExpression(u"[\\s,;]+"_q),
+			Qt::SkipEmptyParts);
+	};
+	for (const auto &dc : list(u"ws_proxy_dc_ip"_q)) {
+		extra << u"--dc-ip"_q << dc;
+	}
+	extra << u"--buf-kb"_q
+		<< QString::number(std::clamp(
+			Extera::Int(u"ws_proxy_buf_kb"_q),
+			4,
+			65536));
+	extra << u"--pool-size"_q
+		<< QString::number(std::clamp(
+			Extera::Int(u"ws_proxy_pool"_q),
+			0,
+			64));
+	if (!Extera::Bool(u"ws_proxy_cf"_q)) {
+		extra << u"--no-cfproxy"_q;
+	}
+	for (const auto &domain : list(u"ws_proxy_cf_domain"_q)) {
+		extra << u"--cfproxy-domain"_q << domain;
+	}
+	for (const auto &domain : list(u"ws_proxy_cf_worker"_q)) {
+		extra << u"--cfproxy-worker-domain"_q << domain;
+	}
+	if (!Extera::Bool(u"ws_proxy_h2"_q)) {
+		extra << u"--no-h2"_q;
+	}
+	if (!Extera::Bool(u"ws_proxy_secure"_q)) {
+		extra << u"--no-secure"_q;
+	}
+	if (!fakeTls.isEmpty()) {
+		extra << u"--fake-tls-domain"_q << fakeTls;
+	}
+	if (Extera::Bool(u"ws_proxy_log"_q)) {
+		extra << u"--log-file"_q << (cWorkingDir() + u"tdata/tgws.log"_q);
+	}
 
 	const auto process = new QProcess(qApp);
 	state.process = process;
 	process->setWorkingDirectory(PythonDir());
+#ifndef Q_OS_WIN
+	auto environment = QProcessEnvironment::systemEnvironment();
+	environment.insert(u"EXD_TGWS_LIB"_q, psAppDataPath() + u"tgws-lib"_q);
+	process->setProcessEnvironment(environment);
+#endif
 	process->setProgram(Interpreter());
-	process->setArguments({
+	process->setArguments(QStringList{
 		u"-I"_q,
 		Script(),
 		QString::number(QCoreApplication::applicationPid()),
@@ -131,7 +194,7 @@ void Launch() {
 		QString::number(port),
 		u"--secret"_q,
 		secret,
-	});
+	} + extra);
 	process->setStandardOutputFile(QProcess::nullDevice());
 	process->setStandardErrorFile(QProcess::nullDevice());
 	QObject::connect(process, &QProcess::started, [=] {
@@ -197,6 +260,14 @@ bool Enabled() {
 
 void Start() {
 	if (Enabled()) {
+		Instance().restarts = 0;
+		Launch();
+	}
+}
+
+void Restart() {
+	if (Enabled()) {
+		Stop();
 		Instance().restarts = 0;
 		Launch();
 	}

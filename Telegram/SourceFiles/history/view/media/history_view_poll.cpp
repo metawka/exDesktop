@@ -962,12 +962,10 @@ QString Poll::Footer::linkButtonText() const {
 	const auto votedPublic = _owner->_voted
 		&& (_owner->_flags & PollData::Flag::PublicVotes);
 	return (_owner->showVotes() || votedPublic)
-		? ((_owner->_flags & PollData::Flag::PublicVotes)
-			? tr::lng_polls_view_votes(
-				tr::now,
-				lt_count,
-				_owner->_totalVotes)
-			: tr::lng_polls_view_results(tr::now))
+		? tr::lng_polls_view_votes(
+			tr::now,
+			lt_count,
+			_owner->_totalVotes)
 		: tr::lng_polls_submit_votes(tr::now);
 }
 
@@ -1419,8 +1417,8 @@ struct Poll::Header : public Poll::Part {
 		int right,
 		int top,
 		const PaintContext &context) const;
-	void showSolution() const;
-	void solutionToggled(
+	bool showSolution() const;
+	bool solutionToggled(
 		bool solutionShown,
 		anim::type animated = anim::type::normal) const;
 	[[nodiscard]] bool canShowSolution() const;
@@ -1825,9 +1823,7 @@ struct Poll::Options : public Poll::Part {
 	void checkSendingAnimation() const;
 	void unloadHeavyPart() override;
 
-	[[nodiscard]] int countAnswerContentWidth(
-		const Answer &answer,
-		int innerWidth) const;
+	[[nodiscard]] int countAnswerContentWidth(int innerWidth) const;
 	[[nodiscard]] int countVotesExtraHeight(
 		const Answer &answer,
 		int textWidth) const;
@@ -2014,9 +2010,7 @@ TextState Poll::Options::textState(
 				const auto aleft = left
 					+ st::historyPollAnswerPadding.left();
 				const auto atop = tshift + geometry.textTop;
-				const auto textWidth = countAnswerContentWidth(
-					answer,
-					innerWidth);
+				const auto textWidth = countAnswerContentWidth(innerWidth);
 				const auto textState = answer.text.getStateLeft(
 					point - QPoint(aleft, atop),
 					textWidth,
@@ -2222,16 +2216,16 @@ QSize Poll::countOptimalSize() {
 	auto maxWidth = st::msgFileMinWidth;
 	accumulate_max(maxWidth, paddings + _headerPart->_description.maxWidth());
 	accumulate_max(maxWidth, paddings + _headerPart->_question.maxWidth());
+	const auto anyMedia = _optionsPart->_anyAnswerHasMedia
+		? (PollAnswerMediaSize() + PollAnswerMediaSkip())
+		: 0;
 	for (const auto &answer : _optionsPart->_answers) {
-		const auto media = answer.thumbnail
-			? (PollAnswerMediaSize() + PollAnswerMediaSkip())
-			: 0;
 		accumulate_max(
 			maxWidth,
 			paddings
 			+ st::historyPollAnswerPadding.left()
 			+ answer.text.maxWidth()
-			+ media
+			+ anyMedia
 			+ st::historyPollAnswerPadding.right());
 	}
 
@@ -2408,13 +2402,11 @@ void Poll::setAddOptionActive(bool active) {
 	}
 }
 
-int Poll::Options::countAnswerContentWidth(
-		const Answer &answer,
-		int innerWidth) const {
+int Poll::Options::countAnswerContentWidth(int innerWidth) const {
 	const auto answerWidth = innerWidth
 		- st::historyPollAnswerPadding.left()
 		- st::historyPollAnswerPadding.right();
-	const auto mediaWidth = answer.thumbnail
+	const auto mediaWidth = _anyAnswerHasMedia
 		? (PollAnswerMediaSize() + PollAnswerMediaSkip())
 		: 0;
 	return std::max(1, answerWidth - mediaWidth);
@@ -2455,7 +2447,7 @@ auto Poll::Options::countAnswerGeometry(
 	int innerWidth) const
 -> AnswerGeometry {
 	const auto media = answer.thumbnail ? PollAnswerMediaSize() : 0;
-	const auto textWidth = countAnswerContentWidth(answer, innerWidth);
+	const auto textWidth = countAnswerContentWidth(innerWidth);
 	const auto &padding = answer.thumbnail
 		? st::historyPollAnswerPadding
 		: st::historyPollAnswerPaddingNoMedia;
@@ -3010,13 +3002,12 @@ void Poll::Options::checkQuizAnswered() {
 	}
 }
 
-void Poll::Header::showSolution() const {
-	if (!_owner->_poll->solution.text.isEmpty()) {
-		solutionToggled(true);
-	}
+bool Poll::Header::showSolution() const {
+	return !_owner->_poll->solution.text.isEmpty()
+		&& solutionToggled(true);
 }
 
-void Poll::Header::solutionToggled(
+bool Poll::Header::solutionToggled(
 		bool solutionShown,
 		anim::type animated) const {
 	_solutionShown = solutionShown;
@@ -3027,7 +3018,7 @@ void Poll::Header::solutionToggled(
 			_solutionButtonAnimation.stop();
 			_owner->repaint();
 		}
-		return;
+		return false;
 	}
 	_solutionButtonVisible = visible;
 	if (animated == anim::type::instant) {
@@ -3039,7 +3030,7 @@ void Poll::Header::solutionToggled(
 			visible ? 1. : 0.,
 			st::fadeWrapDuration);
 	}
-	_owner->history()->owner().requestViewResize(_owner->_parent);
+	return true;
 }
 
 void Poll::Header::updateRecentVoters() {
@@ -3139,6 +3130,7 @@ void Poll::Options::updateAnswers() {
 		});
 		return;
 	}
+	const auto has = _owner->hasHeavyPart();
 	_answers = ranges::views::all(options) | ranges::views::transform([&](
 			const QByteArray &option) {
 		auto result = Answer();
@@ -3176,6 +3168,10 @@ void Poll::Options::updateAnswers() {
 	});
 
 	resetAnswersAnimation();
+
+	if (has && !_owner->hasHeavyPart()) {
+		_owner->_parent->checkHeavyPart();
+	}
 }
 
 ClickHandlerPtr Poll::Options::createAnswerClickHandler(
@@ -3443,6 +3439,7 @@ void Poll::Options::updateAnswerVotes() {
 			gsl::make_span(PercentsStorage).subspan(0, count));
 	}
 
+	const auto has = _owner->hasHeavyPart();
 	for (auto &answer : _answers) {
 		const auto i = ranges::find(
 			_owner->_poll->answers,
@@ -3456,6 +3453,9 @@ void Poll::Options::updateAnswerVotes() {
 			PercentsStorage[index],
 			maxVotes,
 			showPercent);
+	}
+	if (has && !_owner->hasHeavyPart()) {
+		_owner->_parent->checkHeavyPart();
 	}
 }
 
@@ -3567,7 +3567,12 @@ void Poll::Header::paintShowSolution(
 	}
 	if (!_showSolutionLink) {
 		_showSolutionLink = std::make_shared<LambdaClickHandler>(
-			crl::guard(_owner, [=] { _owner->_headerPart->showSolution(); }));
+			crl::guard(_owner, [=] {
+				if (_owner->_headerPart->showSolution()) {
+					_owner->history()->owner().requestViewResize(
+						_owner->_parent);
+				}
+			}));
 	}
 	const auto stm = context.messageStyle();
 	const auto &icon = stm->historyQuizExplain;
@@ -3596,9 +3601,12 @@ void Poll::Header::paintSolutionBlock(
 	}
 	if (!_closeSolutionLink) {
 		_closeSolutionLink = std::make_shared<LambdaClickHandler>(
-			crl::guard(
-				_owner,
-				[=] { _owner->_headerPart->solutionToggled(false); }));
+			crl::guard(_owner, [=] {
+				if (_owner->_headerPart->solutionToggled(false)) {
+					_owner->history()->owner().requestViewResize(
+						_owner->_parent);
+				}
+			}));
 	}
 
 	const auto &qst = st::historyPagePreview;
@@ -3743,7 +3751,7 @@ void Poll::Options::paintAnswer(
 		- st::historyPollAnswerPadding.left()
 		- st::historyPollAnswerPadding.right();
 	const auto media = answer.thumbnail ? PollAnswerMediaSize() : 0;
-	const auto textWidth = countAnswerContentWidth(answer, width);
+	const auto textWidth = countAnswerContentWidth(width);
 	const auto textContentHeight = answer.text.countHeight(textWidth);
 	const auto multilineAnswer = (textContentHeight
 		> st::historyPollPercentFont->height);

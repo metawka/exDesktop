@@ -206,7 +206,9 @@ class IntentsManager:
             if not _matches(record["filters"], context):
                 continue
             try:
-                result = _invoke(record["fn"], _flatten_context(_context_to_dict(context)))
+                import extera_host
+                with extera_host.owner_scope(record.get("plugin_id")):
+                    result = _invoke(record["fn"], _flatten_context(_context_to_dict(context)))
             except Exception:
                 from android_utils import log
                 log("intent handler failed")

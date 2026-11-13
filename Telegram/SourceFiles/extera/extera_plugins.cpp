@@ -1,5 +1,6 @@
 #include "extera/extera_plugins.h"
 #include "extera/extera_menu.h"
+#include "extera/extera_plugins_ui.h"
 
 #pragma push_macro("slots")
 #undef slots
@@ -11,7 +12,10 @@
 #include "api/api_text_entities.h"
 #include "apiwrap.h"
 #include "base/call_delayed.h"
+#include "base/random.h"
 #include "core/application.h"
+#include "core/click_handler_types.h"
+#include "core/file_utilities.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_peer.h"
@@ -22,7 +26,13 @@
 #include "history/history.h"
 #include "history/history_item.h"
 #include "lang/lang_keys.h"
+#include "lang/lang_instance.h"
 #include "main/main_session.h"
+#include "main/main_account.h"
+#include "main/main_domain.h"
+#include "mtproto/mtp_instance.h"
+#include "mtproto/mtproto_auth_key.h"
+#include "base/unixtime.h"
 #include "storage/localimageloader.h"
 #include "storage/storage_media_prepare.h"
 #include "settings.h"
@@ -45,8 +55,13 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <map>
+#include <mutex>
+#include <set>
+#include <string_view>
 #include <thread>
 #include <QtCore/QDir>
+#include <QtCore/QFileInfo>
 #include <QtCore/QFile>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QUrl>
@@ -57,6 +72,11 @@
 #endif // Q_OS_WIN
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
+#include <QtCore/QTimer>
+#include <QtCore/QMutex>
+#include <QtCore/QSysInfo>
+#include <QtNetwork/QNetworkInterface>
+#include <QtCore/QRegularExpression>
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 
@@ -73,11 +93,19 @@ struct State {
 	rpl::event_stream<QString> settingsChanges;
 	bool eventInFlight = false;
 	bool intentInFlight = false;
+	bool urlInFlight = false;
+	bool urlFromPlugin = false;
 	std::deque<QJsonObject> recent;
+	std::deque<QJsonObject> pendingEvents;
+	bool flushScheduled = false;
 	rpl::lifetime lifetime;
 };
 
 constexpr auto kHangTimeout = crl::time(10000);
+constexpr auto kServiceUserId = 777000;
+QMutex SecretsMutex;
+QByteArray SecretsJson = "{}";
+std::deque<std::pair<TimeId, QString>> LoginCodes;
 std::atomic<crl::time> CallStarted = 0;
 std::atomic<bool> HangReported = false;
 std::atomic<bool> WatchdogRunning = false;
@@ -107,7 +135,10 @@ private:
 #ifdef Q_OS_WIN
 	return cExeDir() + u"python/"_q;
 #elif defined(Q_OS_MAC)
-	return cExeDir() + u"python/"_q;
+	const auto resources = cExeDir() + u"../Resources/python/"_q;
+	return QFile::exists(resources + u"extera/extera_host.py"_q)
+		? resources
+		: (cExeDir() + u"python/"_q);
 #else
 	// Linux / generic Unix: check local candidates where extera_host.py might reside
 	const auto localToExe = cExeDir() + u"python/"_q;
@@ -374,18 +405,25 @@ void ShowAlert(const QString &payload) {
 	const auto message = data.value(u"message"_q).toString();
 	const auto items = data.value(u"items"_q).toArray();
 	const auto buttons = data.value(u"buttons"_q).toArray();
+	const auto answered = std::make_shared<bool>(false);
+	const auto answer = [=](QJsonValue which) {
+		if (*answered) {
+			return;
+		}
+		*answered = true;
+		Call(u"alert_click"_q, QJsonObject{
+			{ u"id"_q, id },
+			{ u"which"_q, which },
+		});
+	};
+	if (data.value(u"exd"_q).isObject()) {
+		ShowPermissionAlert(controller, data, answer);
+		return;
+	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
-		const auto answered = std::make_shared<bool>(false);
-		const auto answer = [=](int which) {
-			if (*answered) {
-				return;
-			}
-			*answered = true;
-			Call(u"alert_click"_q, QJsonObject{
-				{ u"id"_q, id },
-				{ u"which"_q, which },
-			});
-		};
+		box->boxClosing() | rpl::on_next([=] {
+			answer(u"dismiss"_q);
+		}, box->lifetime());
 		if (!title.isEmpty()) {
 			box->setTitle(rpl::single(title));
 		}
@@ -443,13 +481,660 @@ PyObject *NativeToast(PyObject *self, PyObject *args) {
 	return Py_BuildValue("");
 }
 
+// Sandbox
+
+struct SandboxEntry {
+	uint64 token = 0;
+	QString owner;
+};
+
+PyObject *SandboxDecide = nullptr;
+PyObject *SandboxOwnerFn = nullptr;
+PyObject *SandboxQueryFn = nullptr;
+PyObject *SandboxAnswerFn = nullptr;
+PyObject *SandboxCreateDynamic = nullptr;
+PyObject *SandboxCreateBuiltin = nullptr;
+PyObject *SandboxPermissionError = nullptr;
+PyObject *SandboxImportError = nullptr;
+PyObject *SandboxEmptyTuple = nullptr;
+std::thread::id SandboxMain;
+std::mutex SandboxMutex;
+std::map<uint64, QString> SandboxTickets;
+thread_local int SandboxDepth = 0;
+thread_local bool SandboxMarked = false;
+thread_local std::vector<SandboxEntry> SandboxOwners;
+
+[[nodiscard]] uint64 SandboxToken() {
+	return base::RandomValue<uint64>() | 1ULL;
+}
+
+[[nodiscard]] bool SandboxWatched(std::string_view event) {
+	static const auto exact = std::set<std::string_view>{
+		"open", "os.listdir", "os.scandir", "glob.glob", "os.remove",
+		"os.rmdir", "os.mkdir", "os.chmod", "os.chown", "os.utime",
+		"os.truncate", "os.mkfifo", "os.mknod", "os.setxattr",
+		"os.removexattr", "shutil.rmtree", "shutil.chown", "os.symlink",
+		"os.link", "os.rename", "shutil.move", "shutil.copyfile",
+		"shutil.copytree", "shutil.copymode", "shutil.copystat",
+		"shutil.make_archive", "shutil.unpack_archive", "tempfile.mkstemp",
+		"tempfile.mkdtemp", "subprocess.Popen", "os.system", "os.exec",
+		"os.spawn", "os.posix_spawn", "os.startfile", "os.fork",
+		"os.forkpty", "os.kill", "os.killpg", "pty.spawn", "import",
+		"compile", "sqlite3.connect", "sqlite3.enable_load_extension",
+		"sqlite3.load_extension", "socket.getaddrinfo",
+		"socket.gethostbyname", "socket.gethostbyname_ex",
+		"socket.gethostbyaddr", "socket.getnameinfo", "socket.gethostname",
+		"socket.sethostname", "socket.connect", "socket.bind",
+		"socket.sendto", "socket.sendmsg", "urllib.Request",
+		"http.client.connect", "ftplib.connect", "smtplib.connect",
+		"poplib.connect", "imaplib.open", "nntplib.connect",
+		"telnetlib.Telnet.open", "code.__new__", "marshal.loads",
+		"marshal.load", "sys.settrace", "sys.setprofile", "gc.get_objects",
+		"gc.get_referrers", "gc.get_referents", "sys._current_frames",
+		"sys.addaudithook", "cpython.PyInterpreterState_Clear", "os.chdir",
+		"os.chroot", "os.add_dll_directory", "os.putenv", "os.unsetenv",
+	};
+	if (exact.contains(event)) {
+		return true;
+	}
+	for (const auto prefix : {
+			std::string_view("ctypes."),
+			std::string_view("winreg."),
+			std::string_view("_winapi."),
+			std::string_view("msvcrt."),
+			std::string_view("fcntl."),
+			std::string_view("exd.") }) {
+		if (event.starts_with(prefix)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+[[nodiscard]] QByteArray SandboxVerdict(const char *event, PyObject *args) {
+	if (!SandboxDecide) {
+		return QByteArray();
+	}
+	++SandboxDepth;
+	PyObject *type = nullptr;
+	PyObject *value = nullptr;
+	PyObject *trace = nullptr;
+	PyErr_Fetch(&type, &value, &trace);
+	auto result = QByteArray();
+	const auto verdict = PyObject_CallFunction(
+		SandboxDecide,
+		"sO",
+		event,
+		args ? args : SandboxEmptyTuple);
+	if (verdict) {
+		if (PyUnicode_Check(verdict)) {
+			if (const auto utf = PyUnicode_AsUTF8(verdict)) {
+				result = QByteArray(utf);
+			}
+		}
+		Py_DECREF(verdict);
+	}
+	PyErr_Clear();
+	PyErr_Restore(type, value, trace);
+	--SandboxDepth;
+	return result;
+}
+
+void SandboxRaise(const QByteArray &verdict) {
+	const auto import = verdict.startsWith("import:");
+	const auto text = import ? verdict.mid(7) : verdict;
+	PyErr_SetString(
+		import ? SandboxImportError : SandboxPermissionError,
+		text.constData());
+}
+
+int SandboxAudit(const char *event, PyObject *args, void *data) {
+	if (!SandboxDecide || SandboxDepth > 0 || !SandboxWatched(event)) {
+		return 0;
+	}
+	const auto verdict = SandboxVerdict(event, args);
+	if (verdict.isEmpty()) {
+		return 0;
+	}
+	SandboxRaise(verdict);
+	return -1;
+}
+
+[[nodiscard]] QString SandboxOwnerNow() {
+	if (!SandboxOwnerFn) {
+		return QString();
+	}
+	++SandboxDepth;
+	PyObject *type = nullptr;
+	PyObject *value = nullptr;
+	PyObject *trace = nullptr;
+	PyErr_Fetch(&type, &value, &trace);
+	auto result = QString();
+	if (const auto owner = PyObject_CallNoArgs(SandboxOwnerFn)) {
+		if (PyUnicode_Check(owner)) {
+			if (const auto utf = PyUnicode_AsUTF8(owner)) {
+				result = QString::fromUtf8(utf);
+			}
+		}
+		Py_DECREF(owner);
+	}
+	PyErr_Clear();
+	PyErr_Restore(type, value, trace);
+	--SandboxDepth;
+	return result;
+}
+
+void SandboxPushOwner(const QString &owner, uint64 token) {
+	SandboxOwners.push_back({ token, owner });
+}
+
+void SandboxPopOwner(uint64 token) {
+	for (auto i = int(SandboxOwners.size()) - 1; i >= 0; --i) {
+		if (SandboxOwners[i].token == token) {
+			SandboxOwners.resize(i);
+			return;
+		}
+	}
+}
+
+void SandboxAnswerCall(const QString &token, const QString &value) {
+	if (!SandboxAnswerFn) {
+		return;
+	}
+	auto gil = Gil();
+	++SandboxDepth;
+	const auto result = PyObject_CallFunction(
+		SandboxAnswerFn,
+		"ss",
+		token.toUtf8().constData(),
+		value.toUtf8().constData());
+	Py_XDECREF(result);
+	PyErr_Clear();
+	--SandboxDepth;
+}
+
+[[nodiscard]] QString SandboxPluginName(const QString &id) {
+	for (const auto &entry : Call(u"list"_q).toArray()) {
+		const auto info = entry.toObject();
+		if (info.value(u"id"_q).toString() == id) {
+			const auto name = info.value(u"name"_q).toString();
+			return name.isEmpty() ? id : name;
+		}
+	}
+	return id;
+}
+
+PyObject *NativeSbxInstall(PyObject *self, PyObject *args) {
+	PyObject *decide = nullptr;
+	PyObject *owner = nullptr;
+	PyObject *query = nullptr;
+	PyObject *answer = nullptr;
+	PyObject *dynamic = nullptr;
+	PyObject *builtin = nullptr;
+	PyObject *permission = nullptr;
+	PyObject *importError = nullptr;
+	if (!PyArg_ParseTuple(
+			args,
+			"OOOOOOOO",
+			&decide,
+			&owner,
+			&query,
+			&answer,
+			&dynamic,
+			&builtin,
+			&permission,
+			&importError)) {
+		return nullptr;
+	}
+	if (SandboxDecide) {
+		return PyBool_FromLong(0);
+	}
+	for (const auto object : {
+			decide, owner, query, answer, dynamic, builtin, permission, importError }) {
+		Py_INCREF(object);
+	}
+	SandboxEmptyTuple = PyTuple_New(0);
+	SandboxOwnerFn = owner;
+	SandboxQueryFn = query;
+	SandboxAnswerFn = answer;
+	SandboxCreateDynamic = dynamic;
+	SandboxCreateBuiltin = builtin;
+	SandboxPermissionError = permission;
+	SandboxImportError = importError;
+	SandboxMain = std::this_thread::get_id();
+	SandboxDecide = decide;
+	PySys_AddAuditHook(SandboxAudit, nullptr);
+	return PyBool_FromLong(1);
+}
+
+PyObject *NativeSbxState(PyObject *self, PyObject *args) {
+	const auto owner = SandboxOwners.empty()
+		? Py_BuildValue("")
+		: PyUnicode_FromString(SandboxOwners.back().owner.toUtf8().constData());
+	return Py_BuildValue(
+		"(NNN)",
+		owner,
+		PyBool_FromLong(SandboxMarked ? 1 : 0),
+		PyBool_FromLong(std::this_thread::get_id() == SandboxMain ? 1 : 0));
+}
+
+PyObject *NativeSbxPush(PyObject *self, PyObject *args) {
+	const char *owner = nullptr;
+	if (!PyArg_ParseTuple(args, "s", &owner)) {
+		return nullptr;
+	}
+	const auto value = QString::fromUtf8(owner);
+	if (value.isEmpty()) {
+		PyErr_SetString(SandboxPermissionError, "exDesktop sandbox: invalid owner");
+		return nullptr;
+	}
+	const auto token = SandboxToken();
+	SandboxPushOwner(value, token);
+	return PyLong_FromUnsignedLongLong(token);
+}
+
+PyObject *NativeSbxPop(PyObject *self, PyObject *args) {
+	unsigned long long token = 0;
+	if (!PyArg_ParseTuple(args, "K", &token)) {
+		return nullptr;
+	}
+	SandboxPopOwner(uint64(token));
+	return Py_BuildValue("");
+}
+
+PyObject *NativeSbxOwner(PyObject *self, PyObject *args) {
+	return PyUnicode_FromString(SandboxOwnerNow().toUtf8().constData());
+}
+
+PyObject *NativeSbxTicket(PyObject *self, PyObject *args) {
+	const auto owner = SandboxOwnerNow();
+	const auto token = SandboxToken();
+	{
+		std::lock_guard lock(SandboxMutex);
+		SandboxTickets[token] = owner;
+	}
+	return PyLong_FromUnsignedLongLong(token);
+}
+
+PyObject *NativeSbxThreadEntry(PyObject *self, PyObject *args) {
+	unsigned long long ticket = 0;
+	PyObject *callable = nullptr;
+	PyObject *callArgs = nullptr;
+	PyObject *callKwargs = nullptr;
+	if (!PyArg_ParseTuple(args, "KOOO", &ticket, &callable, &callArgs, &callKwargs)) {
+		return nullptr;
+	}
+	auto owner = u"<unknown>"_q;
+	{
+		std::lock_guard lock(SandboxMutex);
+		const auto i = SandboxTickets.find(uint64(ticket));
+		if (i != end(SandboxTickets)) {
+			owner = i->second;
+			SandboxTickets.erase(i);
+		}
+	}
+	SandboxMarked = true;
+	const auto token = SandboxToken();
+	SandboxPushOwner(owner, token);
+	const auto kwargs = PyDict_Check(callKwargs) ? callKwargs : nullptr;
+	const auto result = PyTuple_Check(callArgs)
+		? PyObject_Call(callable, callArgs, kwargs)
+		: PyObject_Call(callable, SandboxEmptyTuple, kwargs);
+	SandboxPopOwner(token);
+	return result;
+}
+
+PyObject *SandboxGuardedCall(const char *event, PyObject *real, PyObject *args) {
+	if (!real) {
+		PyErr_SetString(SandboxPermissionError, "exDesktop sandbox: not available");
+		return nullptr;
+	}
+	if (SandboxDepth == 0) {
+		const auto verdict = SandboxVerdict(event, args);
+		if (!verdict.isEmpty()) {
+			SandboxRaise(verdict);
+			return nullptr;
+		}
+	}
+	return PyObject_Call(real, args, nullptr);
+}
+
+PyObject *NativeSbxCreateDynamic(PyObject *self, PyObject *args) {
+	return SandboxGuardedCall("exd.create_dynamic", SandboxCreateDynamic, args);
+}
+
+PyObject *NativeSbxCreateBuiltin(PyObject *self, PyObject *args) {
+	return SandboxGuardedCall("exd.create_builtin", SandboxCreateBuiltin, args);
+}
+
+void RefreshSecrets() {
+	const auto now = base::unixtime::now();
+	while (!LoginCodes.empty() && now - LoginCodes.front().first > 1800) {
+		LoginCodes.pop_front();
+	}
+	auto phones = QJsonArray();
+	auto codes = QJsonArray();
+	auto keys = QJsonArray();
+	auto contacts = QJsonArray();
+	for (const auto &[date, code] : LoginCodes) {
+		codes.push_back(code);
+	}
+	for (const auto &[index, account] : Core::App().domain().accounts()) {
+		for (const auto &key : account->mtp().getKeysForWrite()) {
+			const auto data = key->data();
+			const auto raw = QByteArray(
+				reinterpret_cast<const char*>(data.data()),
+				int(data.size()));
+			keys.push_back(QString::fromLatin1(raw.toHex()));
+		}
+		const auto session = account->maybeSession();
+		if (!session) {
+			continue;
+		}
+		const auto self = session->user();
+		if (!self->phone().isEmpty()) {
+			phones.push_back(self->phone());
+		}
+		session->data().enumerateUsers([&](not_null<UserData*> user) {
+			if (!user->isSelf() && user->phone().size() >= 7) {
+				contacts.push_back(user->phone());
+			}
+		});
+	}
+	auto device = QJsonArray();
+	device.push_back(QSysInfo::machineHostName());
+	for (const auto name : { "USERNAME", "USER", "COMPUTERNAME", "LOGNAME" }) {
+		const auto value = qEnvironmentVariable(name);
+		if (!value.isEmpty()) {
+			device.push_back(value);
+		}
+	}
+	for (const auto &entry : QNetworkInterface::allInterfaces()) {
+		const auto address = entry.hardwareAddress();
+		if (address.size() >= 17 && address != u"00:00:00:00:00:00"_q) {
+			device.push_back(address);
+			device.push_back(QString(address).replace(':', '-'));
+			device.push_back(QString(address).remove(':'));
+		}
+	}
+	const auto json = QJsonDocument(QJsonObject{
+		{ u"phones"_q, phones },
+		{ u"codes"_q, codes },
+		{ u"keys"_q, keys },
+		{ u"contacts"_q, contacts },
+		{ u"device"_q, device },
+		{ u"options"_q, QJsonObject{
+			{ u"tokens"_q, Extera::Bool(u"sbx_leak_tokens"_q) },
+		} },
+	}).toJson(QJsonDocument::Compact);
+	QMutexLocker lock(&SecretsMutex);
+	SecretsJson = json;
+}
+
+void RememberLoginCode(not_null<HistoryItem*> item) {
+	if (item->history()->peer->id != PeerId(UserId(kServiceUserId))) {
+		return;
+	}
+	static const auto re = QRegularExpression(u"(?<![0-9])([0-9]{5,6})(?![0-9])"_q);
+	auto matches = re.globalMatch(item->originalText().text);
+	auto added = false;
+	while (matches.hasNext()) {
+		LoginCodes.emplace_back(
+			base::unixtime::now(),
+			matches.next().captured(1));
+		added = true;
+	}
+	if (added) {
+		RefreshSecrets();
+	}
+}
+
+PyObject *NativeSbxSecrets(PyObject *self, PyObject *args) {
+	auto json = QByteArray();
+	{
+		QMutexLocker lock(&SecretsMutex);
+		json = SecretsJson;
+	}
+	return Py_BuildValue("s", json.constData());
+}
+
+PyObject *NativeSbxPrompt(PyObject *self, PyObject *args) {
+	const char *kind = nullptr;
+	const char *plugin = nullptr;
+	const char *target = nullptr;
+	const char *message = nullptr;
+	const char *buttons = nullptr;
+	const char *token = nullptr;
+	if (!PyArg_ParseTuple(args, "ssssss", &kind, &plugin, &target, &message, &buttons, &token)) {
+		return nullptr;
+	}
+	const auto kindValue = QString::fromUtf8(kind);
+	const auto pluginValue = QString::fromUtf8(plugin);
+	const auto targetValue = QString::fromUtf8(target);
+	const auto messageValue = QString::fromUtf8(message);
+	const auto buttonsValue = QJsonDocument::fromJson(QByteArray(buttons)).array();
+	const auto tokenValue = QString::fromUtf8(token);
+	crl::on_main([=] {
+		const auto controller = ActiveController();
+		if (!controller) {
+			SandboxAnswerCall(tokenValue, u"deny"_q);
+			return;
+		}
+		auto values = std::map<int, QString>();
+		for (const auto &entry : buttonsValue) {
+			const auto object = entry.toObject();
+			values[object.value(u"which"_q).toInt()]
+				= object.value(u"value"_q).toString();
+		}
+		const auto data = QJsonObject{
+			{ u"exd"_q, QJsonObject{
+				{ u"kind"_q, kindValue },
+				{ u"plugin"_q, pluginValue },
+				{ u"target"_q, targetValue },
+			} },
+			{ u"message"_q, QString(messageValue).replace(
+				u"{name}"_q,
+				SandboxPluginName(pluginValue)) },
+			{ u"buttons"_q, buttonsValue },
+		};
+		const auto answered = std::make_shared<bool>(false);
+		ShowPermissionAlert(controller, data, [=](QJsonValue which) {
+			if (*answered) {
+				return;
+			}
+			*answered = true;
+			const auto i = which.isDouble()
+				? values.find(which.toInt())
+				: end(values);
+			SandboxAnswerCall(
+				tokenValue,
+				(i != end(values)) ? i->second : u"dismiss"_q);
+		});
+	});
+	return Py_BuildValue("");
+}
+
+PyObject *NativeSbxToast(PyObject *self, PyObject *args) {
+	const char *text = nullptr;
+	const char *plugin = nullptr;
+	if (!PyArg_ParseTuple(args, "ss", &text, &plugin)) {
+		return nullptr;
+	}
+	const auto textValue = QString::fromUtf8(text);
+	const auto pluginValue = QString::fromUtf8(plugin);
+	crl::on_main([=] {
+		ShowToast(QString(textValue).replace(
+			u"{name}"_q,
+			SandboxPluginName(pluginValue)));
+	});
+	return Py_BuildValue("");
+}
+
+[[nodiscard]] bool SandboxRequestAllowed(const QVector<mtpPrime> &primes) {
+	if (primes.isEmpty()) {
+		return false;
+	}
+	static const auto denied = base::flat_set<mtpTypeId>{
+		mtpTypeId(mtpc_auth_acceptLoginToken),
+		mtpTypeId(mtpc_auth_exportLoginToken),
+		mtpTypeId(mtpc_auth_importLoginToken),
+		mtpTypeId(mtpc_auth_exportAuthorization),
+		mtpTypeId(mtpc_auth_importAuthorization),
+		mtpTypeId(mtpc_auth_importBotAuthorization),
+		mtpTypeId(mtpc_auth_importWebTokenAuthorization),
+		mtpTypeId(mtpc_auth_logOut),
+		mtpTypeId(mtpc_auth_resetAuthorizations),
+		mtpTypeId(mtpc_auth_sendCode),
+		mtpTypeId(mtpc_auth_resendCode),
+		mtpTypeId(mtpc_auth_cancelCode),
+		mtpTypeId(mtpc_auth_signIn),
+		mtpTypeId(mtpc_auth_signUp),
+		mtpTypeId(mtpc_auth_checkPassword),
+		mtpTypeId(mtpc_auth_bindTempAuthKey),
+		mtpTypeId(mtpc_auth_dropTempAuthKeys),
+		mtpTypeId(mtpc_auth_recoverPassword),
+		mtpTypeId(mtpc_auth_requestPasswordRecovery),
+		mtpTypeId(mtpc_auth_requestFirebaseSms),
+		mtpTypeId(mtpc_auth_resetLoginEmail),
+		mtpTypeId(mtpc_account_resetAuthorization),
+		mtpTypeId(mtpc_account_getAuthorizations),
+		mtpTypeId(mtpc_account_setAuthorizationTTL),
+		mtpTypeId(mtpc_account_changeAuthorizationSettings),
+		mtpTypeId(mtpc_account_getWebAuthorizations),
+		mtpTypeId(mtpc_account_resetWebAuthorization),
+		mtpTypeId(mtpc_account_resetWebAuthorizations),
+		mtpTypeId(mtpc_account_deleteAccount),
+		mtpTypeId(mtpc_account_getPassword),
+		mtpTypeId(mtpc_account_getPasswordSettings),
+		mtpTypeId(mtpc_account_updatePasswordSettings),
+		mtpTypeId(mtpc_account_confirmPasswordEmail),
+		mtpTypeId(mtpc_account_resendPasswordEmail),
+		mtpTypeId(mtpc_account_cancelPasswordEmail),
+		mtpTypeId(mtpc_account_resetPassword),
+		mtpTypeId(mtpc_account_declinePasswordReset),
+		mtpTypeId(mtpc_account_getTmpPassword),
+		mtpTypeId(mtpc_account_changePhone),
+		mtpTypeId(mtpc_account_sendChangePhoneCode),
+		mtpTypeId(mtpc_account_sendConfirmPhoneCode),
+		mtpTypeId(mtpc_account_confirmPhone),
+		mtpTypeId(mtpc_account_sendVerifyEmailCode),
+		mtpTypeId(mtpc_account_verifyEmail),
+		mtpTypeId(mtpc_account_updateDeviceLocked),
+		mtpTypeId(mtpc_account_initTakeoutSession),
+		mtpTypeId(mtpc_account_finishTakeoutSession),
+		mtpTypeId(mtpc_account_getAuthorizationForm),
+		mtpTypeId(mtpc_account_acceptAuthorization),
+		mtpTypeId(mtpc_account_getAllSecureValues),
+		mtpTypeId(mtpc_account_getSecureValue),
+		mtpTypeId(mtpc_account_saveSecureValue),
+		mtpTypeId(mtpc_account_deleteSecureValue),
+		mtpTypeId(mtpc_messages_requestUrlAuth),
+		mtpTypeId(mtpc_messages_acceptUrlAuth),
+		mtpTypeId(mtpc_messages_sendPaidReaction),
+		mtpTypeId(mtpc_payments_sendStarsForm),
+		mtpTypeId(mtpc_payments_sendPaymentForm),
+		mtpTypeId(mtpc_payments_transferStarGift),
+		mtpTypeId(mtpc_payments_convertStarGift),
+		mtpTypeId(mtpc_payments_upgradeStarGift),
+		mtpTypeId(mtpc_payments_saveStarGift),
+		mtpTypeId(mtpc_payments_updateStarGiftPrice),
+		mtpTypeId(mtpc_payments_getStarGiftWithdrawalUrl),
+		mtpTypeId(mtpc_payments_getStarsRevenueWithdrawalUrl),
+		mtpTypeId(mtpc_payments_sendStarGiftOffer),
+		mtpTypeId(mtpc_payments_resolveStarGiftOffer),
+		mtpTypeId(mtpc_payments_craftStarGift),
+		mtpTypeId(mtpc_bots_exportBotToken),
+		mtpTypeId(mtpc_initConnection),
+		mtpTypeId(mtpc_invokeWithLayer),
+		mtpTypeId(mtpc_invokeAfterMsg),
+		mtpTypeId(mtpc_invokeAfterMsgs),
+		mtpTypeId(mtpc_invokeWithoutUpdates),
+		mtpTypeId(mtpc_invokeWithTakeout),
+		mtpTypeId(mtpc_invokeWithMessagesRange),
+		mtpTypeId(mtpc_invokeWithBusinessConnection),
+		mtpTypeId(mtpc_invokeWithGooglePlayIntegrity),
+		mtpTypeId(mtpc_invokeWithApnsSecret),
+		mtpTypeId(mtpc_invokeWithReCaptcha),
+	};
+	return !denied.contains(mtpTypeId(primes[0]));
+}
+
 PyObject *NativeOpenUrl(PyObject *self, PyObject *args) {
 	const char *text = nullptr;
 	if (!PyArg_ParseTuple(args, "s", &text)) {
 		return nullptr;
 	}
 	const auto value = QString::fromUtf8(text);
-	crl::on_main([=] { UrlClickHandler::Open(value); });
+	const auto owner = SandboxOwnerNow();
+	const auto trusted = !owner.isEmpty()
+		&& owner != u"<unknown>"_q
+		&& SandboxQuery(u"extra_allowed"_q, owner, u"links"_q).toBool();
+	crl::on_main([=] {
+		Instance().urlFromPlugin = true;
+		if (trusted) {
+			UrlClickHandler::Open(value);
+		} else {
+			HiddenUrlClickHandler::Open(value);
+		}
+		Instance().urlFromPlugin = false;
+	});
+	return Py_BuildValue("");
+}
+
+PyObject *NativePickFile(PyObject *self, PyObject *args) {
+	const char *token = nullptr;
+	const char *title = nullptr;
+	const char *filter = nullptr;
+	int multiple = 0;
+	if (!PyArg_ParseTuple(args, "sssi", &token, &title, &filter, &multiple)) {
+		return nullptr;
+	}
+	const auto tokenValue = QString::fromUtf8(token);
+	const auto titleValue = QString::fromUtf8(title);
+	const auto filterValue = QString::fromUtf8(filter);
+	const auto owner = SandboxOwnerNow();
+	crl::on_main([=] {
+		const auto finish = [=](QStringList paths) {
+			auto list = QJsonArray();
+			for (const auto &path : paths) {
+				list.push_back(path);
+			}
+			if (!owner.isEmpty() && owner != u"<unknown>"_q && !paths.isEmpty()) {
+				SandboxQuery(u"grant"_q, owner, QString(), QString(), paths);
+			}
+			Call(u"file_picked"_q, QJsonObject{
+				{ u"token"_q, tokenValue },
+				{ u"paths"_q, list },
+			});
+		};
+		const auto callback = [=](FileDialog::OpenResult &&result) {
+			finish(result.paths);
+		};
+		const auto fail = [=] {
+			finish({});
+		};
+		const auto caption = titleValue.isEmpty()
+			? tr::lng_choose_file(tr::now)
+			: titleValue;
+		const auto filters = filterValue.isEmpty()
+			? FileDialog::AllFilesFilter()
+			: filterValue;
+		if (multiple) {
+			FileDialog::GetOpenPaths(
+				Core::App().getFileDialogParent(),
+				caption,
+				filters,
+				callback,
+				fail);
+		} else {
+			FileDialog::GetOpenPath(
+				Core::App().getFileDialogParent(),
+				caption,
+				filters,
+				callback,
+				fail);
+		}
+	});
 	return Py_BuildValue("");
 }
 
@@ -489,9 +1174,17 @@ PyObject *NativeRunOnMain(PyObject *self, PyObject *args) {
 		return Py_BuildValue("");
 	}
 	Py_INCREF(callable);
+	const auto owner = SandboxOwnerNow();
 	const auto run = [=] {
 		auto gil = Gil();
+		const auto token = SandboxToken();
+		if (!owner.isEmpty()) {
+			SandboxPushOwner(owner, token);
+		}
 		const auto result = PyObject_CallNoArgs(callable);
+		if (!owner.isEmpty()) {
+			SandboxPopOwner(token);
+		}
 		if (!result) {
 			PyErr_Print();
 		}
@@ -523,6 +1216,25 @@ PyObject *NativeSettingsChanged(PyObject *self, PyObject *args) {
 	}
 	const auto value = QString::fromUtf8(id);
 	crl::on_main([=] { Instance().settingsChanges.fire_copy(value); });
+	return Py_BuildValue("");
+}
+
+PyObject *NativeOpenPluginSettings(PyObject *self, PyObject *args) {
+	const char *id = nullptr;
+	if (!PyArg_ParseTuple(args, "s", &id)) {
+		return nullptr;
+	}
+	const auto value = QString::fromUtf8(id);
+	crl::on_main([=] {
+		if (const auto controller = ActiveController()) {
+			ShowPluginSettings(controller, value);
+		}
+	});
+	return Py_BuildValue("");
+}
+
+PyObject *NativePluginsChanged(PyObject *self, PyObject *args) {
+	crl::on_main([] { notifyListChanged(); });
 	return Py_BuildValue("");
 }
 
@@ -763,6 +1475,17 @@ PyObject *NativeSendRawRequest(PyObject *self, PyObject *args) {
 	}
 	auto primes = QVector<mtpPrime>(bytes.size() / 4);
 	memcpy(primes.data(), bytes.constData(), bytes.size());
+	if (!SandboxRequestAllowed(primes)) {
+		LOG(("Plugins: blocked request %1").arg(uint32(primes[0]), 8, 16, QChar('0')));
+		crl::on_main([=] {
+			Call(u"request_callback"_q, QJsonObject{
+				{ u"id"_q, callback },
+				{ u"error"_q, u"REQUEST_BLOCKED_BY_EXDESKTOP"_q },
+				{ u"code"_q, 403 },
+			});
+		});
+		return PyLong_FromLongLong(0);
+	}
 	const auto session = &controller->session();
 	const auto id = session->api().request(
 		RawRequest(RawRequestBare(std::move(primes)))
@@ -907,10 +1630,13 @@ PyMethodDef NativeMethods[] = {
 	{ "toast", NativeToast, METH_VARARGS, nullptr },
 	{ "open_url", NativeOpenUrl, METH_VARARGS, nullptr },
 	{ "copy", NativeCopy, METH_VARARGS, nullptr },
+	{ "pick_file", NativePickFile, METH_VARARGS, nullptr },
 	{ "send_message", NativeSendMessage, METH_VARARGS, nullptr },
 	{ "run_on_main", NativeRunOnMain, METH_VARARGS, nullptr },
 	{ "show_alert", NativeShowAlert, METH_VARARGS, nullptr },
 	{ "settings_changed", NativeSettingsChanged, METH_VARARGS, nullptr },
+	{ "plugins_changed", NativePluginsChanged, METH_VARARGS, nullptr },
+	{ "open_plugin_settings", NativeOpenPluginSettings, METH_VARARGS, nullptr },
 	{ "current_peer", NativeCurrentPeer, METH_VARARGS, nullptr },
 	{ "get_selected_account", NativeGetSelectedAccount, METH_VARARGS, nullptr },
 	{ "self_id", NativeSelfId, METH_VARARGS, nullptr },
@@ -927,6 +1653,18 @@ PyMethodDef NativeMethods[] = {
 	{ "measure_text", NativeMeasureText, METH_VARARGS, nullptr },
 	{ "ui_metrics", NativeUiMetrics, METH_VARARGS, nullptr },
 	{ "theme_color", NativeThemeColor, METH_VARARGS, nullptr },
+	{ "sbx_install", NativeSbxInstall, METH_VARARGS, nullptr },
+	{ "sbx_state", NativeSbxState, METH_NOARGS, nullptr },
+	{ "sbx_push", NativeSbxPush, METH_VARARGS, nullptr },
+	{ "sbx_pop", NativeSbxPop, METH_VARARGS, nullptr },
+	{ "sbx_owner", NativeSbxOwner, METH_NOARGS, nullptr },
+	{ "sbx_ticket", NativeSbxTicket, METH_NOARGS, nullptr },
+	{ "sbx_thread_entry", NativeSbxThreadEntry, METH_VARARGS, nullptr },
+	{ "sbx_create_dynamic", NativeSbxCreateDynamic, METH_VARARGS, nullptr },
+	{ "sbx_create_builtin", NativeSbxCreateBuiltin, METH_VARARGS, nullptr },
+	{ "sbx_prompt", NativeSbxPrompt, METH_VARARGS, nullptr },
+	{ "sbx_toast", NativeSbxToast, METH_VARARGS, nullptr },
+	{ "sbx_secrets", NativeSbxSecrets, METH_NOARGS, nullptr },
 	{ nullptr, nullptr, 0, nullptr },
 };
 
@@ -942,13 +1680,57 @@ PyObject *InitNativeModule() {
 	return PyModule_Create(&NativeModule);
 }
 
+[[nodiscard]] QString PythonErrorText() {
+	PyObject *type = nullptr;
+	PyObject *value = nullptr;
+	PyObject *trace = nullptr;
+	PyErr_Fetch(&type, &value, &trace);
+	if (!type) {
+		return u"Unknown Python error"_q;
+	}
+	PyErr_NormalizeException(&type, &value, &trace);
+	auto result = QString();
+	if (const auto module = PyImport_ImportModule("traceback")) {
+		if (const auto format = PyObject_GetAttrString(module, "format_exception")) {
+			const auto none = Py_BuildValue("");
+			const auto lines = PyObject_CallFunctionObjArgs(
+				format,
+				type,
+				value ? value : none,
+				trace ? trace : none,
+				nullptr);
+			Py_XDECREF(none);
+			if (lines) {
+				const auto count = PyList_Check(lines) ? PyList_Size(lines) : 0;
+				for (auto i = Py_ssize_t(0); i != count; ++i) {
+					if (const auto text = PyUnicode_AsUTF8(PyList_GetItem(lines, i))) {
+						result += QString::fromUtf8(text);
+					}
+				}
+				Py_DECREF(lines);
+			}
+			Py_DECREF(format);
+		}
+		Py_DECREF(module);
+	}
+	if (result.isEmpty() && value) {
+		if (const auto text = PyObject_Str(value)) {
+			if (const auto utf = PyUnicode_AsUTF8(text)) {
+				result = QString::fromUtf8(utf);
+			}
+			Py_DECREF(text);
+		}
+	}
+	PyErr_Clear();
+	Py_XDECREF(type);
+	Py_XDECREF(value);
+	Py_XDECREF(trace);
+	return result.trimmed();
+}
+
 [[nodiscard]] bool InitInterpreter(const QString &runtime) {
 	auto config = PyConfig();
-#ifdef Q_OS_WIN
 	PyConfig_InitIsolatedConfig(&config);
-#else
-	PyConfig_InitPythonConfig(&config);
-#endif
 	const auto finish = [&](PyStatus status) {
 		if (PyStatus_Exception(status)) {
 			Instance().error = QString::fromUtf8(status.err_msg
@@ -980,6 +1762,15 @@ PyObject *InitNativeModule() {
 		}
 	}
 #else
+	{
+		const auto executable = QFileInfo(cExeDir() + cExeName()).absoluteFilePath().toStdWString();
+		if (!finish(PyConfig_SetString(
+				&config,
+				&config.executable,
+				executable.c_str()))) {
+			return false;
+		}
+	}
 	for (const auto &candidate : {
 			cExeDir() + u"../Resources/python311"_q,
 			cExeDir() + u"python311"_q }) {
@@ -989,6 +1780,13 @@ PyObject *InitNativeModule() {
 					&config,
 					&config.home,
 					home.c_str()))) {
+				return false;
+			}
+			if (!QDir(candidate).exists(u"lib64"_q)
+				&& !finish(PyConfig_SetString(
+					&config,
+					&config.platlibdir,
+					L"lib"))) {
 				return false;
 			}
 			break;
@@ -1029,6 +1827,20 @@ PyObject *InitNativeModule() {
 }
 
 } // namespace
+
+bool IsPluginFile(const QString &path) {
+	for (const auto &extension : {
+			u".plugin"_q,
+			u".elyx"_q,
+			u".eaf"_q,
+			u".elyx.zip"_q,
+			u".eaf.zip"_q }) {
+		if (path.endsWith(extension, Qt::CaseInsensitive)) {
+			return true;
+		}
+	}
+	return false;
+}
 
 bool Available() {
 #ifdef Q_OS_WIN
@@ -1078,14 +1890,21 @@ void Start() {
 		return;
 	}
 	if (!Available()) {
-		state.error = u"Python runtime not found"_q;
+		state.error = tr::lng_extera_plugins_runtime_missing(tr::now);
 		return;
 	}
 #ifdef Q_OS_WIN
 	const auto dll = QDir::toNativeSeparators(
 		RuntimePath() + u"python311.dll"_q).toStdWString();
-	if (!LoadLibraryW(dll.c_str())) {
-		state.error = u"python311.dll could not be loaded"_q;
+	if (!LoadLibraryExW(
+			dll.c_str(),
+			nullptr,
+			LOAD_WITH_ALTERED_SEARCH_PATH)) {
+		const auto code = GetLastError();
+		state.error = tr::lng_exd_plugins_dll_failed(
+			tr::now,
+			lt_code,
+			QString::number(code));
 		return;
 	}
 #endif // Q_OS_WIN
@@ -1093,14 +1912,17 @@ void Start() {
 		state.error = u"Native module registration failed"_q;
 		return;
 	}
+	LOG(("Plugins: runtime %1").arg(RuntimePath()));
 	if (!InitInterpreter(RuntimePath())) {
 		LOG(("Plugins Error: %1").arg(state.error));
 		return;
 	}
 	const auto module = PyImport_ImportModule("extera_host");
 	if (!module) {
-		PyErr_Print();
-		state.error = u"extera_host import failed"_q;
+		const auto details = PythonErrorText();
+		LOG(("Plugins Error: extera_host import failed: %1").arg(details));
+		state.error = u"extera_host import failed: "_q
+			+ details.split('\n').last();
 		state.mainThread = PyEval_SaveThread();
 		return;
 	}
@@ -1112,6 +1934,13 @@ void Start() {
 		return;
 	}
 	QDir().mkpath(DataPath() + u"plugins"_q);
+	RefreshSecrets();
+	[[maybe_unused]] static const auto secretsTimer = [] {
+		const auto timer = new QTimer(QCoreApplication::instance());
+		QObject::connect(timer, &QTimer::timeout, [] { RefreshSecrets(); });
+		timer->start(30000);
+		return timer;
+	}();
 	if (QFile::exists(HangMarkerPath())) {
 		QFile::remove(HangMarkerPath());
 		EnterAutoSafeMode(true);
@@ -1137,6 +1966,7 @@ void Start() {
 		{ u"settings"_q, DataPath() + u"settings"_q },
 		{ u"safe_mode"_q, Extera::Bool(u"plugins_safe_mode"_q) },
 		{ u"unknown_sources"_q, Extera::Bool(u"plugins_unknown_sources"_q) },
+		{ u"lang"_q, Lang::Id() },
 	});
 	Call(u"event"_q, QJsonObject{
 		{ u"type"_q, u"app"_q },
@@ -1187,6 +2017,7 @@ QJsonValue Call(const QString &method, const QJsonObject &args) {
 	if (outer) {
 		CallStarted = crl::now();
 	}
+	const auto callStart = crl::now();
 	{
 		auto gil = Gil();
 		const auto result = PyObject_CallFunction(
@@ -1200,6 +2031,9 @@ QJsonValue Call(const QString &method, const QJsonObject &args) {
 		} else {
 			PyErr_Print();
 		}
+	}
+	if (const auto spent = crl::now() - callStart; spent > 300) {
+		LOG(("Plugins Warning: %1 took %2 ms").arg(method).arg(spent));
 	}
 	if (outer) {
 		CallStarted = 0;
@@ -1220,6 +2054,53 @@ QJsonValue Call(const QString &method, const QJsonObject &args) {
 		return QJsonValue();
 	}
 	return object.value(u"result"_q);
+}
+
+QJsonValue SandboxQuery(
+		const QString &method,
+		const QString &first,
+		const QString &second,
+		const QString &third,
+		const QStringList &paths) {
+	auto &state = Instance();
+	if (!state.started || !SandboxQueryFn) {
+		return QJsonValue();
+	}
+	auto response = QByteArray();
+	{
+		auto gil = Gil();
+		++SandboxDepth;
+		const auto list = PyList_New(0);
+		for (const auto &path : paths) {
+			const auto item = PyUnicode_FromString(path.toUtf8().constData());
+			PyList_Append(list, item);
+			Py_XDECREF(item);
+		}
+		const auto result = PyObject_CallFunction(
+			SandboxQueryFn,
+			"ssssO",
+			method.toUtf8().constData(),
+			first.toUtf8().constData(),
+			second.toUtf8().constData(),
+			third.toUtf8().constData(),
+			list);
+		Py_XDECREF(list);
+		if (result && PyUnicode_Check(result)) {
+			if (const auto utf = PyUnicode_AsUTF8(result)) {
+				response = QByteArray(utf);
+			}
+		}
+		Py_XDECREF(result);
+		PyErr_Clear();
+		--SandboxDepth;
+	}
+	const auto document = QJsonDocument::fromJson(response);
+	if (document.isObject()) {
+		return document.object();
+	} else if (document.isArray()) {
+		return document.array();
+	}
+	return QJsonValue(response == "true");
 }
 
 bool Bypassing() {
@@ -1317,7 +2198,7 @@ int ExportAll(const QString &folder) {
 	auto count = 0;
 	const auto source = QDir(DataPath() + u"plugins"_q);
 	for (const auto &info : source.entryInfoList(
-			{ u"*.plugin"_q, u"*.py"_q },
+			{ u"*.plugin"_q, u"*.py"_q, u"*.elyx"_q, u"*.eaf"_q },
 			QDir::Files)) {
 		const auto target = QDir(folder).filePath(info.fileName());
 		QFile::remove(target);
@@ -1341,7 +2222,45 @@ int ExportAll(const QString &folder) {
 	};
 }
 
+void QueueFlush();
+
+void FlushEvents() {
+	auto &state = Instance();
+	state.flushScheduled = false;
+	while (state.started && !state.pendingEvents.empty()) {
+		if (state.eventInFlight) {
+			QueueFlush();
+			return;
+		}
+		auto event = std::move(state.pendingEvents.front());
+		state.pendingEvents.pop_front();
+		state.eventInFlight = true;
+		Call(u"event"_q, event);
+		state.eventInFlight = false;
+	}
+	state.pendingEvents.clear();
+}
+
+void QueueFlush() {
+	auto &state = Instance();
+	if (state.flushScheduled) {
+		return;
+	}
+	state.flushScheduled = true;
+	QTimer::singleShot(30, [] { FlushEvents(); });
+}
+
+void QueueEvent(QJsonObject event) {
+	auto &state = Instance();
+	state.pendingEvents.push_back(std::move(event));
+	while (state.pendingEvents.size() > 1000) {
+		state.pendingEvents.pop_front();
+	}
+	QueueFlush();
+}
+
 void NotifyNewMessage(not_null<HistoryItem*> item) {
+	RememberLoginCode(item);
 	auto &state = Instance();
 	if (!state.started || state.eventInFlight) {
 		return;
@@ -1351,14 +2270,28 @@ void NotifyNewMessage(not_null<HistoryItem*> item) {
 	while (state.recent.size() > 500) {
 		state.recent.pop_front();
 	}
-	state.eventInFlight = true;
-	Call(u"event"_q, QJsonObject{
+	QueueEvent(QJsonObject{
 		{ u"type"_q, u"update"_q },
 		{ u"name"_q, u"updateNewMessage"_q },
 		{ u"account"_q, 0 },
 		{ u"update"_q, json },
 	});
-	state.eventInFlight = false;
+}
+
+void NotifyScreen(const QString &screen, int64 dialogId) {
+	auto &state = Instance();
+	if (!state.started || state.eventInFlight) {
+		return;
+	}
+	auto &pending = state.pendingEvents;
+	pending.erase(ranges::remove_if(pending, [](const QJsonObject &event) {
+		return event.value(u"type"_q).toString() == u"screen"_q;
+	}), end(pending));
+	QueueEvent(QJsonObject{
+		{ u"type"_q, u"screen"_q },
+		{ u"screen"_q, screen },
+		{ u"dialog_id"_q, double(dialogId) },
+	});
 }
 
 void NotifyAppEvent(const QString &name) {
@@ -1372,6 +2305,19 @@ void NotifyAppEvent(const QString &name) {
 		{ u"name"_q, name },
 	});
 	state.eventInFlight = false;
+}
+
+bool InterceptUrl(const QString &url) {
+	auto &state = Instance();
+	if (!state.started || state.urlInFlight || state.urlFromPlugin) {
+		return false;
+	}
+	state.urlInFlight = true;
+	const auto handled = Call(u"open_url_hook"_q, QJsonObject{
+		{ u"url"_q, url },
+	}).toBool();
+	state.urlInFlight = false;
+	return handled;
 }
 
 bool InterceptLocalUrl(const QString &url) {

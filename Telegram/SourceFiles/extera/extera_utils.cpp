@@ -6,6 +6,7 @@
 #include <QtCore/QLocale>
 #include <QtCore/QTime>
 
+#include <algorithm>
 #include <cmath>
 #include <QtCore/QRegularExpression>
 
@@ -54,6 +55,55 @@ QString FilterZalgo(QString text) {
 		text.remove(ZalgoPattern());
 	}
 	return text;
+}
+
+void DetectPeerIds(TextWithEntities &text) {
+	if (text.text.size() < 6) {
+		return;
+	}
+	static const auto pattern = QRegularExpression(
+		u"(?<![\\w@/#.,:+\\-])-?\\d{6,16}(?![\\w.,:/])"_q,
+		QRegularExpression::UseUnicodePropertiesOption);
+	auto added = EntitiesInText();
+	auto matches = pattern.globalMatch(text.text);
+	while (matches.hasNext()) {
+		const auto match = matches.next();
+		const auto from = int(match.capturedStart());
+		const auto till = int(match.capturedEnd());
+		const auto overlaps = std::any_of(
+			text.entities.begin(),
+			text.entities.end(),
+			[&](const EntityInText &entity) {
+			return (entity.offset() < till)
+				&& (entity.offset() + entity.length() > from);
+		});
+		if (!overlaps) {
+			added.push_back(EntityInText(
+				EntityType::Phone,
+				from,
+				till - from));
+		}
+	}
+	if (added.isEmpty()) {
+		return;
+	}
+	text.entities.append(added);
+	std::stable_sort(
+		text.entities.begin(),
+		text.entities.end(),
+		[](const EntityInText &a, const EntityInText &b) {
+			return a.offset() < b.offset();
+		});
+}
+
+QString NormalizePeerId(QString id) {
+	id = id.trimmed();
+	if (id.startsWith(u"-100"_q) && id.size() > 8) {
+		return id.mid(4);
+	} else if (id.startsWith('-')) {
+		return id.mid(1);
+	}
+	return id;
 }
 
 void FilterZalgo(TextWithEntities &text) {

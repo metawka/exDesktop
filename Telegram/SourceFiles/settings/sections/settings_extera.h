@@ -2,6 +2,8 @@
 
 #include "settings/settings_type.h"
 
+class PeerData;
+
 namespace Window {
 class SessionController;
 } // namespace Window
@@ -23,5 +25,11 @@ namespace Settings {
 [[nodiscard]] Type ExteraSupportId();
 
 void ShowExteraSupportBox(not_null<Window::SessionController*> controller);
+void ShowExteraBadgeBox(
+	not_null<Window::SessionController*> controller,
+	not_null<PeerData*> peer,
+	const QString &text,
+	bool supporter);
+void ShowExteraAppIconBox(not_null<Window::SessionController*> controller);
 
 } // namespace Settings

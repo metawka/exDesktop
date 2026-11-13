@@ -10,6 +10,7 @@ enum class CheckResult {
 
 void Start();
 [[nodiscard]] int Build();
+[[nodiscard]] int BaseVersion();
 [[nodiscard]] QString VersionText();
 void CheckNow(Fn<void(CheckResult)> done);
 [[nodiscard]] rpl::producer<bool> AvailableValue();

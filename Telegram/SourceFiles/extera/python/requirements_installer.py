@@ -13,6 +13,14 @@ _failed = {}
 
 _NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
+_NATIVE_ALLOWED = {
+    "numpy", "pillow", "lxml", "pyyaml", "charset-normalizer", "regex", "orjson", "ujson", "msgpack",
+    "cryptography", "aiohttp", "multidict", "yarl", "frozenlist", "propcache", "brotli", "zstandard",
+    "websockets", "markupsafe", "pydantic-core", "rapidfuzz", "levenshtein", "google-crc32c", "ruamel-yaml-clib",
+    "simplejson", "xxhash", "mmh3", "bcrypt", "argon2-cffi-bindings", "pynacl", "tiktoken", "jiter", "rpds-py",
+    "wrapt", "greenlet", "cython", "pycryptodome", "pycryptodomex", "uvloop", "httptools", "lz4", "tokenizers",
+}
+
 
 def configure(target: str):
     global _target
@@ -50,10 +58,22 @@ def _wheel_score(filename: str) -> int:
     python, abi, platform = tags if len(tags) == 3 else ("", "", "")
     if platform == "any" and abi == "none":
         return 3 if "py3" in python else 1
-    if sys.platform == "win32" and "cp311" in python and "win_amd64" in platform:
+    compatible = "cp311" in python or abi == "abi3"
+    if not compatible:
+        return -1
+    import platform as _platform
+    machine = _platform.machine().lower()
+    if machine in ("amd64", "x64"):
+        machine = "x86_64"
+    if machine == "aarch64":
+        machine = "arm64"
+    if sys.platform == "win32" and "win_amd64" in platform:
         return 4
-    if sys.platform.startswith("linux") and "cp311" in python \
-            and "manylinux" in platform and "x86_64" in platform:
+    if sys.platform.startswith("linux") and "manylinux" in platform \
+            and (machine in platform or (machine == "arm64" and "aarch64" in platform)):
+        return 4
+    if sys.platform == "darwin" and "macosx" in platform \
+            and (machine in platform or "universal2" in platform):
         return 4
     return -1
 
@@ -92,6 +112,9 @@ def _install_one(spec: str, depth: int = 0):
         _failed[name] = f"no compatible wheel for {name}"
         raise RuntimeError(_failed[name])
     wheel = files[0]
+    if _wheel_score(wheel.get("filename", "")) == 4 and _normalize(name) not in _NATIVE_ALLOWED:
+        _failed[name] = f"{name} contains native code and is not allowed for plugins"
+        raise RuntimeError(_failed[name])
     request = urllib.request.Request(
         wheel["url"], headers={"User-Agent": "exDesktop"})
     with urllib.request.urlopen(request, timeout=60) as response:
@@ -106,6 +129,17 @@ def _install_one(spec: str, depth: int = 0):
         spec_part, _, marker = requirement.partition(";")
         if _marker_ok(marker.strip()):
             _install_one(spec_part, depth + 1)
+
+
+def missing(requirements) -> list:
+    if not _target or not requirements:
+        return []
+    result = []
+    for spec in requirements:
+        match = _NAME_RE.match(str(spec or ""))
+        if match and not _installed(match.group(1)) and match.group(1) not in _failed:
+            result.append(str(spec))
+    return result
 
 
 def ensure(requirements) -> list:

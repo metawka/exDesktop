@@ -6,5 +6,6 @@ namespace Extera::WsProxy {
 [[nodiscard]] bool Enabled();
 void Start();
 void SetEnabled(bool enabled);
+void Restart();
 
 } // namespace Extera::WsProxy

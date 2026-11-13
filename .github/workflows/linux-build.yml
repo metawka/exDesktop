@@ -60,6 +60,13 @@ jobs:
           rm -rf ${{ runner.temp }}/.buildx-cache
           mv ${{ runner.temp }}/.buildx-cache-new ${{ runner.temp }}/.buildx-cache
 
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ${{ runner.os }}-ccache-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-ccache-
+
       - name: Build
         env:
           API_ID: ${{ secrets.TDESKTOP_API_ID }}
@@ -69,9 +76,13 @@ jobs:
             echo "TDESKTOP_API_ID or TDESKTOP_API_HASH secret is not set"
             exit 1
           fi
+          mkdir -p "${{ runner.temp }}/ccache"
           docker run --rm \
             -u "$(id -u)" \
             -v "$PWD:/usr/src/tdesktop" \
+            -v "${{ runner.temp }}/ccache:/var/cache/ccache" \
+            -e CCACHE_DIR=/var/cache/ccache \
+            -e CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime \
             -e CONFIG=Release \
             -e API_ID -e API_HASH \
             "$IMAGE_TAG" \
@@ -82,6 +93,13 @@ jobs:
               -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON \
               -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON'
           test -f out/Release/Telegram
+
+      - name: Python packages
+        run: |
+          python3 -m pip install --disable-pip-version-check --target pkgdeps/site-packages \
+            --platform manylinux2014_x86_64 --python-version 3.11 --implementation cp --abi cp311 --abi abi3 --abi none \
+            --only-binary=:all: requests beautifulsoup4 lxml pillow PyYAML packaging
+          python3 -m pip install --disable-pip-version-check --target pkgdeps/tools patchelf
 
       - name: Package
         run: |
@@ -101,14 +119,27 @@ jobs:
               rm -rf pkg
               mkdir -p "$PKG/lib" "$PKG/python" "$PKG/python311/lib"
               cp out/Release/Telegram "$PKG/exDesktop-bin"
+              cp Telegram/Resources/art/icon256.png "$PKG/exDesktop.png"
               strip "$PKG/exDesktop-bin"
               cp -L /usr/lib64/libpython3.11.so.1.0 "$PKG/lib/"
               cp -r /usr/lib64/python3.11 "$PKG/python311/lib/python3.11"
               rm -rf "$PKG/python311/lib/python3.11/test" \
                 "$PKG/python311/lib/python3.11/site-packages"
               find "$PKG/python311" -name "__pycache__" -type d -prune -exec rm -rf {} +
-              mkdir -p "$PKG/python/extera"
+              ln -s lib "$PKG/python311/lib64"
+              for so in "$PKG"/python311/lib/python3.11/lib-dynload/*.so "$PKG"/lib/libpython3.11.so.1.0; do
+                ldd "$so" | grep -o "=> /[^ ]*" | cut -c4-
+              done | sort -u                 | grep -v -E "/(libc|libm|libpthread|libdl|librt|libutil|ld-linux[^/]*)\.so"                 | while read -r dep; do cp -Ln "$dep" "$PKG/lib/" || true; done
+              mkdir -p "$PKG/python/extera" "$PKG/python/site-packages" "$PKG/python/tgws"
               cp -r Telegram/SourceFiles/extera/python/. "$PKG/python/extera/"
+              cp -r pkgdeps/site-packages/. "$PKG/python/site-packages/"
+              cp -r Telegram/SourceFiles/extera/tgws/. "$PKG/python/tgws/"
+              find "$PKG/python" -name "__pycache__" -type d -prune -exec rm -rf {} +
+              PATCHELF=$(find pkgdeps/tools -type f -name patchelf | head -1)
+              if [ -n "$PATCHELF" ]; then
+                chmod +x "$PATCHELF"
+                "$PATCHELF" --set-rpath "\$ORIGIN/lib" "$PKG/exDesktop-bin"
+              fi
               cat > "$PKG/exDesktop" <<SH
           #!/bin/sh
           SELF="\$(readlink -f "\$0" 2>/dev/null)"
@@ -116,9 +147,17 @@ jobs:
           DIR="\$(cd "\$(dirname "\$SELF")" && pwd)"
           export LD_LIBRARY_PATH="\$DIR/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
           export PYTHONHOME="\$DIR/python311"
+          export PYTHONNOUSERSITE=1
           exec "\$DIR/exDesktop-bin" "\$@"
           SH
               chmod +x "$PKG/exDesktop" "$PKG/exDesktop-bin"
+              PYTHONHOME="$PKG/python311" PYTHONNOUSERSITE=1 LD_LIBRARY_PATH="$PKG/lib" python3.11 -c "
+          import sys
+          sys.path[:0] = [\"$PKG/python/site-packages\", \"$PKG/python/extera\"]
+          import ssl, sqlite3, lzma, bz2, ctypes, json, zlib, hashlib, asyncio
+          import requests, lxml.etree, PIL.Image, yaml, bs4, packaging
+          print(\"plugin runtime ok\", sys.prefix)
+          "
               tar -C pkg -czf "exDesktop-linux-x64.$VERSION.tar.gz" exDesktop
             '
           ls -la "exDesktop-linux-x64.$VERSION.tar.gz"

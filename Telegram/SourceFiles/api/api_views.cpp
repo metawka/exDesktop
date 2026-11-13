@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "api/api_views.h"
+#include "extera/extera_config.h"
 
 #include "apiwrap.h"
 #include "data/data_peer.h"
@@ -97,7 +98,7 @@ void ViewsManager::viewsIncrement() {
 		const auto requestId = _api.request(MTPmessages_GetMessagesViews(
 			i->first->input(),
 			MTP_vector<MTPint>(ids),
-			MTP_bool(true)
+			MTP_bool(!Extera::GhostRead())
 		)).done([=](
 				const MTPmessages_MessageViews &result,
 				mtpRequestId requestId) {

@@ -70,6 +70,7 @@ MenuVolumeItem::MenuVolumeItem(
 	enableMouseSelecting(_slider.get());
 
 	_slider->setAlwaysDisplayMarker(true);
+	_slider->setMaterialStyle(false);
 
 	sizeValue(
 	) | rpl::on_next([=](const QSize &size) {

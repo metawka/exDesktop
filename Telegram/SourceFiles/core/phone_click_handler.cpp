@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_calls.h"
 #include "styles/style_chat.h" // popupMenuExpandedSeparator.
 #include "styles/style_menu_icons.h"
+#include "extera/extera_utils.h"
 
 namespace {
 
@@ -63,6 +64,7 @@ private:
 	void prepare();
 	void paint(Painter &p);
 	void resolveById(const QString &id);
+	void resolveByBot(const QString &id);
 	void queryBot(not_null<UserData*> bot, const QString &id);
 	void resolveUsername(const QString &username, uint64 bare);
 	void finish(PeerData *peer);
@@ -112,7 +114,7 @@ ResolvePhoneAction::ResolvePhoneAction(
 	const auto owner = &controller->session().data();
 
 	if (_byId) {
-		resolveById(phone.trimmed());
+		resolveById(Extera::NormalizePeerId(phone));
 	} else if (const auto peer = owner->userByPhone(formattedPhone)) {
 		_peer = peer;
 		_loaded.force_assign(true);
@@ -164,6 +166,24 @@ void ResolvePhoneAction::resolveById(const QString &id) {
 			return;
 		}
 	}
+	_api.request(MTPusers_GetUsers(
+		MTP_vector<MTPInputUser>(1, MTP_inputUser(
+			MTP_long(bare),
+			MTP_long(0)))
+	)).done([=](const MTPVector<MTPUser> &result) {
+		_owner->processUsers(result);
+		const auto user = _owner->userLoaded(UserId(bare));
+		if (user && user->isLoaded()) {
+			finish(user);
+		} else {
+			resolveByBot(id);
+		}
+	}).fail([=] {
+		resolveByBot(id);
+	}).send();
+}
+
+void ResolvePhoneAction::resolveByBot(const QString &id) {
 	if (const auto bot = _owner->userLoaded(UserId(kResolverBotId))) {
 		queryBot(bot, id);
 		return;
@@ -455,7 +475,7 @@ void PhoneClickHandler::onClick(ClickContext context) const {
 	}();
 #endif
 
-	const auto idText = phone.trimmed();
+	const auto idText = Extera::NormalizePeerId(phone);
 	auto idOk = false;
 	const auto bareId = idText.toULongLong(&idOk);
 	const auto byId = idOk

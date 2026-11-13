@@ -41,6 +41,9 @@ class _Runnable:
     def run(self):
         safe_call(self._fn)
 
+    def __call__(self):
+        self.run()
+
 
 def R(fn):
     return _Runnable(fn)
@@ -49,6 +52,8 @@ def R(fn):
 def run_on_ui_thread(func, delay=0):
     if func is None:
         return
+    if not callable(func) and callable(getattr(func, "run", None)):
+        func = func.run
     _extera.run_on_main(lambda: safe_call(func), int(delay or 0))
 
 

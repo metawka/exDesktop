@@ -614,7 +614,7 @@ EmojiListWidget::EmojiListWidget(
 		session().premiumPossibleValue()
 	) | rpl::skip(1) | rpl::on_next([=] {
 		if (_features.allCustomEmojiPremium) {
-			const auto required = !session().premium();
+			const auto required = !session().premiumEmoji();
 			for (const auto sets : { &_searchSets, &_searchShortcutSets }) {
 				for (auto &set : *sets) {
 					if (set.premiumRequired != required) {
@@ -758,7 +758,7 @@ void EmojiListWidget::applyNextSearchQuery() {
 			});
 		}
 	}
-	if (_mode != Mode::Full || session().premium()) {
+	if (_mode != Mode::Full || session().premiumEmoji()) {
 		appendPremiumSearchResults();
 	}
 
@@ -1158,7 +1158,7 @@ void EmojiListWidget::showSearchResults() {
 				});
 			}
 		}
-		if (_mode != Mode::Full || session().premium()) {
+		if (_mode != Mode::Full || session().premiumEmoji()) {
 			appendPremiumSearchResults();
 		}
 		fillCloudSearchResults();
@@ -1269,7 +1269,7 @@ bool EmojiListWidget::addSearchShortcut(not_null<Data::StickersSet*> set) {
 		.list = std::move(list),
 		.canRemove = installed,
 		.premiumRequired = _features.allCustomEmojiPremium
-			&& !session().premium(),
+			&& !session().premiumEmoji(),
 	});
 	return true;
 }
@@ -1323,7 +1323,7 @@ void EmojiListWidget::fillSelectedSearchShortcut() {
 		.list = std::move(list),
 		.canRemove = installed,
 		.premiumRequired = _features.allCustomEmojiPremium
-			&& !session().premium(),
+			&& !session().premiumEmoji(),
 	});
 }
 
@@ -2505,7 +2505,7 @@ void EmojiListWidget::paint(
 	validateEmojiPaintContext(context);
 	paintSearchShortcuts(p, clip);
 
-	_paintAsPremium = session().premium();
+	_paintAsPremium = session().premiumEmoji();
 
 	auto [fromColumn, toColumn] = Ui::RowsInRange(
 		clip.x() - _rowsLeft,
@@ -3225,7 +3225,7 @@ void EmojiListWidget::selectEmoji(EmojiChosen data) {
 
 void EmojiListWidget::selectCustom(FileChosen data) {
 	const auto document = data.document;
-	const auto skip = (document->isPremiumEmoji() && !session().premium());
+	const auto skip = (document->isPremiumEmoji() && !session().premiumEmoji());
 	if (!skip && _mode == Mode::Full) {
 		auto &settings = Core::App().settings();
 		settings.incrementRecentEmoji({ RecentEmojiDocument{
@@ -3670,7 +3670,7 @@ void EmojiListWidget::refreshCustom() {
 		|| (!allCustomEmojiPremium && !premiumPossible);
 	const auto premiumMayBeBought = (!onlyUnicodeEmoji)
 		&& (allCustomEmojiPremium || premiumPossible)
-		&& !session->premium()
+		&& !session->premiumEmoji()
 		&& (allCustomEmojiPremium || !_allowWithoutPremium);
 	const auto owner = &session->data();
 	const auto &sets = owner->stickers().sets();
@@ -4002,7 +4002,7 @@ void EmojiListWidget::refreshEmojiStatusCollectibles() {
 		.title = collectibles->title,
 		.list = std::move(set),
 		.canRemove = false,
-		.premiumRequired = !session().premium(),
+		.premiumRequired = !session().premiumEmoji(),
 	});
 }
 
