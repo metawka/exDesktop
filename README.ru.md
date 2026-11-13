@@ -150,6 +150,12 @@
 curl -fsSL https://raw.githubusercontent.com/metawka/exDesktop/main/install.sh | sh
 ```
 
+<div>
+  <a href="https://moonpkg.github.io/cli/app/?type=github&repo=HebnixRL/Hebnix-Public">
+    <img src="https://github.com/moonpkg/cli/blob/main/docs/assets/install-btn-ru.png?raw=true" width="256" alt="Установить с помощью moon" />
+  </a>
+<div>
+
 ## Сборка
 
 <details>

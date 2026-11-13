@@ -142,7 +142,9 @@ jobs:
               fi
               cat > "$PKG/exDesktop" <<SH
           #!/bin/sh
-          DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+          SELF="\$(readlink -f "\$0" 2>/dev/null)"
+          [ -n "\$SELF" ] || SELF="\$0"
+          DIR="\$(cd "\$(dirname "\$SELF")" && pwd)"
           export LD_LIBRARY_PATH="\$DIR/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
           export PYTHONHOME="\$DIR/python311"
           export PYTHONNOUSERSITE=1
@@ -160,15 +162,73 @@ jobs:
             '
           ls -la "exDesktop-linux-x64.$VERSION.tar.gz"
 
+      # .moon is moon's single-file bundle (https://github.com/moonpkg/cli):
+      # the same app as the tarball, plus a desktop entry and icon.
+      - name: Install moon
+        run: cargo install moon --locked
+
+      - name: Build .moon bundle
+        run: |
+          TARBALL=$(find . -maxdepth 1 -name 'exDesktop-linux-x64.*.tar.gz' -print -quit)
+          if [ -z "$TARBALL" ]; then
+            echo "Linux tarball not found, cannot build the .moon bundle" >&2
+            exit 1
+          fi
+          VERSION=$(basename "$TARBALL")
+          VERSION="${VERSION#exDesktop-linux-x64.}"
+          VERSION="${VERSION%.tar.gz}"
+          BUNDLE_DIR="exDesktop-moon"
+          BUNDLE="exDesktop-linux-x64.$VERSION.moon"
+          rm -rf "$BUNDLE_DIR"
+          mkdir -p "$BUNDLE_DIR/app" "$BUNDLE_DIR/desktop" "$BUNDLE_DIR/icon"
+          tar -xzf "$TARBALL" -C "$BUNDLE_DIR/app" --strip-components=1
+          cat > "$BUNDLE_DIR/exDesktop.manifest" <<MANIFEST
+          dir=app
+          main=app/exDesktop
+          version=$VERSION
+          desktop=desktop/exDesktop.desktop
+          link=exDesktop
+          to=app/exDesktop
+          cmd=exDesktop
+          MANIFEST
+          cat > "$BUNDLE_DIR/desktop/exDesktop.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Version=1.0
+          Name=exDesktop
+          GenericName=Telegram Desktop
+          Comment=Unofficial Telegram Desktop client
+          TryExec=exDesktop
+          Exec=exDesktop %U
+          Icon=exDesktop
+          Terminal=false
+          Categories=Chat;Network;InstantMessaging;Qt;
+          MimeType=x-scheme-handler/tg;x-scheme-handler/tonsite;x-scheme-handler/ton;
+          Keywords=tg;chat;im;messaging;messenger;sms;tdesktop;
+          StartupWMClass=TelegramDesktop
+          SingleMainWindow=true
+          X-GNOME-UsesNotifications=true
+          X-GNOME-SingleWindow=true
+          DESKTOP
+          cp Telegram/Resources/art/exteradesktop.png "$BUNDLE_DIR/icon/exDesktop.png"
+          moon bundle "$BUNDLE_DIR" "$BUNDLE" --force
+          moon inspect "$BUNDLE"
+          ls -la "$BUNDLE"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: exDesktop-linux-x64
-          path: exDesktop-linux-x64.*.tar.gz
+          path: |
+            exDesktop-linux-x64.*.tar.gz
+            exDesktop-linux-x64.*.moon
           retention-days: 7
 
       - name: Attach to release
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "exDesktop-linux-x64.$VERSION.tar.gz" --clobber
+        run: |
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            "exDesktop-linux-x64.$VERSION.tar.gz" \
+            "exDesktop-linux-x64.$VERSION.moon" --clobber
