@@ -1,5 +1,5 @@
 {
-  "offset": 354810076,
+  "offset": 354810078,
   "hashes": [
     {
       "sha256": "f03663d02e67a69e61a8b06bd9c8f89afcfbe59734d0ece18eb9ca166ecd9cfd",
@@ -3090,6 +3090,18 @@
       "channel": 2189715950,
       "message": 1245,
       "name": "music_player_actions_cactus.plugin"
+    },
+    {
+      "sha256": "8e086bbfaa7e18c17c0934d830a02e6ff942c12018f75e6ae6933996d3462c44",
+      "channel": 2189715950,
+      "message": 1248,
+      "name": "my_wave.plugin"
+    },
+    {
+      "sha256": "525bc40bdb5f7146843233013ccd63deb8231e547b7e86ebfa8fc6eec7331667",
+      "channel": 2189715950,
+      "message": 1249,
+      "name": "voice_video_split.plugin"
     }
   ],
   "scanned": {
