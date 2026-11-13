@@ -17,9 +17,11 @@ jobs:
           - runner: macos-15
             arch: arm64
             name: arm64
+            prepare: ''
           - runner: macos-15-intel
             arch: x86_64
             name: x64
+            prepare: x64-only
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     env:
@@ -59,7 +61,7 @@ jobs:
       - name: Build ThirdParty libraries
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./tdesktop/Telegram/build/prepare/mac.sh silent
+        run: ./tdesktop/Telegram/build/prepare/mac.sh silent ${{ matrix.prepare }}
 
       - name: Save ThirdParty libraries
         if: steps.libs.outputs.cache-hit != 'true'

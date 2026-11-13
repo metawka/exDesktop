@@ -66,6 +66,7 @@ optionsList = [
     'build-stackwalk',
     'qt-asserts',
     'arm64-only',
+    'x64-only',
 ]
 options = []
 runCommand = []
@@ -158,7 +159,7 @@ elif (mac):
     environment.update({
         'SPECIAL_TARGET': 'mac',
         'MAKE_THREADS_CNT': '-j' + str(os.cpu_count()),
-        'MAC_ARCHS': 'arm64' if 'arm64-only' in options else 'x86_64;arm64',
+        'MAC_ARCHS': 'arm64' if 'arm64-only' in options else 'x86_64' if 'x64-only' in options else 'x86_64;arm64',
         'SDKROOT': macSdk,
         'MACOSX_DEPLOYMENT_TARGET': macDeployment,
         'UNGUARDED': '-Werror=unguarded-availability-new',
