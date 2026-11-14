@@ -80,6 +80,18 @@ jobs:
           sdk: ${{ env.SDK }}
           toolset: '14.44'
 
+      - name: ATL headers
+        shell: pwsh
+        run: |
+          # У компилятора 14.44 на раннере нет ATL, а breakpad (dump_syms) его требует.
+          # Берём atlmfc из любой установленной версии MSVC.
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $atl = Get-ChildItem "$vs\VC\Tools\MSVC\*\atlmfc" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $atl) { Write-Host "ATL не найден"; exit 0 }
+          Write-Host "ATL: $($atl.FullName)"
+          "INCLUDE=$env:INCLUDE;$($atl.FullName)\include" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "LIB=$env:LIB;$($atl.FullName)\lib\x64" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: NuGet sources
         run: |
           nuget sources Disable -Name "Microsoft Visual Studio Offline Packages" & exit 0
