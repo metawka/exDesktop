@@ -132,16 +132,19 @@ if [ "$OS" = "Linux" ]; then
 		MIME="${XDG_DATA_HOME:-$HOME/.local/share}/mime/packages"
 		mkdir -p "$APPS" "$ICONS" "$MIME"
 		[ -f "$PREFIX/exDesktop.png" ] && cp "$PREFIX/exDesktop.png" "$ICONS/exdesktop.png"
+		# Keep the Exec path unquoted: xdg-open (used by Chromium-based
+		# browsers for external schemes) does not strip quotes and then fails
+		# to find the binary, falling back to $BROWSER instead of exDesktop.
 		cat > "$APPS/exdesktop.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=exDesktop
 Comment=Telegram client
-Exec="$PREFIX/exDesktop" -- %u
+Exec=$PREFIX/exDesktop -- %u
 Icon=exdesktop
 Terminal=false
 Categories=Network;InstantMessaging;Chat;
-MimeType=x-scheme-handler/tg;application/x-exdesktop-plugin;
+MimeType=x-scheme-handler/tg;x-scheme-handler/tonsite;x-scheme-handler/ton;application/x-exdesktop-plugin;
 StartupWMClass=exDesktop
 EOF
 		cat > "$MIME/exdesktop-plugin.xml" <<EOF
