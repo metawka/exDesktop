@@ -148,6 +148,13 @@ jobs:
           done
           df -h /c /d || true
 
+      - name: Page file
+        uses: al-cheb/configure-pagefile-action@v1.4
+        with:
+          minimum-size: 16GB
+          maximum-size: 32GB
+          disk-root: "D:"
+
       - name: Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -179,7 +186,8 @@ jobs:
             -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON ^
             -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON
           if errorlevel 1 exit /b 1
-          cmake --build ..\out --config Release --parallel
+          rem Проекты по одному: каждый и так компилирует файлы параллельно (/MP), а память раннера ограничена.
+          cmake --build ..\out --config Release -- /m:1
           if errorlevel 1 exit /b 1
 
       - name: Package
