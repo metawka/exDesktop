@@ -37,8 +37,8 @@ jobs:
     steps:
       - name: Prepare directories
         run: |
-          mkdir %userprofile%\TBuild\Libraries
-          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          rem Всё собираем на диске D: (рабочая папка), там больше 200 ГБ.
+          mkdir %GITHUB_WORKSPACE%\TBuild\Libraries
           echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
           echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
           echo REPO_DIR=%GITHUB_WORKSPACE%\TBuild\tdesktop>>%GITHUB_ENV%
@@ -88,36 +88,36 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.TBUILD }}\ThirdParty
-          key: win64-third-party-${{ env.CACHE_KEY }}
-          restore-keys: win64-third-party-
+          key: win64d-third-party-${{ env.CACHE_KEY }}
+          restore-keys: win64d-third-party-
 
       - name: Restore Libraries cache
         id: libs-cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.LibrariesPath }}
-          key: win64-libs-${{ env.CACHE_KEY }}
-          restore-keys: win64-libs-
+          key: win64d-libs-${{ env.CACHE_KEY }}
+          restore-keys: win64d-libs-
 
       - name: Libraries
         id: libs
-        timeout-minutes: 290
+        timeout-minutes: 240
         run: |
-          %REPO_DIR%\Telegram\build\prepare\win.bat skip-release silent
+          %REPO_DIR%\Telegram\build\prepare\win.bat silent
 
       - name: Save ThirdParty cache
         if: always() && steps.libs.outcome != 'skipped'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.TBUILD }}\ThirdParty
-          key: win64-third-party-${{ env.CACHE_KEY }}-${{ github.run_id }}
+          key: win64d-third-party-${{ env.CACHE_KEY }}-${{ github.run_id }}
 
       - name: Save Libraries cache
         if: always() && steps.libs.outcome != 'skipped'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.LibrariesPath }}
-          key: win64-libs-${{ env.CACHE_KEY }}-${{ github.run_id }}
+          key: win64d-libs-${{ env.CACHE_KEY }}-${{ github.run_id }}
 
       - name: Stop if libraries are not ready
         if: steps.libs.outcome != 'success'
@@ -159,9 +159,6 @@ jobs:
           API_ID: ${{ secrets.TDESKTOP_API_ID }}
           API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
         run: |
-          rem На диске C: мало места, поэтому промежуточные файлы сборки кладём на D:.
-          if not exist D:\tg-out mkdir D:\tg-out
-          if not exist %REPO_DIR%\out mklink /d %REPO_DIR%\out D:\tg-out
           cd %REPO_DIR%\Telegram
           call configure.bat x64 ^
             -D TDESKTOP_API_ID=%API_ID% ^
