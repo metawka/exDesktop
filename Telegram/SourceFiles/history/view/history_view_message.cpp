@@ -4052,7 +4052,9 @@ bool Message::hasFromPhoto() const {
 		if (item->isGuestChatBotMessage()) {
 			return true;
 		}
-		return !item->out() && !item->history()->peer->isUser();
+		return !item->out()
+			&& (!item->history()->peer->isUser()
+				|| Extera::Bool(u"tristegram_private_avatars"_q));
 	} break;
 	case Context::ContactPreview:
 	case Context::ShortcutMessages:

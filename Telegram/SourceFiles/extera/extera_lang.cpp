@@ -185,6 +185,8 @@ void ApplyRussian(Fn<void(const QByteArray&, const QByteArray&)> apply) {
 		{ "lng_extera_details_edited", u"\u0418\u0437\u043C\u0435\u043D\u0435\u043D\u043E" },
 		{ "lng_extera_details_file", u"\u0424\u0430\u0439\u043B" },
 		{ "lng_extera_details_size", u"\u0420\u0430\u0437\u043C\u0435\u0440" },
+		{ "lng_tristegram_private_avatars", u"\u0410\u0432\u0430\u0442\u0430\u0440\u043A\u0438 \u0432 \u043B\u0438\u0447\u043D\u044B\u0445 \u0447\u0430\u0442\u0430\u0445" },
+		{ "lng_tristegram_details_received", u"\u041F\u043E\u043B\u0443\u0447\u0435\u043D\u043E \u0437\u0434\u0435\u0441\u044C" },
 		{ "lng_extera_translate_about", u"\u041A\u043D\u043E\u043F\u043A\u0430 \u00AB\u041F\u0435\u0440\u0435\u0432\u0435\u0441\u0442\u0438\u00BB \u043F\u043E\u044F\u0432\u043B\u044F\u0435\u0442\u0441\u044F \u0432 \u043C\u0435\u043D\u044E \u0441\u043E\u043E\u0431\u0449\u0435\u043D\u0438\u044F." },
 		{ "lng_extera_provider_telegram", u"Telegram" },
 		{ "lng_extera_provider_google", u"Google" },

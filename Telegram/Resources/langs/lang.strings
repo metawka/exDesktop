@@ -10050,6 +10050,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_extera_details_forwarded" = "Original Date";
 "lng_extera_details_file" = "File";
 "lng_extera_details_size" = "Size";
+"lng_tristegram_details_received" = "Received here";
+"lng_tristegram_private_avatars" = "Avatars in private chats";
 "lng_extera_translate_about" = "The Translate button appears in the message context menu.";
 "lng_extera_provider_telegram" = "Telegram";
 "lng_extera_provider_google" = "Google";

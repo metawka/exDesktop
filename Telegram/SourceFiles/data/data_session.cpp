@@ -106,6 +106,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/call_delayed.h"
 #include "base/random.h"
 #include "extera/extera_emoji.h"
+#include "extera/extera_menu.h"
 #include "spellcheck/spellcheck_highlight_syntax.h"
 
 namespace Data {
@@ -2106,6 +2107,7 @@ rpl::producer<not_null<const ViewElement*>> Session::viewLayoutChanged() const {
 }
 
 void Session::notifyNewItemAdded(not_null<HistoryItem*> item) {
+	Extera::RememberReceivedTime(item);
 	_newItemAdded.fire_copy(item);
 }
 

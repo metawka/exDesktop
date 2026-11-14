@@ -1851,6 +1851,10 @@ void PartAppearance1(SectionBuilder &builder) {
 			builder,
 			u"sender_mini_avatars"_q,
 			tr::lng_extera_mini_avatars());
+		AddToggle(
+			builder,
+			u"tristegram_private_avatars"_q,
+			tr::lng_tristegram_private_avatars());
 	});
 	AddAbout(builder, tr::lng_extera_chat_list_about());
 }

@@ -70,6 +70,7 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"hide_status"_q, false },
 		{ u"hide_stories"_q, false },
 		{ u"sender_mini_avatars"_q, false },
+		{ u"tristegram_private_avatars"_q, true },
 		{ u"folder_title_style"_q, 0 },
 		{ u"folder_counter"_q, 0 },
 		{ u"hide_all_chats"_q, false },
