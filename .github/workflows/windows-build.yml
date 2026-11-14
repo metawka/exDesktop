@@ -133,7 +133,6 @@ jobs:
           # Промежуточные файлы сборки библиотек: для сборки клиента нужны
           # только .lib, заголовки и cmake-файлы (так делает официальная сборка Telegram).
           find "$LibrariesPath" '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' ')' -type f ')' -o -empty ')' -delete || true
-          rm -rf "$TBUILD/ThirdParty" || true
           # Ненужные для нас предустановленные пакеты на диске C:.
           for dir in /c/Android /c/hostedtoolcache/windows/go /c/hostedtoolcache/windows/Ruby /c/hostedtoolcache/windows/PyPy /c/ghcup /c/Strawberry /c/selenium /c/SeleniumWebDrivers /c/Miniconda; do
             [ -e "$dir" ] && cmd //c "rmdir /s /q \"$(cygpath -w "$dir")\"" 2>/dev/null || true
@@ -163,6 +162,9 @@ jobs:
           API_ID: ${{ secrets.TDESKTOP_API_ID }}
           API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
         run: |
+          rem На диске C: мало места, поэтому промежуточные файлы сборки кладём на D:.
+          if not exist D:\tg-out mkdir D:\tg-out
+          if not exist %REPO_DIR%\out mklink /d %REPO_DIR%\out D:\tg-out
           cd %REPO_DIR%\Telegram
           call configure.bat x64 ^
             -D TDESKTOP_API_ID=%API_ID% ^
