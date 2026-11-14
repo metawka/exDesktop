@@ -48,11 +48,11 @@ rpl::producer<TextWithEntities> Text2() {
 		lt_gpl_link,
 		rpl::single(tr::link(
 			"GNU GPL",
-			"https://github.com/metawka/exDesktop/blob/main/LICENSE")),
+			"https://github.com/PJ-Mentalist/TristegramApp/blob/main/LICENSE")),
 		lt_github_link,
 		rpl::single(tr::link(
 			"GitHub",
-			"https://github.com/metawka/exDesktop")),
+			"https://github.com/PJ-Mentalist/TristegramApp")),
 		tr::marked);
 }
 
@@ -60,8 +60,8 @@ rpl::producer<TextWithEntities> Text3() {
 	return tr::lng_exd_about_links(
 		lt_site_link,
 		rpl::single(tr::link(
-			"exteradesktop.xyz",
-			"https://exteradesktop.xyz")),
+			"github.com/PJ-Mentalist/Tristegram",
+			"https://github.com/PJ-Mentalist/Tristegram")),
 		lt_channel_link,
 		rpl::single(tr::link("@exDesktop", "https://t.me/exDesktop")),
 		lt_chat_link,

@@ -1,0 +1,183 @@
+name: Windows build
+
+# Собирает Tristegram для Windows x64 и выкладывает архив в Actions → Artifacts.
+# Нужны секреты репозитория TDESKTOP_API_ID и TDESKTOP_API_HASH.
+# Первая сборка долгая (библиотеки собираются с нуля). Если она упрётся в лимит
+# времени, уже собранные библиотеки сохранятся в кэш, и следующий запуск продолжит.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, tristegram]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'changelog.txt'
+      - 'LICENSE'
+      - 'Telegram/build/docker/**'
+      - 'Telegram/SourceFiles/platform/linux/**'
+      - 'Telegram/SourceFiles/platform/mac/**'
+      - '.github/workflows/linux-build.yml'
+      - '.github/workflows/macos-*.yml'
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 355
+
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Prepare directories
+        run: |
+          mkdir %userprofile%\TBuild\Libraries
+          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
+          echo REPO_DIR=%GITHUB_WORKSPACE%\TBuild\tdesktop>>%GITHUB_ENV%
+
+      - name: Clone
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          path: TBuild\tdesktop
+
+      - name: First set up
+        shell: bash
+        run: |
+          DOCPATH="$TBUILD/tdesktop/docs/building-win.md"
+          SDK="$(grep "SDK version" "$DOCPATH" | sed -r 's/.*\*\*(.*)\*\* SDK version.*/\1/')"
+          echo "SDK=$SDK" >> $GITHUB_ENV
+          sed -i '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/${_Zi}//' "$PROGRAMFILES"/CMake/share/cmake*/Modules/Platform/Windows-MSVC.cmake || true
+          sha256sum "$TBUILD/tdesktop/Telegram/build/prepare/prepare.py" | awk '{ print $1 }' > CACHE_KEY.txt
+          echo "$SDK" >> CACHE_KEY.txt
+          echo "CACHE_KEY=$(sha256sum CACHE_KEY.txt | awk '{ print $1 }')" >> $GITHUB_ENV
+          git config --global user.email "ci@users.noreply.github.com"
+          git config --global user.name "Tristegram CI"
+
+      - name: Check API secrets
+        shell: bash
+        env:
+          API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
+        run: |
+          if [ -z "$API_ID" ] || [ -z "$API_HASH" ]; then
+            echo "::error::Добавь секреты TDESKTOP_API_ID и TDESKTOP_API_HASH в Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+
+      - name: Visual Studio environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          sdk: ${{ env.SDK }}
+          toolset: '14.44'
+
+      - name: NuGet sources
+        run: |
+          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages" & exit 0
+
+      - name: Restore ThirdParty cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: win64-third-party-${{ env.CACHE_KEY }}
+          restore-keys: win64-third-party-
+
+      - name: Restore Libraries cache
+        id: libs-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.LibrariesPath }}
+          key: win64-libs-${{ env.CACHE_KEY }}
+          restore-keys: win64-libs-
+
+      - name: Libraries
+        id: libs
+        timeout-minutes: 290
+        run: |
+          %REPO_DIR%\Telegram\build\prepare\win.bat skip-release silent
+
+      - name: Save ThirdParty cache
+        if: always() && steps.libs.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: win64-third-party-${{ env.CACHE_KEY }}-${{ github.run_id }}
+
+      - name: Save Libraries cache
+        if: always() && steps.libs.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.LibrariesPath }}
+          key: win64-libs-${{ env.CACHE_KEY }}-${{ github.run_id }}
+
+      - name: Stop if libraries are not ready
+        if: steps.libs.outcome != 'success'
+        shell: bash
+        run: |
+          echo "::warning::Библиотеки ещё не собраны до конца. Уже собранное сохранено в кэш — запусти workflow ещё раз."
+          exit 1
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+
+      - name: Python for the plugin engine
+        shell: pwsh
+        run: |
+          $py = Split-Path (Get-Command python).Source
+          $dst = Join-Path $env:LibrariesPath 'python311'
+          New-Item -ItemType Directory -Force -Path "$dst\libs", "$dst\embed" | Out-Null
+          Copy-Item -Recurse -Force "$py\include" "$dst\include"
+          Copy-Item -Force "$py\libs\python311.lib" "$dst\libs\"
+          $ver = (python -c "import platform; print(platform.python_version())").Trim()
+          Invoke-WebRequest "https://www.python.org/ftp/python/$ver/python-$ver-embed-amd64.zip" -OutFile embed.zip
+          Expand-Archive embed.zip -DestinationPath "$dst\embed" -Force
+
+      - name: Build Tristegram
+        env:
+          API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
+        run: |
+          cd %REPO_DIR%\Telegram
+          call configure.bat x64 ^
+            -D TDESKTOP_API_ID=%API_ID% ^
+            -D TDESKTOP_API_HASH=%API_HASH% ^
+            -D CMAKE_CONFIGURATION_TYPES=Release ^
+            -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON ^
+            -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON
+          if errorlevel 1 exit /b 1
+          cmake --build ..\out --config Release --parallel
+          if errorlevel 1 exit /b 1
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "$env:REPO_DIR\out\Release"
+          $pkg = "$env:GITHUB_WORKSPACE\Tristegram"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item "$out\Telegram.exe" "$pkg\Tristegram.exe"
+          if (Test-Path "$out\python") { Copy-Item -Recurse "$out\python" "$pkg\python" }
+          New-Item -ItemType Directory -Force -Path "$pkg\python\tgws" | Out-Null
+          Copy-Item -Recurse -Force "$env:REPO_DIR\Telegram\SourceFiles\extera\tgws\*" "$pkg\python\tgws\"
+          python -m pip install --disable-pip-version-check --target "$pkg\python\Lib\site-packages" `
+            --platform win_amd64 --python-version 3.11 --implementation cp --only-binary=:all: `
+            requests beautifulsoup4 lxml pillow PyYAML packaging
+          Get-ChildItem $pkg -Recurse -Directory -Filter __pycache__ | Remove-Item -Recurse -Force
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tristegram-win64
+          path: Tristegram\
+          retention-days: 14

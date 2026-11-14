@@ -122,10 +122,10 @@ void Load(Fn<void()> done) {
 		state.manager = new QNetworkAccessManager(qApp);
 	}
 	auto request = QNetworkRequest(QUrl(
-		u"https://api.github.com/repos/metawka/exDesktop/releases?per_page=%1"_q
+		u"https://api.github.com/repos/PJ-Mentalist/TristegramApp/releases?per_page=%1"_q
 			.arg(kMaxReleases)));
 	request.setRawHeader("Accept", "application/vnd.github+json");
-	request.setRawHeader("User-Agent", "exDesktop");
+	request.setRawHeader("User-Agent", "Tristegram");
 	const auto reply = state.manager->get(request);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
@@ -236,7 +236,7 @@ void Fill(
 			Ui::AddSkip(content);
 		}
 		first = false;
-		auto title = Ui::Text::Bold(u"exDesktop "_q + release.version);
+		auto title = Ui::Text::Bold(u"Tristegram "_q + release.version);
 		if (release.date.isValid()) {
 			title.append(QString::fromUtf8("  \xC2\xB7  ")).append(
 				QLocale().toString(release.date, QLocale::LongFormat));
@@ -266,7 +266,7 @@ void Fill(
 		if (text.empty()) {
 			continue;
 		}
-		auto part = Ui::Text::Bold(u"exDesktop "_q + release.version);
+		auto part = Ui::Text::Bold(u"Tristegram "_q + release.version);
 		part.append(QChar('\n')).append(text);
 		if (!result.empty()
 			&& result.text.size() + part.text.size() + 2 > kLimit) {

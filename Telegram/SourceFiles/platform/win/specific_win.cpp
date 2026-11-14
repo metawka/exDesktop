@@ -197,7 +197,7 @@ bool ManageAppLink(
 	}
 	const auto lnk = QString::fromWCharArray(startupFolder)
 		+ '\\'
-		+ u"exDesktop"_q
+		+ u"Tristegram"_q
 		+ u".lnk"_q;
 	if (!create) {
 		QFile::remove(lnk);
@@ -329,10 +329,10 @@ void psDoFixPrevious() {
 		HRESULT userDesktopRes = SHGetFolderPath(0, CSIDL_DESKTOPDIRECTORY, 0, SHGFP_TYPE_CURRENT, userDesktopFolder);
 		HRESULT commonDesktopRes = SHGetFolderPath(0, CSIDL_COMMON_DESKTOPDIRECTORY, 0, SHGFP_TYPE_CURRENT, commonDesktopFolder);
 		if (SUCCEEDED(userDesktopRes)) {
-			userDesktopLnk = QString::fromWCharArray(userDesktopFolder) + "\\exDesktop.lnk";
+			userDesktopLnk = QString::fromWCharArray(userDesktopFolder) + "\\Tristegram.lnk";
 		}
 		if (SUCCEEDED(commonDesktopRes)) {
-			commonDesktopLnk = QString::fromWCharArray(commonDesktopFolder) + "\\exDesktop.lnk";
+			commonDesktopLnk = QString::fromWCharArray(commonDesktopFolder) + "\\Tristegram.lnk";
 		}
 		QFile userDesktopFile(userDesktopLnk), commonDesktopFile(commonDesktopLnk);
 		if (QFile::exists(userDesktopLnk) && QFile::exists(commonDesktopLnk) && userDesktopLnk != commonDesktopLnk) {

@@ -1050,7 +1050,7 @@ ChatHide ForPeer(not_null<PeerData*> peer) {
 }
 
 QString Name() {
-	return u"exDesktop"_q;
+	return u"Tristegram"_q;
 }
 
 const QImage &Avatar() {

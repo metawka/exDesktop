@@ -414,7 +414,7 @@ void View::tryLyrics(
 		return;
 	}
 	auto request = QNetworkRequest(urls[index].first);
-	request.setHeader(QNetworkRequest::UserAgentHeader, u"exDesktop"_q);
+	request.setHeader(QNetworkRequest::UserAgentHeader, u"Tristegram"_q);
 	const auto single = urls[index].second;
 	const auto reply = _network->get(request);
 	connect(reply, &QNetworkReply::finished, this, [=] {

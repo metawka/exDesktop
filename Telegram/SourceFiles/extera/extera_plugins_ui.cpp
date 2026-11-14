@@ -3366,7 +3366,7 @@ void ChooseAndInstall(not_null<Window::SessionController*> controller) {
 	FileDialog::GetOpenPath(
 		Core::App().getFileDialogParent(),
 		tr::lng_extera_plugins_install(tr::now),
-		u"exDesktop Plugin (*.plugin *.elyx *.eaf);;Python (*.py)"_q,
+		u"Tristegram Plugin (*.plugin *.elyx *.eaf);;Python (*.py)"_q,
 		[=](FileDialog::OpenResult &&result) {
 			if (!result.paths.isEmpty()) {
 				ShowInstallBox(controller, result.paths.front(), false);

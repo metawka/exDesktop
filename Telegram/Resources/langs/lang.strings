@@ -27,9 +27,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 "lng_disable_notifications_from_tray" = "Disable notifications";
 "lng_enable_notifications_from_tray" = "Enable notifications";
-"lng_open_from_tray" = "Open exDesktop";
+"lng_open_from_tray" = "Open Tristegram";
 "lng_minimize_to_tray" = "Minimize to Tray";
-"lng_quit_from_tray" = "Quit exDesktop";
+"lng_quit_from_tray" = "Quit Tristegram";
 "lng_tray_icon_text" = "Telegram is still running here,\nyou can change this in Settings.\nIf it disappears from the tray,\nyou can drag it back from the hidden icons.";
 
 // For lng_month_year or plain month name.
@@ -315,7 +315,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_flood_error" = "Too many tries. Please try again later.";
 "lng_edit_error" = "You can't edit this message.";
 "lng_error_phone_flood" = "Sorry, you have deleted and re-created your account too many times recently. Please wait for a few days before signing up again.";
-"lng_error_start_minimized_passcoded" = "You have set a local passcode, so exDesktop can't be launched minimized; it will ask you to enter your passcode before it can start working.";
+"lng_error_start_minimized_passcoded" = "You have set a local passcode, so Tristegram can't be launched minimized; it will ask you to enter your passcode before it can start working.";
 "lng_error_public_groups_denied" = "Unfortunately, you are banned from participating in public groups.\n{more_info}";
 "lng_error_cant_add_member" = "Sorry, you can't add the bot to this group. Ask a group admin to do it.";
 "lng_error_cant_add_bot" = "Sorry, this bot can't be added to groups.";
@@ -357,7 +357,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_proxy_box_username" = "Username";
 "lng_proxy_box_password" = "Password";
 "lng_proxy_invalid" = "The proxy link is invalid.";
-"lng_proxy_unsupported" = "Your exDesktop version doesn't support this proxy type or the proxy link is invalid. Please update exDesktop to the latest version.";
+"lng_proxy_unsupported" = "Your Tristegram version doesn't support this proxy type or the proxy link is invalid. Please update Tristegram to the latest version.";
 "lng_proxy_incorrect_secret" = "This proxy link uses invalid **secret** parameter. Please contact the proxy provider and ask him to update MTProxy source code and configure it with a correct **secret** value. Then let him provide a new link.";
 "lng_proxy_check_ip_warning_title" = "Warning";
 "lng_proxy_check_ip_warning" = "This will expose your IP address to the admin of the proxy server.";
@@ -700,7 +700,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_qt_frame" = "Use Qt window frame";
 "lng_settings_auto_start" = "Launch Telegram when system starts";
 "lng_settings_start_min" = "Launch minimized";
-"lng_settings_auto_start_disabled_uwp" = "Starting with the system was disabled in Windows Settings.\n\nPlease enable exDesktop in the Startup Apps Settings.";
+"lng_settings_auto_start_disabled_uwp" = "Starting with the system was disabled in Windows Settings.\n\nPlease enable Tristegram in the Startup Apps Settings.";
 "lng_settings_restore_windows" = "Restore last opened windows";
 "lng_restore_windows_question" = "Restore windows?";
 "lng_restore_windows_restore" = "Restore";
@@ -1123,7 +1123,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_theme_reverting#other" = "Reverting to the old theme in {count} seconds.";
 "lng_theme_keep_changes" = "Keep changes";
 "lng_theme_revert" = "Revert";
-"lng_theme_no_desktop" = "Sorry, this theme doesn't include a version for exDesktop.";
+"lng_theme_no_desktop" = "Sorry, this theme doesn't include a version for Tristegram.";
 "lng_theme_share" = "Share";
 "lng_theme_edit" = "Edit";
 "lng_theme_delete" = "Delete";
@@ -1212,10 +1212,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_passcode_enter_first" = "Enter a passcode";
 "lng_passcode_enter_new" = "Enter new passcode";
 "lng_passcode_confirm_new" = "Re-enter new passcode";
-"lng_passcode_about" = "When a local passcode is set, a lock icon appears at the top of your chat list. Click it to lock exDesktop.\n\nNote: if you forget your local passcode, you'll need to log out of exDesktop and log in again.";
+"lng_passcode_about" = "When a local passcode is set, a lock icon appears at the top of your chat list. Click it to lock Tristegram.\n\nNote: if you forget your local passcode, you'll need to log out of Tristegram and log in again.";
 "lng_passcode_about1" = "When a local passcode is set, a lock icon appears at the top of your chat list.";
-"lng_passcode_about2" = "Click it to lock exDesktop.";
-"lng_passcode_about3" = "Note: if you forget your passcode, you'll need to log out of exDesktop and log in again.";
+"lng_passcode_about2" = "Click it to lock Tristegram.";
+"lng_passcode_about3" = "Note: if you forget your passcode, you'll need to log out of Tristegram and log in again.";
 "lng_passcode_differ" = "Passcodes are different";
 "lng_passcode_wrong" = "Wrong passcode";
 "lng_passcode_is_same" = "Passcode was not changed";
@@ -1391,7 +1391,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_passkeys_none_button_unsupported" = "Unsupported";
 "lng_settings_passkeys_created" = "Created {date}";
 "lng_settings_passkeys_last_used" = "Last used {date}";
-"lng_settings_passkeys_unsigned_error" = "Passkeys are not available in unsigned builds. Please use an official signed version of exDesktop.";
+"lng_settings_passkeys_unsigned_error" = "Passkeys are not available in unsigned builds. Please use an official signed version of Tristegram.";
 "lng_settings_passkey_unknown" = "Passkey";
 
 "lng_passkey_touch" = "Touch your security key";
@@ -3167,7 +3167,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_cancel_edit_post_yes" = "Yes";
 "lng_cancel_edit_post_no" = "No";
 
-"lng_bot_share_location_unavailable" = "Sorry, location sharing is currently unavailable in exDesktop.";
+"lng_bot_share_location_unavailable" = "Sorry, location sharing is currently unavailable in Tristegram.";
 "lng_bot_share_phone" = "Do you want to share your phone number with this bot?";
 "lng_bot_share_phone_confirm" = "Share";
 "lng_bot_allow_write_title" = "Allow messaging";
@@ -6111,7 +6111,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_theme_preview_users#one" = "{count} person is using this theme";
 "lng_theme_preview_users#other" = "{count} people are using this theme";
 
-"lng_new_version_wrap" = "exDesktop was updated to version {version}\n\n{changes}\n\nFull version history is available here:\n{link}";
+"lng_new_version_wrap" = "Tristegram was updated to version {version}\n\n{changes}\n\nFull version history is available here:\n{link}";
 "lng_new_version_minor" = "— Bug fixes and other minor improvements";
 
 "lng_menu_insert_unicode" = "Insert Unicode control character";
@@ -6504,10 +6504,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_group_call_context_stop_ringing" = "Stop calling";
 "lng_group_call_remove_channel" = "Remove {channel} from the video chat and ban them?";
 "lng_group_call_remove_channel_from_channel" = "Remove {channel} from the live stream?";
-"lng_group_call_mac_access" = "exDesktop does not have access to system wide keyboard input required for Push to Talk.";
+"lng_group_call_mac_access" = "Tristegram does not have access to system wide keyboard input required for Push to Talk.";
 "lng_group_call_mac_input" = "Please allow **Input Monitoring** for Telegram in Privacy Settings.";
 "lng_group_call_mac_accessibility" = "Please allow **Accessibility** for Telegram in Privacy Settings.\n\nYou may need to restart the app.";
-"lng_group_call_mac_screencast_access" = "exDesktop does not have access to screen recording required for Screen Sharing.";
+"lng_group_call_mac_screencast_access" = "Tristegram does not have access to screen recording required for Screen Sharing.";
 "lng_group_call_mac_recording" = "Please allow **Screen Recording** for Telegram in Privacy Settings.";
 "lng_group_call_mac_settings" = "Open Settings";
 
@@ -7179,7 +7179,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_terms_update_sorry" = "We're very sorry, but this means we must part ways here. Unlike others, we don't use your data for ad targeting or other commercial purposes. Telegram only stores the information it needs to function as a secure and feature-rich cloud service. You can adjust how we use your data in Privacy & Security settings.\n\nBut if you're generally not OK with Telegram's modest requirements, it won't be possible for us to provide you with this service. You can delete your account now — or look around some more and delete it later if you feel you're not happy with the way we use your data.";
 "lng_terms_decline_and_delete" = "Decline & Delete";
 "lng_terms_back" = "Back";
-"lng_terms_delete_warning" = "Warning, this will irreversibly delete your Telegram account and all the data you store in the Telegram cloud.\n\nImportant: You can Cancel now and export your data first instead of losing it. (To do this, open the latest version of exDesktop and go to Settings > Advanced > Export Telegram data.)";
+"lng_terms_delete_warning" = "Warning, this will irreversibly delete your Telegram account and all the data you store in the Telegram cloud.\n\nImportant: You can Cancel now and export your data first instead of losing it. (To do this, open the latest version of Tristegram and go to Settings > Advanced > Export Telegram data.)";
 "lng_terms_delete_now" = "Delete now";
 "lng_terms_agree_to_proceed" = "Agree and proceed to {bot}.";
 
@@ -7424,7 +7424,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_language_not_found" = "Sorry, this language pack doesn't exist.";
 "lng_language_already" = "You're already using this language pack. You can change your language back at any time in Settings.";
 "lng_language_not_ready_title" = "Insufficient data";
-"lng_language_not_ready_about" = "Unfortunately, this custom language pack ({lang_name}) doesn't contain data for exDesktop. You can contribute to this language pack using the {link}.";
+"lng_language_not_ready_about" = "Unfortunately, this custom language pack ({lang_name}) doesn't contain data for Tristegram. You can contribute to this language pack using the {link}.";
 "lng_language_not_ready_link" = "translation platform";
 
 "lng_translate_box_error" = "Translate failed.";
@@ -7690,8 +7690,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 "lng_outdated_title" = "PLEASE UPDATE YOUR OPERATING SYSTEM.";
 "lng_outdated_title_bits" = "PLEASE SWITCH TO A 64-BIT OPERATING SYSTEM.";
-"lng_outdated_soon" = "Otherwise, exDesktop will stop updating on {date}.";
-"lng_outdated_now" = "So exDesktop can update to newer versions.";
+"lng_outdated_soon" = "Otherwise, Tristegram will stop updating on {date}.";
+"lng_outdated_now" = "So Tristegram can update to newer versions.";
 
 "lng_screen_reader_bar_text" = "Telegram is working in Screen Reader mode.";
 "lng_screen_reader_bar_disable" = "Disable";
@@ -8898,7 +8898,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_wallet_protection_open" = "Don't ask for passcode";
 "lng_wallet_protection_open_about" = "Anyone with access to your Telegram can spend your funds.";
 "lng_wallet_protection_open_title" = "Store without a passcode?";
-"lng_wallet_protection_open_warning_lock" = "Anyone who gains access to your unlocked exDesktop on this computer will be able to steal your wallet's funds.\n\nYou can change this later from Passcode Lock in the wallet menu.";
+"lng_wallet_protection_open_warning_lock" = "Anyone who gains access to your unlocked Tristegram on this computer will be able to steal your wallet's funds.\n\nYou can change this later from Passcode Lock in the wallet menu.";
 "lng_wallet_protection_open_warning_nolock" = "Anyone who gains access to this computer will be able to steal your wallet's funds.\n\nYou can change this later from Passcode Lock in the wallet menu.";
 "lng_wallet_protection_open_confirm" = "Store anyway";
 "lng_wallet_protection_create_about" = "This passcode protects your wallet key on this device. It does not lock Telegram until you turn that on in Settings.";
@@ -9140,7 +9140,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_tgw_log" = "Widget log";
 "lng_tgw_copied" = "Copied: {text}";
 "lng_in_dlg_widget" = "Widget";
-"lng_extera_title" = "exDesktop Settings";
+"lng_extera_title" = "Tristegram Settings";
 "lng_extera_categories" = "Categories";
 "lng_extera_links" = "Links";
 "lng_extera_general" = "General";
@@ -9152,9 +9152,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_extera_forum" = "Chats";
 "lng_extera_website" = "Website";
 "lng_extera_crowdin" = "Translate";
-"lng_extera_badge_developer" = "{name} is the developer of exDesktop.";
-"lng_extera_badge_resource" = "{name} is an official exDesktop resource.";
-"lng_extera_port" = "exDesktop";
+"lng_extera_badge_developer" = "{name} is the developer of Tristegram.";
+"lng_extera_badge_resource" = "{name} is an official Tristegram resource.";
+"lng_extera_port" = "Tristegram";
 "lng_extera_port_developer" = "Developer";
 "lng_extera_translate_messages" = "Translate Messages";
 "lng_extera_translate_button" = "Show Translate Button";
@@ -9273,10 +9273,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_extera_export" = "Export Settings";
 "lng_extera_import" = "Import Settings";
 "lng_extera_reset" = "Reset Settings";
-"lng_extera_reset_sure" = "All exDesktop settings will be restored to their default values.";
+"lng_extera_reset_sure" = "All Tristegram settings will be restored to their default values.";
 "lng_extera_exported" = "Settings exported.";
 "lng_extera_imported" = "Settings imported.";
-"lng_extera_import_failed" = "The file does not contain exDesktop settings.";
+"lng_extera_import_failed" = "The file does not contain Tristegram settings.";
 "lng_extera_ai_chat" = "AI Chat";
 "lng_extera_ai_model" = "AI Chat Model";
 "lng_extera_ai_model_flash" = "Gemini 2.5 Flash";
@@ -9373,9 +9373,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_plugin_ported_os" = "Ported from Android with AI for {os}";
 "lng_exd_plugins_actions" = "Plugin actions";
 "lng_exd_unknown_risk_title" = "Risks";
-"lng_exd_unknown_risk_account" = "The plugin works on behalf of your account: it can read chats and send messages. A malicious plugin can harm you through the account even with the protection of exDesktop.";
+"lng_exd_unknown_risk_account" = "The plugin works on behalf of your account: it can read chats and send messages. A malicious plugin can harm you through the account even with the protection of Tristegram.";
 "lng_exd_unknown_risk_check" = "Download plugins only from official sources. If part of the code is encrypted or unreadable, do not use the plugin.";
-"lng_exd_unknown_protect_title" = "Protection of exDesktop";
+"lng_exd_unknown_protect_title" = "Protection of Tristegram";
 "lng_exd_unknown_protect_guard" = "PluginGuard checks the code before installation";
 "lng_exd_unknown_protect_sandbox" = "Session files, other plugins, browsers and wallets are not accessible to the plugin";
 "lng_exd_unknown_protect_permissions" = "Internet access and folders outside the plugin folder are requested separately";
@@ -9456,10 +9456,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_port_mode" = "Mode";
 "lng_exd_port_mode_agent" = "Check and fix";
 "lng_exd_port_mode_single" = "Single request";
-"lng_exd_port_about" = "Android plugins are rewritten for exDesktop by the model of the selected service with the user's API key. The result is installed as a separate plugin. Weak and local models produce worse results.";
+"lng_exd_port_about" = "Android plugins are rewritten for Tristegram by the model of the selected service with the user's API key. The result is installed as a separate plugin. Weak and local models produce worse results.";
 "lng_exd_plugin_partial" = "Works partially";
 "lng_exd_plugin_partial_title" = "Unavailable on Desktop";
-"lng_exd_plugin_partial_about" = "The plugin modifies Android interface elements. The following functions do not work in exDesktop:";
+"lng_exd_plugin_partial_about" = "The plugin modifies Android interface elements. The following functions do not work in Tristegram:";
 "lng_exd_plugin_permissions" = "Permissions";
 "lng_exd_plugin_perm_allowed" = "Allowed";
 "lng_exd_plugin_perm_denied" = "Denied";
@@ -9469,7 +9469,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_plugin_perm_reset_all" = "Reset All Permissions";
 "lng_exd_plugin_perm_reset_all_sure" = "Reset all permissions of this plugin? It will request them again.";
 "lng_exd_plugin_perm_about" = "Internet access is allowed without requests, sending protected data is blocked. The local network and folders outside the plugin folder require permission.";
-"lng_exd_plugin_desktop" = "Optimized for exDesktop";
+"lng_exd_plugin_desktop" = "Optimized for Tristegram";
 "lng_exd_plugin_ported" = "Ported from Android with AI";
 "lng_exd_badge_unique" = "the only one of its kind";
 "lng_exd_badge_holders#one" = "{count} user has this badge";
@@ -9485,7 +9485,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_jump_streamer_off" = "Disable Streamer Mode";
 "lng_exd_jump_ghost_on" = "Enable Ghost Mode";
 "lng_exd_jump_ghost_off" = "Disable Ghost Mode";
-"lng_exd_plugins_dll_failed" = "Python engine could not be loaded (code {code}). Reinstall exDesktop with the installer or install Microsoft Visual C++ Redistributable 2015-2022 x64.";
+"lng_exd_plugins_dll_failed" = "Python engine could not be loaded (code {code}). Reinstall Tristegram with the installer or install Microsoft Visual C++ Redistributable 2015-2022 x64.";
 "lng_exd_ayu_features_about" = "Ghost mode, saved deleted messages and edit history.";
 "lng_exd_badge_box_number" = "Badge #{number}";
 "lng_exd_badge_box_plain" = "Badge";
@@ -9588,8 +9588,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_donate_card" = "Bank Card (Russia)";
 "lng_exd_beta" = "beta";
 "lng_exd_default_client" = "Default Client for Links";
-"lng_exd_default_client_about" = "tg://, tonsite:// and ton:// links open in exDesktop.";
-"lng_exd_default_client_done" = "exDesktop is set as the default client.";
+"lng_exd_default_client_about" = "tg://, tonsite:// and ton:// links open in Tristegram.";
+"lng_exd_default_client_done" = "Tristegram is set as the default client.";
 "lng_exd_streamer_hotkey_manual" = "Or enter manually, for example Ctrl+PrtSc";
 "lng_exd_ayu_save_bots" = "Save in Bot Chats";
 "lng_exd_deleted_mark" = "Deleted Mark";
@@ -9614,7 +9614,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_premium_gemini_set" = "Set";
 "lng_exd_premium_about" = "Saved Messages tags, folder colors and AI Tools are stored and checked by the server and require a real Premium subscription. Transcription through Telegram without Premium is limited to a few trial attempts.";
 "lng_exd_premium_wizard_text" = "Premium features that work without a subscription.";
-"lng_exd_premium_wizard_about" = "For transcription without a subscription choose Gemini and enter a key from aistudio.google.com. Settings are available in exDesktop settings, Chats section.";
+"lng_exd_premium_wizard_about" = "For transcription without a subscription choose Gemini and enter a key from aistudio.google.com. Settings are available in Tristegram settings, Chats section.";
 "lng_exd_ayu_ghost_mode" = "Ghost mode";
 "lng_exd_ayu_ghost_stories" = "Do not send story views";
 "lng_exd_ayu_ghost_offline" = "Send offline status after any action";
@@ -9708,10 +9708,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_threat_dex" = "Android code";
 "lng_exd_threat_dex_about" = "Contains code that doesn't run on a computer";
 "lng_exd_description_more" = "Show more";
-"lng_exd_badge_trusted" = "{name} is a trusted source of exDesktop plugins.";
+"lng_exd_badge_trusted" = "{name} is a trusted source of Tristegram plugins.";
 "lng_exd_plugins_sdk" = "Plugin SDK";
 "lng_exd_plugins_sdk_version" = "exteraGram SDK";
-"lng_exd_plugins_engine" = "exDesktop plugin engine";
+"lng_exd_plugins_engine" = "Tristegram plugin engine";
 "lng_exd_changelog_title" = "Changelog";
 "lng_exd_changelog_loading" = "Loading...";
 "lng_exd_changelog_failed" = "Could not load the changelog. Check your connection.";
@@ -9722,7 +9722,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_plugin_code_copy" = "Copy";
 "lng_exd_plugin_code_copied" = "Plugin code copied";
 "lng_exd_plugin_danger_title" = "Dangerous Plugin";
-"lng_exd_plugin_danger_text" = "The code of this plugin is encrypted or obfuscated, so its contents cannot be checked. Such a plugin is completely unsafe and cannot be installed. Contact the plugin developer or the exDesktop developers.";
+"lng_exd_plugin_danger_text" = "The code of this plugin is encrypted or obfuscated, so its contents cannot be checked. Such a plugin is completely unsafe and cannot be installed. Contact the plugin developer or the Tristegram developers.";
 "lng_exd_plugin_unknown_blocked" = "This plugin was not found in trusted sources. Installing plugins from unknown sources is turned off in plugin settings.";
 "lng_exd_plugin_checking_source" = "Checking the plugin source";
 "lng_exd_unknown_warning" = "Download plugins only from official sources. Always check the code of a plugin before installing it, for example by sending its file to any AI model for review. If part of the code is encrypted or unreadable, do not use the plugin.\n\nA plugin has full access to your account and device. A malicious plugin can steal your data, sessions and cookies or take over your account.";
@@ -9780,14 +9780,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_notify_sound" = "Notification sound";
 "lng_exd_notify_sound_default" = "Default";
 "lng_exd_notify_sound_reset" = "Restore default sound";
-"lng_exd_notify_about" = "The position applies to exDesktop notifications. The sound file is used for all chats without their own sound.";
-"lng_exd_wizard_welcome" = "Welcome to exDesktop!";
+"lng_exd_notify_about" = "The position applies to Tristegram notifications. The sound file is used for all chats without their own sound.";
+"lng_exd_wizard_welcome" = "Welcome to Tristegram!";
 "lng_exd_wizard_welcome_text" = "Unofficial Telegram client with features from community mobile clients.";
 "lng_exd_wizard_setup" = "Set Up";
 "lng_exd_wizard_icon" = "App Icon";
 "lng_exd_wizard_next" = "Next";
 "lng_exd_wizard_settings" = "Main Settings";
-"lng_exd_wizard_settings_about" = "All options are available in exDesktop settings.";
+"lng_exd_wizard_settings_about" = "All options are available in Tristegram settings.";
 "lng_exd_wizard_finish" = "Finish";
 "lng_exd_cat_appearance_about" = "Icon, chat list, folders, navigation";
 "lng_exd_cat_messages" = "Messages";
@@ -9828,13 +9828,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_support_step2_title" = "Message the Developer";
 "lng_exd_support_step2_text" = "Write to {user} that you supported the development, preferably with a screenshot of the transfer.";
 "lng_exd_support_step3_title" = "Receive the Badge";
-"lng_exd_support_step3_text" = "The badge is issued as soon as possible and appears next to your name for all exDesktop users.";
+"lng_exd_support_step3_text" = "The badge is issued as soon as possible and appears next to your name for all Tristegram users.";
 "lng_exd_support_preview" = "This is how the badge looks.";
-"lng_exd_badge_title" = "exDesktop Badge";
+"lng_exd_badge_title" = "Tristegram Badge";
 "lng_exd_badge_get" = "Get a Badge";
-"lng_exd_badge_text" = "The exDesktop badge is shown next to your name in chats, the chat list and your profile for all exDesktop users. To get a badge, contact the developer.";
+"lng_exd_badge_text" = "The Tristegram badge is shown next to your name in chats, the chat list and your profile for all Tristegram users. To get a badge, contact the developer.";
 "lng_exd_badge_contact" = "Contact Developer";
-"lng_exd_badge_about" = "A personal badge next to your name for all exDesktop users.";
+"lng_exd_badge_about" = "A personal badge next to your name for all Tristegram users.";
 "lng_exd_auto_update" = "Automatic Updates";
 "lng_exd_auto_update_install" = "Download and Install";
 "lng_exd_auto_update_download" = "Download Only";
@@ -9843,7 +9843,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_donate_ton" = "TON";
 "lng_exd_donate_usdt" = "USDT TRC20";
 "lng_exd_donate_copied" = "Address copied to clipboard.";
-"lng_exd_donate_about" = "Donations support the development of exDesktop.";
+"lng_exd_donate_about" = "Donations support the development of Tristegram.";
 "lng_exd_send_from" = "Send from {name}";
 "lng_exd_emoji_favorite" = "Add to Favorites";
 "lng_exd_emoji_unfavorite" = "Remove from Favorites";
@@ -9866,9 +9866,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_name_accent" = "Accent Color for Names";
 "lng_exd_name_accent_about" = "Sender names use the theme accent color instead of profile colors.";
 "lng_exd_schedule_max" = "Schedule for Maximum Date";
-"lng_exd_badge_bughunter" = "{name} is an exDesktop bug hunter.";
-"lng_exd_badge_helper" = "{name} helps the exDesktop project.";
-"lng_exd_badge_donor" = "{name} supports exDesktop financially.";
+"lng_exd_badge_bughunter" = "{name} is an Tristegram bug hunter.";
+"lng_exd_badge_helper" = "{name} helps the Tristegram project.";
+"lng_exd_badge_donor" = "{name} supports Tristegram financially.";
 "lng_extera_quick_actions" = "Quick Actions Bar";
 "lng_extera_quick_actions_about_toggle" = "Icons at the bottom of the message menu replace the selected items.";
 "lng_extera_quick_actions_buttons" = "Quick Actions Buttons";
@@ -9884,9 +9884,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_extera_streamer_capture_black" = "Black Window";
 "lng_extera_streamer_capture_hidden" = "Hidden Window";
 "lng_extera_streamer_capture_about" = "Screenshots, OBS and screen sharing get a black or empty window instead of the client.";
-"lng_extera_update" = "Update exDesktop";
+"lng_extera_update" = "Update Tristegram";
 "lng_extera_streamer_row_about" = "Click the title to choose what to hide. The switch turns the mode on and off.";
-"lng_extera_streamer_preview_bio" = "Bio: exDesktop Developer";
+"lng_extera_streamer_preview_bio" = "Bio: Tristegram Developer";
 "lng_extera_streamer_preview_private" = "Continue with it tomorrow";
 "lng_extera_streamer_preview_channel" = "Work on the release is nearly complete. The latest version is always available on our GitHub!";
 "lng_extera_streamer_private_title" = "Private Chats";
@@ -9947,7 +9947,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_extera_plugins_runtime_python" = "Python 3.11 Runtime";
 "lng_extera_plugins_runtime_running" = "Running";
 "lng_extera_plugins_runtime_stopped" = "Stopped";
-"lng_extera_plugins_runtime_about" = "exteraGram plugins run on the computer through the exDesktop engine, compatible with exteraGram SDK.";
+"lng_extera_plugins_runtime_about" = "exteraGram plugins run on the computer through the Tristegram engine, compatible with exteraGram SDK.";
 "lng_extera_plugins_unknown_allow" = "Allow";
 "lng_extera_plugins_unknown_warning" = "You are agreeing to install plugins from unknown sources. Every plugin has:\n\n**Full access to your account**\nAct on your behalf: read, send and delete messages.\n\n**App files and data**\nRead cached chats, media, settings and authorization data.\n\n**Unrestricted code**\nRun any code and send anything to any server.\n\nA malicious plugin can take over your account.";
 "lng_extera_plugins_shared" = "Plugin file sent";
@@ -10008,7 +10008,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_extera_local_premium_about" = "Premium emoji without Premium, visible to compatible clients.";
 "lng_extera_chat_not_found" = "The chat is not loaded on this device.";
 "lng_extera_unofficial_title" = "Unofficial Client";
-"lng_extera_unofficial_text" = "exDesktop is an unofficial Windows client built from Telegram Desktop sources. It is maintained independently.";
+"lng_extera_unofficial_text" = "Tristegram is an unofficial Windows client built from Telegram Desktop sources. It is maintained independently.";
 "lng_extera_welcome_supported" = "The client is maintained and kept up to date.";
 "lng_extera_welcome_features" = "The client includes a wide range of custom features. More improvements are in progress.";
 "lng_extera_welcome_help" = "The project is looking for developers.";
@@ -10019,13 +10019,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_extera_welcome_channel" = "Channel";
 "lng_extera_badge_extera_developer" = "{name} is a developer of the original mobile client.";
 "lng_extera_badge_extera_resource" = "{name} is an official resource of the original mobile client.";
-"lng_extera_badge_supporter" = "{name} supports the development of exDesktop.";
+"lng_extera_badge_supporter" = "{name} supports the development of Tristegram.";
 "lng_extera_app_icon" = "App Icon";
 "lng_extera_plugins_no_chat" = "The chat for the plugin message is not loaded.";
 "lng_extera_plugins_open_settings" = "Plugin Settings";
 "lng_extera_plugins_delete" = "Delete Plugin";
 "lng_extera_plugins_delete_sure" = "The plugin and its settings will be deleted.";
-"lng_extera_plugins_bad_file" = "The file is not an exDesktop plugin.";
+"lng_extera_plugins_bad_file" = "The file is not an Tristegram plugin.";
 "lng_extera_plugins_install_title" = "Install Plugin";
 "lng_extera_plugins_trusted_source" = "Trusted source";
 "lng_extera_plugins_unknown_source" = "Unknown source";
@@ -10080,6 +10080,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_extera_photos" = "Photos";
 "lng_extera_videos" = "Videos";
 "lng_extera_auto_pause" = "Auto-Pause";
-"lng_extera_auto_pause_about" = "Pauses media playback when exDesktop is minimized.";
+"lng_extera_auto_pause_about" = "Pauses media playback when Tristegram is minimized.";
 
 // Keys finished

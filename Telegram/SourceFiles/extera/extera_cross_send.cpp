@@ -57,7 +57,7 @@ struct State {
 
 [[nodiscard]] QString TempFolder() {
 	const auto result = QDir::tempPath()
-		+ u"/exDesktop/"_q
+		+ u"/Tristegram/"_q
 		+ QUuid::createUuid().toString(QUuid::WithoutBraces);
 	QDir().mkpath(result);
 	return result;
