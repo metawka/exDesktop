@@ -61,10 +61,10 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "Telegram FZ-LLC"
-            VALUE "FileDescription", "exDesktop"
+            VALUE "FileDescription", "Tristegram"
             VALUE "FileVersion", "7.4.3.1"
             VALUE "LegalCopyright", "Copyright (C) 2014-2026"
-            VALUE "ProductName", "exDesktop"
+            VALUE "ProductName", "Tristegram"
             VALUE "ProductVersion", "7.4.3.1"
         END
     END

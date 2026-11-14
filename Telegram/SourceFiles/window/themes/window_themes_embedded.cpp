@@ -324,7 +324,8 @@ style::colorizer ColorizerForTheme(const QString &absolutePath) {
 	if (const auto accent = colors.get(i->type)) {
 		return ColorizerFrom(*i, *accent);
 	}
-	return {};
+	// Tristegram: orange accent until the user picks another one.
+	return ColorizerFrom(*i, style::ColorFromHex("f07a0c"));
 }
 
 void Colorize(EmbeddedScheme &scheme, const style::colorizer &colorizer) {
@@ -407,7 +408,7 @@ std::vector<QColor> DefaultAccentColors(EmbeddedType type) {
 			qColor("45bce7"),
 			qColor("52b440"),
 			qColor("d46c99"),
-			qColor("df8a49"),
+			qColor("f07a0c"),
 			qColor("9978c8"),
 			qColor("c55245"),
 			qColor("687b98"),
@@ -418,7 +419,7 @@ std::vector<QColor> DefaultAccentColors(EmbeddedType type) {
 			qColor("45bce7"),
 			qColor("52b440"),
 			qColor("d46c99"),
-			qColor("df8a49"),
+			qColor("f07a0c"),
 			qColor("9978c8"),
 			qColor("c55245"),
 			qColor("687b98"),
@@ -429,7 +430,7 @@ std::vector<QColor> DefaultAccentColors(EmbeddedType type) {
 			qColor("58bfe8"),
 			qColor("466f42"),
 			qColor("aa6084"),
-			qColor("a46d3c"),
+			qColor("f07a0c"),
 			qColor("917bbd"),
 			qColor("ab5149"),
 			qColor("697b97"),
@@ -440,7 +441,7 @@ std::vector<QColor> DefaultAccentColors(EmbeddedType type) {
 			qColor("60a8e7"),
 			qColor("4e9c57"),
 			qColor("ca7896"),
-			qColor("cc925c"),
+			qColor("f07a0c"),
 			qColor("a58ed2"),
 			qColor("d27570"),
 			qColor("7b8799"),

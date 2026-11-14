@@ -29,4 +29,7 @@ void ApplyQuickActions(not_null<Ui::PopupMenu*> menu);
 [[nodiscard]] QString QuickActionTitle(const QString &id);
 [[nodiscard]] const style::icon *QuickActionIcon(const QString &id);
 
+// Tristegram: remembers when a message arrived on this device (with ms).
+void RememberReceivedTime(not_null<HistoryItem*> item);
+
 } // namespace Extera

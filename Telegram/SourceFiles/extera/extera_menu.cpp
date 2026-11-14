@@ -355,6 +355,21 @@ void QuickRow::paintEvent(QPaintEvent *e) {
 		divider.fg);
 }
 
+[[nodiscard]] base::flat_map<FullMsgId, qint64> &ReceivedTimes() {
+	static auto result = base::flat_map<FullMsgId, qint64>();
+	return result;
+}
+
+[[nodiscard]] QString FormatReceivedTime(qint64 ms) {
+	const auto parsed = QDateTime::fromMSecsSinceEpoch(ms);
+	return tr::lng_mediaview_date_time(
+		tr::now,
+		lt_date,
+		QLocale().toString(parsed.date(), u"dd.MM.yyyy"_q),
+		lt_time,
+		QLocale().toString(parsed.time(), u"HH:mm:ss.zzz"_q));
+}
+
 [[nodiscard]] QString FormatFullDate(TimeId date) {
 	const auto parsed = base::unixtime::parse(date);
 	return tr::lng_mediaview_date_time(
@@ -398,6 +413,16 @@ void FillDetails(
 		&st::menuIconSchedule,
 		tr::lng_extera_details_date(tr::now),
 		FormatFullDate(item->date()));
+	{
+		const auto &received = ReceivedTimes();
+		const auto i = received.find(item->fullId());
+		if (i != received.end()) {
+			add(
+				&st::menuIconSchedule,
+				tr::lng_tristegram_details_received(tr::now),
+				FormatReceivedTime(i->second));
+		}
+	}
 	if (const auto edited = item->Get<HistoryMessageEdited>()) {
 		if (edited->date) {
 			add(
@@ -690,6 +715,14 @@ void ApplyQuickActions(not_null<Ui::PopupMenu*> menu) {
 	} else {
 		menu->addAction(std::move(row));
 	}
+}
+
+void RememberReceivedTime(not_null<HistoryItem*> item) {
+	auto &received = ReceivedTimes();
+	if (received.size() > 20000) {
+		received.clear();
+	}
+	received.emplace(item->fullId(), QDateTime::currentMSecsSinceEpoch());
 }
 
 } // namespace Extera

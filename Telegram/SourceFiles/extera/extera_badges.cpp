@@ -225,7 +225,7 @@ bool ApplyHashes(const QByteArray &bytes) {
 			+ u"?ref=main"_q)
 		: (u"https://raw.githubusercontent.com/metawka/exDesktop/main/"_q
 			+ name)));
-	request.setRawHeader("User-Agent", "exDesktop");
+	request.setRawHeader("User-Agent", "Tristegram");
 	if (fresh) {
 		request.setRawHeader("Accept", "application/vnd.github.raw");
 		request.setRawHeader("Cache-Control", "no-cache");

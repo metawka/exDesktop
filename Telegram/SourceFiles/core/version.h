@@ -20,7 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 // used in Updater.cpp and Setup.iss for Windows
 constexpr auto AppId = "{807217DA-C54D-493B-89AB-4B0315C07B88}"_cs;
 constexpr auto AppNameOld = "Telegram Win (Unofficial)"_cs;
-constexpr auto AppName = "exDesktop"_cs;
+constexpr auto AppName = "Tristegram"_cs;
 constexpr auto AppFile = "Telegram"_cs;
 constexpr auto AppVersion = 7004003;
 constexpr auto AppVersionStr = "7.4.3";

@@ -713,7 +713,7 @@ QString ExecutablePathForShortcuts() {
 
 QString psAppDataPath() {
 	return QStandardPaths::writableLocation(
-		QStandardPaths::GenericDataLocation) + u"/exDesktop/"_q;
+		QStandardPaths::GenericDataLocation) + u"/Tristegram/"_q;
 }
 
 void psDoCleanup() {
