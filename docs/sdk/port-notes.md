@@ -60,7 +60,7 @@
 | Метод | Плагинов | На ПК |
 |---|---|---|
 | `onResume`, `onPause`, `createView` фрагментов | 15, 7, 19 | нет, жизненный цикл экранов Android |
-| `onDraw`, `dispatchDraw`, `onMeasure`, `onLayout` | 7, 4, 5, 4 | нет, отрисовка |
+| `onDraw`, `dispatchDraw`, `onMeasure`, `onLayout` | 7, 4, 5, 4 | да, трансляция геометрии и нативный Canvas |
 | `onActivityResult` | 11 | нет |
 | `MessagesController.processNewMessages` | 6 | да, виртуальный хук с эмуляцией `MessageObject` |
 | `SendMessagesHelper.sendMessage` | 6 | да, виртуальный хук |

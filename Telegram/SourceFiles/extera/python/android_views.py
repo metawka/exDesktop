@@ -247,15 +247,207 @@ class Typeface(metaclass=_compat.LenientMeta):
     SERIF = 4
 
 
-class RectF:
+class Rect:
+    _java_name = "android.graphics.Rect"
+
     def __init__(self, left=0, top=0, right=0, bottom=0):
+        if isinstance(left, (Rect, RectF)):
+            other = left
+            self.left = int(other.left)
+            self.top = int(other.top)
+            self.right = int(other.right)
+            self.bottom = int(other.bottom)
+        else:
+            self.left = int(left)
+            self.top = int(top)
+            self.right = int(right)
+            self.bottom = int(bottom)
+
+    @property
+    def width(self):
+        return max(0, self.right - self.left)
+
+    @property
+    def height(self):
+        return max(0, self.bottom - self.top)
+
+    def set(self, left, top, right, bottom):
+        self.left = int(left)
+        self.top = int(top)
+        self.right = int(right)
+        self.bottom = int(bottom)
+
+    def offset(self, dx, dy):
+        self.left += int(dx)
+        self.top += int(dy)
+        self.right += int(dx)
+        self.bottom += int(dy)
+
+    def contains(self, x, y):
+        return self.left <= x < self.right and self.top <= y < self.bottom
+
+    def isEmpty(self):
+        return self.left >= self.right or self.top >= self.bottom
+
+    def exactCenterX(self):
+        return (self.left + self.right) * 0.5
+
+    def exactCenterY(self):
+        return (self.top + self.bottom) * 0.5
+
+    def __repr__(self):
+        return f"Rect({self.left}, {self.top}, {self.right}, {self.bottom})"
+
+
+class RectF:
+    _java_name = "android.graphics.RectF"
+
+    def __init__(self, left=0, top=0, right=0, bottom=0):
+        if isinstance(left, (Rect, RectF)):
+            other = left
+            self.left = float(other.left)
+            self.top = float(other.top)
+            self.right = float(other.right)
+            self.bottom = float(other.bottom)
+        else:
+            self.left = float(left)
+            self.top = float(top)
+            self.right = float(right)
+            self.bottom = float(bottom)
+
+    @property
+    def width(self):
+        return max(0.0, self.right - self.left)
+
+    @property
+    def height(self):
+        return max(0.0, self.bottom - self.top)
+
+    def set(self, left, top, right, bottom):
         self.left = float(left)
         self.top = float(top)
         self.right = float(right)
         self.bottom = float(bottom)
 
+    def offset(self, dx, dy):
+        self.left += float(dx)
+        self.top += float(dy)
+        self.right += float(dx)
+        self.bottom += float(dy)
+
+    def contains(self, x, y):
+        return self.left <= x < self.right and self.top <= y < self.bottom
+
+    def isEmpty(self):
+        return self.left >= self.right or self.top >= self.bottom
+
+    def round(self, out_rect=None):
+        out = out_rect if out_rect is not None else Rect()
+        out.set(int(round(self.left)), int(round(self.top)),
+                int(round(self.right)), int(round(self.bottom)))
+        return out
+
+    def roundOut(self, out_rect=None):
+        import math
+        out = out_rect if out_rect is not None else Rect()
+        out.set(int(math.floor(self.left)), int(math.floor(self.top)),
+                int(math.ceil(self.right)), int(math.ceil(self.bottom)))
+        return out
+
+    def __repr__(self):
+        return f"RectF({self.left}, {self.top}, {self.right}, {self.bottom})"
+
+
+class MeasureSpec:
+    _java_name = "android.view.View$MeasureSpec"
+
+    UNSPECIFIED = 0 << 30
+    EXACTLY = 1 << 30
+    AT_MOST = 2 << 30
+    MODE_MASK = 0x3 << 30
+    MODE_SHIFT = 30
+
+    @staticmethod
+    def makeMeasureSpec(size, mode):
+        return (int(size) & ~MeasureSpec.MODE_MASK) | (int(mode) & MeasureSpec.MODE_MASK)
+
+    @staticmethod
+    def getMode(spec):
+        return int(spec) & MeasureSpec.MODE_MASK
+
+    @staticmethod
+    def getSize(spec):
+        return int(spec) & ~MeasureSpec.MODE_MASK
+
+    @staticmethod
+    def toString(spec):
+        mode = MeasureSpec.getMode(spec)
+        size = MeasureSpec.getSize(spec)
+        name = "EXACTLY" if mode == MeasureSpec.EXACTLY else "AT_MOST" if mode == MeasureSpec.AT_MOST else "UNSPECIFIED"
+        return f"MeasureSpec: {name} {size}"
+
+
+class GeometryTranslator:
+    """Bridges Android layout/drawing coordinates with Desktop Linux/Windows/macOS."""
+
+    @staticmethod
+    def dp_to_desktop(dp_value, dp_scale=None, scale=None):
+        effective_scale = dp_scale if dp_scale is not None else (scale if scale is not None else density())
+        try:
+            return int(round(float(dp_value) * float(effective_scale)))
+        except Exception:
+            return int(dp_value)
+
+    @staticmethod
+    def desktop_to_dp(px_value, dp_scale=None, scale=None):
+        effective_scale = dp_scale if dp_scale is not None else (scale if scale is not None else density())
+        try:
+            return float(px_value) / (float(effective_scale) if float(effective_scale) > 0 else 1.0)
+        except Exception:
+            return float(px_value)
+
+    @staticmethod
+    def android_to_desktop_bounds(left, top, right, bottom):
+        x = int(left)
+        y = int(top)
+        width = max(0, int(right - left))
+        height = max(0, int(bottom - top))
+        return x, y, width, height
+
+    @staticmethod
+    def desktop_to_android_bounds(x, y, width, height):
+        left = int(x)
+        top = int(y)
+        right = int(x + width)
+        bottom = int(y + height)
+        return left, top, right, bottom
+
+    @staticmethod
+    def make_measure_spec(size, mode=MeasureSpec.EXACTLY):
+        return MeasureSpec.makeMeasureSpec(int(size), mode)
+
+    @staticmethod
+    def get_size(spec):
+        return MeasureSpec.getSize(spec)
+
+    @staticmethod
+    def get_mode(spec):
+        return MeasureSpec.getMode(spec)
+
+    @staticmethod
+    def resolve_size(size, measure_spec):
+        result = int(size)
+        spec_mode = MeasureSpec.getMode(measure_spec)
+        spec_size = MeasureSpec.getSize(measure_spec)
+        if spec_mode == MeasureSpec.EXACTLY:
+            result = spec_size
+        elif spec_mode == MeasureSpec.AT_MOST:
+            result = min(result, spec_size)
+        return result
+
 
 class Paint(metaclass=_compat.LenientMeta):
+    _java_name = "android.graphics.Paint"
     ANTI_ALIAS_FLAG = 1
 
     def __getattr__(self, item):
@@ -280,22 +472,44 @@ class Paint(metaclass=_compat.LenientMeta):
         self.text_size = 16.0
         self.text_align = Paint.Align.LEFT
         self.typeface = Typeface.DEFAULT
+        self.alpha = 255
 
     def setStyle(self, style):
         self.style = style
         return self
 
+    def getStyle(self):
+        return self.style
+
     def setColor(self, color):
         self.color = int(color)
+        self.alpha = (self.color >> 24) & 0xFF
         return self
+
+    def getColor(self):
+        return self.color
+
+    def setAlpha(self, alpha):
+        self.alpha = max(0, min(255, int(alpha)))
+        self.color = (self.color & 0x00FFFFFF) | (self.alpha << 24)
+        return self
+
+    def getAlpha(self):
+        return self.alpha
 
     def setStrokeWidth(self, width):
         self.stroke_width = float(width)
         return self
 
+    def getStrokeWidth(self):
+        return self.stroke_width
+
     def setTextSize(self, size):
         self.text_size = float(size)
         return self
+
+    def getTextSize(self):
+        return self.text_size
 
     def setTextAlign(self, align):
         self.text_align = align
@@ -327,6 +541,8 @@ class Paint(metaclass=_compat.LenientMeta):
 
 
 class Bitmap:
+    _java_name = "android.graphics.Bitmap"
+
     class Config:
         ARGB_8888 = 0
         RGB_565 = 1
@@ -342,6 +558,12 @@ class Bitmap:
     @staticmethod
     def createBitmap(width, height, config=None):
         return Bitmap(width, height, config)
+
+    def getWidth(self):
+        return self.width
+
+    def getHeight(self):
+        return self.height
 
     def _render(self):
         if self._rendered:
@@ -361,8 +583,22 @@ class Bitmap:
 
 
 class Canvas:
-    def __init__(self, bitmap):
+    _java_name = "android.graphics.Canvas"
+
+    def __init__(self, bitmap=None):
+        if bitmap is None:
+            bitmap = Bitmap(1080, 1920)
         self._bitmap = bitmap
+        self._paint = None
+        self._save_count = 1
+
+    @property
+    def _ops(self):
+        return getattr(self._bitmap, "ops", [])
+
+    @property
+    def ops(self):
+        return getattr(self._bitmap, "ops", [])
 
     def _op(self, data):
         data["paint"] = self._paint._data() if getattr(self, "_paint", None) else None
@@ -371,14 +607,84 @@ class Canvas:
     def _draw(self, paint):
         self._paint = paint
 
-    def drawRoundRect(self, rect, rx, ry, paint):
-        self._draw(paint)
-        self._op({"op": "rrect", "rect": [rect.left, rect.top, rect.right, rect.bottom],
-                  "rx": float(rx), "ry": float(ry)})
+    def getWidth(self):
+        return getattr(self._bitmap, "width", 0)
 
-    def drawRect(self, rect, paint):
+    def getHeight(self):
+        return getattr(self._bitmap, "height", 0)
+
+    def save(self):
+        self._save_count += 1
+        self._op({"op": "save"})
+        return self._save_count - 1
+
+    def restore(self):
+        if self._save_count > 1:
+            self._save_count -= 1
+            self._op({"op": "restore"})
+
+    def getSaveCount(self):
+        return self._save_count
+
+    def translate(self, dx, dy):
+        self._op({"op": "translate", "dx": float(dx), "dy": float(dy)})
+
+    def scale(self, sx, sy, px=0.0, py=0.0):
+        if px != 0.0 or py != 0.0:
+            self.translate(px, py)
+            self._op({"op": "scale", "sx": float(sx), "sy": float(sy)})
+            self.translate(-px, -py)
+        else:
+            self._op({"op": "scale", "sx": float(sx), "sy": float(sy)})
+
+    def rotate(self, degrees, px=0.0, py=0.0):
+        if px != 0.0 or py != 0.0:
+            self.translate(px, py)
+            self._op({"op": "rotate", "deg": float(degrees)})
+            self.translate(-px, -py)
+        else:
+            self._op({"op": "rotate", "deg": float(degrees)})
+
+    def clipRect(self, *args):
+        if len(args) == 1 and hasattr(args[0], "left"):
+            rect = args[0]
+            l, t, r, b = rect.left, rect.top, rect.right, rect.bottom
+        elif len(args) >= 4:
+            l, t, r, b = args[:4]
+        else:
+            return
+        self._op({"op": "clip", "rect": [float(l), float(t), float(r), float(b)]})
+
+    def drawColor(self, color):
+        paint = Paint()
+        paint.setColor(color)
+        paint.setStyle(Paint.Style.FILL)
         self._draw(paint)
-        self._op({"op": "rect", "rect": [rect.left, rect.top, rect.right, rect.bottom]})
+        w = float(self.getWidth() or 1080)
+        h = float(self.getHeight() or 1920)
+        self._op({"op": "rect", "rect": [0.0, 0.0, w, h]})
+
+    def drawRoundRect(self, *args):
+        if len(args) == 4:
+            rect, rx, ry, paint = args
+            self._draw(paint)
+            self._op({"op": "rrect", "rect": [float(rect.left), float(rect.top), float(rect.right), float(rect.bottom)],
+                      "rx": float(rx), "ry": float(ry)})
+        elif len(args) >= 7:
+            l, t, r, b, rx, ry, paint = args[:7]
+            self._draw(paint)
+            self._op({"op": "rrect", "rect": [float(l), float(t), float(r), float(b)],
+                      "rx": float(rx), "ry": float(ry)})
+
+    def drawRect(self, *args):
+        if len(args) == 2:
+            rect, paint = args
+            self._draw(paint)
+            self._op({"op": "rect", "rect": [float(rect.left), float(rect.top), float(rect.right), float(rect.bottom)]})
+        elif len(args) >= 5:
+            l, t, r, b, paint = args[:5]
+            self._draw(paint)
+            self._op({"op": "rect", "rect": [float(l), float(t), float(r), float(b)]})
 
     def drawCircle(self, cx, cy, radius, paint):
         self._draw(paint)
@@ -388,9 +694,14 @@ class Canvas:
         self._draw(paint)
         self._op({"op": "line", "from": [float(x1), float(y1)], "to": [float(x2), float(y2)]})
 
-    def drawArc(self, rect, start, sweep, use_center, paint):
+    def drawArc(self, rect_or_coords, start, sweep, use_center, paint):
         self._draw(paint)
-        self._op({"op": "arc", "rect": [rect.left, rect.top, rect.right, rect.bottom],
+        if hasattr(rect_or_coords, "left"):
+            rect = rect_or_coords
+            l, t, r, b = rect.left, rect.top, rect.right, rect.bottom
+        else:
+            l, t, r, b = rect_or_coords
+        self._op({"op": "arc", "rect": [float(l), float(t), float(r), float(b)],
                   "start": float(start), "sweep": float(sweep)})
 
     def drawText(self, text, x, y, paint):
@@ -398,6 +709,8 @@ class Canvas:
         self._op({"op": "text", "text": str(text), "x": float(x), "y": float(y)})
 
     def drawBitmap(self, bitmap, left, top, paint=None):
+        if paint:
+            self._draw(paint)
         bitmap._render()
         self._op({"op": "bitmap", "bitmap": bitmap._id,
                   "x": float(left), "y": float(top)})
@@ -548,9 +861,11 @@ class ViewPropertyAnimator:
 
 
 class View(metaclass=_UiClassMeta):
+    _java_name = "android.view.View"
     VISIBLE = 0
     INVISIBLE = 4
     GONE = 8
+    MeasureSpec = MeasureSpec
 
     def __getattr__(self, item):
         if item.startswith("__") or item.startswith("_"):
@@ -560,6 +875,16 @@ class View(metaclass=_UiClassMeta):
     class OnClickListener:
         def onClick(self, view):
             pass
+
+    @classmethod
+    def getMethod(cls, name="", *args):
+        import exd_java
+        return exd_java.shim_method(cls, name) or exd_java._missing(f"{getattr(cls, '_java_name', cls.__name__)}.{name}")
+
+    @classmethod
+    def getDeclaredMethod(cls, name="", *args):
+        import exd_java
+        return exd_java.shim_method(cls, name) or exd_java._missing(f"{getattr(cls, '_java_name', cls.__name__)}.{name}")
 
     def __init__(self, context=None):
         self._id = _nid()
@@ -575,6 +900,19 @@ class View(metaclass=_UiClassMeta):
         self._click = None
         self._sheet = None
         self._live = False
+
+        # Android & Desktop geometry state
+        self._left = 0
+        self._top = 0
+        self._right = 0
+        self._bottom = 0
+        self._measured_width = 0
+        self._measured_height = 0
+        self._min_width = 0
+        self._min_height = 0
+        self._padding = [0, 0, 0, 0] # left, top, right, bottom
+        self._layout_params = None
+
         self._props = {
             "type": "view",
             "visible": True,
@@ -595,10 +933,178 @@ class View(metaclass=_UiClassMeta):
             _send_update(op)
 
     def _data(self):
-        return dict(self._props)
+        data = dict(self._props)
+        if data.get("type") == "view" and type(self).onDraw is not View.onDraw:
+            canvas = Canvas()
+            try:
+                self.onDraw(canvas)
+            except Exception:
+                pass
+            ops = getattr(canvas, "_ops", None) or (getattr(canvas._bitmap, "ops", []) if hasattr(canvas, "_bitmap") else [])
+            if ops:
+                data["ops"] = ops
+                data["type"] = "canvas_view"
+        return data
+
+    # Geometry getters & setters
+    def getLeft(self):
+        return int(self._left)
+
+    def getTop(self):
+        return int(self._top)
+
+    def getRight(self):
+        return int(self._right)
+
+    def getBottom(self):
+        return int(self._bottom)
+
+    def getWidth(self):
+        return max(0, int(self._right - self._left))
+
+    def getHeight(self):
+        return max(0, int(self._bottom - self._top))
+
+    def getX(self):
+        return float(self.getLeft())
+
+    def getY(self):
+        return float(self.getTop())
+
+    def getMeasuredWidth(self):
+        return int(self._measured_width)
+
+    def getMeasuredHeight(self):
+        return int(self._measured_height)
+
+    def setMeasuredDimension(self, measured_width, measured_height):
+        self._measured_width = max(0, int(measured_width))
+        self._measured_height = max(0, int(measured_height))
+
+    def getSuggestedMinimumWidth(self):
+        return int(self._min_width)
+
+    def getSuggestedMinimumHeight(self):
+        return int(self._min_height)
+
+    def setMinimumWidth(self, min_width):
+        self._min_width = int(min_width)
+
+    def setMinimumHeight(self, min_height):
+        self._min_height = int(min_height)
+
+    def getPaddingLeft(self):
+        return int(self._padding[0])
+
+    def getPaddingTop(self):
+        return int(self._padding[1])
+
+    def getPaddingRight(self):
+        return int(self._padding[2])
+
+    def getPaddingBottom(self):
+        return int(self._padding[3])
+
+    def setPadding(self, left, top, right, bottom):
+        self._padding = [int(left), int(top), int(right), int(bottom)]
+        self._props["padding"] = list(self._padding)
+        self._apply({"op": "padding", "value": self._props["padding"]})
+
+    def getLayoutParams(self):
+        return self._layout_params
+
+    def setLayoutParams(self, params):
+        self._layout_params = params
+        if params is None:
+            return
+        gravity = getattr(params, "gravity", None)
+        self._apply({"op": "params",
+                     "w": int(getattr(params, "width", -2)),
+                     "h": int(getattr(params, "height", -2)),
+                     "gravity": int(gravity) if gravity is not None else None})
+
+    def getLocationOnScreen(self, location):
+        x, y = self.getLeft(), self.getTop()
+        curr = self._parent
+        while curr:
+            x += curr.getLeft()
+            y += curr.getTop()
+            curr = curr._parent
+        location[0] = int(x)
+        location[1] = int(y)
+
+    def getLocationInWindow(self, location):
+        self.getLocationOnScreen(location)
+
+    # Measurement lifecycle (hookable via Xposed)
+    def measure(self, width_measure_spec, height_measure_spec):
+        self.onMeasure(int(width_measure_spec), int(height_measure_spec))
+        if self._measured_width == 0 and self._measured_height == 0:
+            w = GeometryTranslator.resolve_size(self.getSuggestedMinimumWidth(), width_measure_spec)
+            h = GeometryTranslator.resolve_size(self.getSuggestedMinimumHeight(), height_measure_spec)
+            self.setMeasuredDimension(w, h)
+
+    def onMeasure(self, width_measure_spec, height_measure_spec):
+        min_w = max(self.getSuggestedMinimumWidth(), self.getPaddingLeft() + self.getPaddingRight())
+        min_h = max(self.getSuggestedMinimumHeight(), self.getPaddingTop() + self.getPaddingBottom())
+        w = GeometryTranslator.resolve_size(min_w, width_measure_spec)
+        h = GeometryTranslator.resolve_size(min_h, height_measure_spec)
+        self.setMeasuredDimension(w, h)
+
+    # Layout lifecycle (hookable via Xposed)
+    def layout(self, l, t, r, b):
+        l, t, r, b = int(l), int(t), int(r), int(b)
+        changed = (self._left != l or self._top != t or self._right != r or self._bottom != b)
+        self._left = l
+        self._top = t
+        self._right = r
+        self._bottom = b
+        self.onLayout(changed, l, t, r, b)
+        x, y, w, h = GeometryTranslator.android_to_desktop_bounds(l, t, r, b)
+        if self._live:
+            self._apply({"op": "geometry", "x": x, "y": y, "w": w, "h": h})
+
+    def onLayout(self, changed, left, top, right, bottom):
+        pass
+
+    # Drawing lifecycle (hookable via Xposed)
+    def draw(self, canvas):
+        self.onDraw(canvas)
+        if isinstance(self, ViewGroup):
+            self.dispatchDraw(canvas)
+
+    def onDraw(self, canvas):
+        bg = self._props.get("bg")
+        if bg and isinstance(bg, dict):
+            w = self.getWidth() or self.getMeasuredWidth()
+            h = self.getHeight() or self.getMeasuredHeight()
+            color = bg.get("color")
+            if color is not None:
+                paint = Paint()
+                paint.setColor(color)
+                paint.setStyle(Paint.Style.FILL)
+                radius = bg.get("radius", 0)
+                if radius > 0:
+                    canvas.drawRoundRect(0, 0, w, h, radius, radius, paint)
+                else:
+                    canvas.drawRect(0, 0, w, h, paint)
+
+    def dispatchDraw(self, canvas):
+        pass
+
+    def invalidate(self):
+        pass
+
+    def postInvalidate(self):
+        pass
+
+    def requestLayout(self):
+        pass
+
+    def forceLayout(self):
+        pass
 
     def setVisibility(self, visibility):
-        visible = visibility == 0
         self._set_prop("visibility", int(visibility), {"op": "visibility", "value": int(visibility)})
 
     def setAlpha(self, alpha):
@@ -616,15 +1122,6 @@ class View(metaclass=_UiClassMeta):
     def setClipChildren(self, value):
         pass
 
-    def setLayoutParams(self, params):
-        if params is None:
-            return
-        gravity = getattr(params, "gravity", None)
-        self._apply({"op": "params",
-                     "w": int(getattr(params, "width", -2)),
-                     "h": int(getattr(params, "height", -2)),
-                     "gravity": int(gravity) if gravity is not None else None})
-
     def setBackgroundColor(self, color):
         self._props["bg"] = ColorDrawable(color)._data()
         self._apply({"op": "bg", "value": self._props["bg"]})
@@ -637,30 +1134,12 @@ class View(metaclass=_UiClassMeta):
     def setBackgroundDrawable(self, drawable):
         self.setBackground(drawable)
 
-    def setPadding(self, left, top, right, bottom):
-        self._props["padding"] = [int(left), int(top), int(right), int(bottom)]
-        self._apply({"op": "padding", "value": self._props["padding"]})
-
     def setOnClickListener(self, listener):
         self._click = listener
+        self._props["clickable"] = True
 
     def animate(self):
         return ViewPropertyAnimator(self)
-
-    def invalidate(self):
-        pass
-
-    def postInvalidate(self):
-        pass
-
-    def requestLayout(self):
-        pass
-
-    def forceLayout(self):
-        pass
-
-    def measure(self, width_spec, height_spec):
-        pass
 
     def bringToFront(self):
         self._apply({"op": "bring_to_front"})
@@ -695,8 +1174,10 @@ class View(metaclass=_UiClassMeta):
 
 
 class ViewGroup(View):
+    _java_name = "android.view.ViewGroup"
+
     def __init__(self, context=None):
-        View.__init__(self, context)
+        super().__init__(context)
         self._props["type"] = "viewgroup"
 
     def setGravity(self, gravity):
@@ -711,6 +1192,7 @@ class ViewGroup(View):
         if child._parent is not None and child._parent is not self:
             child._parent.removeView(child)
         child._parent = self
+        child._layout_params = params
         entry = {"view": child, "params": params}
         if index is None or index >= len(self._children):
             self._children.append(entry)
@@ -757,8 +1239,150 @@ class ViewGroup(View):
     def getChildCount(self):
         return len(self._children)
 
+    def indexOfChild(self, child):
+        for i, entry in enumerate(self._children):
+            if entry["view"] is child:
+                return i
+        return -1
+
+    # ViewGroup Measurement
+    def measureChild(self, child, parent_width_spec, parent_height_spec):
+        lp = getattr(child, "_layout_params", None)
+        child_w = getattr(lp, "width", LayoutParams.WRAP_CONTENT) if lp else LayoutParams.WRAP_CONTENT
+        child_h = getattr(lp, "height", LayoutParams.WRAP_CONTENT) if lp else LayoutParams.WRAP_CONTENT
+        cw_spec = self.getChildMeasureSpec(parent_width_spec,
+            self.getPaddingLeft() + self.getPaddingRight(), child_w)
+        ch_spec = self.getChildMeasureSpec(parent_height_spec,
+            self.getPaddingTop() + self.getPaddingBottom(), child_h)
+        child.measure(cw_spec, ch_spec)
+
+    def measureChildWithMargins(self, child, parent_width_spec, width_used, parent_height_spec, height_used):
+        lp = getattr(child, "_layout_params", None)
+        margins = getattr(lp, "margins", [0, 0, 0, 0]) or [0, 0, 0, 0]
+        child_w = getattr(lp, "width", LayoutParams.WRAP_CONTENT) if lp else LayoutParams.WRAP_CONTENT
+        child_h = getattr(lp, "height", LayoutParams.WRAP_CONTENT) if lp else LayoutParams.WRAP_CONTENT
+        cw_spec = self.getChildMeasureSpec(parent_width_spec,
+            self.getPaddingLeft() + self.getPaddingRight() + margins[0] + margins[2] + width_used, child_w)
+        ch_spec = self.getChildMeasureSpec(parent_height_spec,
+            self.getPaddingTop() + self.getPaddingBottom() + margins[1] + margins[3] + height_used, child_h)
+        child.measure(cw_spec, ch_spec)
+
+    def measureChildren(self, width_spec, height_spec):
+        for entry in self._children:
+            child = entry["view"] if isinstance(entry, dict) else entry
+            if getattr(child, "_props", {}).get("visibility", 0) != View.GONE:
+                self.measureChild(child, width_spec, height_spec)
+
+    @staticmethod
+    def getChildMeasureSpec(spec, padding, child_dimension):
+        spec_mode = MeasureSpec.getMode(spec)
+        spec_size = MeasureSpec.getSize(spec)
+        size = max(0, spec_size - padding)
+
+        result_size = 0
+        result_mode = 0
+
+        if spec_mode == MeasureSpec.EXACTLY:
+            if child_dimension >= 0:
+                result_size = child_dimension
+                result_mode = MeasureSpec.EXACTLY
+            elif child_dimension == LayoutParams.MATCH_PARENT:
+                result_size = size
+                result_mode = MeasureSpec.EXACTLY
+            elif child_dimension == LayoutParams.WRAP_CONTENT:
+                result_size = size
+                result_mode = MeasureSpec.AT_MOST
+        elif spec_mode == MeasureSpec.AT_MOST:
+            if child_dimension >= 0:
+                result_size = child_dimension
+                result_mode = MeasureSpec.EXACTLY
+            elif child_dimension == LayoutParams.MATCH_PARENT:
+                result_size = size
+                result_mode = MeasureSpec.AT_MOST
+            elif child_dimension == LayoutParams.WRAP_CONTENT:
+                result_size = size
+                result_mode = MeasureSpec.AT_MOST
+        else: # UNSPECIFIED
+            if child_dimension >= 0:
+                result_size = child_dimension
+                result_mode = MeasureSpec.EXACTLY
+            elif child_dimension == LayoutParams.MATCH_PARENT:
+                result_size = 0
+                result_mode = MeasureSpec.UNSPECIFIED
+            elif child_dimension == LayoutParams.WRAP_CONTENT:
+                result_size = 0
+                result_mode = MeasureSpec.UNSPECIFIED
+
+        return MeasureSpec.makeMeasureSpec(result_size, result_mode)
+
+    def onMeasure(self, width_measure_spec, height_measure_spec):
+        max_w = 0
+        max_h = 0
+        for entry in self._children:
+            child = entry["view"] if isinstance(entry, dict) else entry
+            if getattr(child, "_props", {}).get("visibility", 0) != View.GONE:
+                self.measureChildWithMargins(child, width_measure_spec, 0, height_measure_spec, 0)
+                lp = getattr(child, "_layout_params", None)
+                margins = getattr(lp, "margins", [0, 0, 0, 0]) or [0, 0, 0, 0]
+                max_w = max(max_w, child.getMeasuredWidth() + margins[0] + margins[2])
+                max_h = max(max_h, child.getMeasuredHeight() + margins[1] + margins[3])
+
+        total_w = max_w + self.getPaddingLeft() + self.getPaddingRight()
+        total_h = max_h + self.getPaddingTop() + self.getPaddingBottom()
+        w = GeometryTranslator.resolve_size(max(total_w, self.getSuggestedMinimumWidth()), width_measure_spec)
+        h = GeometryTranslator.resolve_size(max(total_h, self.getSuggestedMinimumHeight()), height_measure_spec)
+        self.setMeasuredDimension(w, h)
+
+    def onLayout(self, changed, left, top, right, bottom):
+        parent_left = self.getPaddingLeft()
+        parent_right = max(parent_left, right - left - self.getPaddingRight())
+        parent_top = self.getPaddingTop()
+        parent_bottom = max(parent_top, bottom - top - self.getPaddingBottom())
+
+        for entry in self._children:
+            child = entry["view"] if isinstance(entry, dict) else entry
+            if getattr(child, "_props", {}).get("visibility", 0) == View.GONE:
+                continue
+            width = child.getMeasuredWidth()
+            height = child.getMeasuredHeight()
+            lp = getattr(child, "_layout_params", None)
+            margins = getattr(lp, "margins", [0, 0, 0, 0]) or [0, 0, 0, 0]
+            gravity = getattr(lp, "gravity", Gravity.TOP | Gravity.LEFT) or (Gravity.TOP | Gravity.LEFT)
+
+            h_grav = gravity & (Gravity.CENTER_HORIZONTAL | Gravity.RIGHT | Gravity.LEFT)
+            v_grav = gravity & (Gravity.CENTER_VERTICAL | Gravity.BOTTOM | Gravity.TOP)
+
+            if h_grav == Gravity.CENTER_HORIZONTAL:
+                child_left = parent_left + (parent_right - parent_left - width) // 2 + margins[0] - margins[2]
+            elif h_grav == Gravity.RIGHT:
+                child_left = parent_right - width - margins[2]
+            else:
+                child_left = parent_left + margins[0]
+
+            if v_grav == Gravity.CENTER_VERTICAL:
+                child_top = parent_top + (parent_bottom - parent_top - height) // 2 + margins[1] - margins[3]
+            elif v_grav == Gravity.BOTTOM:
+                child_top = parent_bottom - height - margins[3]
+            else:
+                child_top = parent_top + margins[1]
+
+            child.layout(child_left, child_top, child_left + width, child_top + height)
+
+    def dispatchDraw(self, canvas):
+        for entry in self._children:
+            child = entry["view"] if isinstance(entry, dict) else entry
+            if getattr(child, "_props", {}).get("visibility", 0) != View.GONE:
+                self.drawChild(canvas, child, 0)
+
+    def drawChild(self, canvas, child, drawing_time=0):
+        canvas.save()
+        canvas.translate(child.getLeft(), child.getTop())
+        child.draw(canvas)
+        canvas.restore()
+
 
 class LinearLayout(ViewGroup):
+    _java_name = "android.widget.LinearLayout"
     VERTICAL = 0
     HORIZONTAL = 1
 
@@ -766,26 +1390,84 @@ class LinearLayout(ViewGroup):
         pass
 
     def __init__(self, context=None):
-        ViewGroup.__init__(self, context)
+        super().__init__(context)
         self._props["type"] = "linearlayout"
         self._props["orientation"] = 0
 
     def setOrientation(self, orientation):
         self._set_prop("orientation", int(orientation), {"op": "orientation", "value": int(orientation)})
 
+    def getOrientation(self):
+        return int(self._props.get("orientation", 0))
+
+    def onMeasure(self, width_measure_spec, height_measure_spec):
+        vertical = (self.getOrientation() == 0)
+        total_w = 0
+        total_h = 0
+        for entry in self._children:
+            child = entry["view"] if isinstance(entry, dict) else entry
+            if getattr(child, "_props", {}).get("visibility", 0) == View.GONE:
+                continue
+            self.measureChildWithMargins(child, width_measure_spec, 0, height_measure_spec, 0)
+            lp = getattr(child, "_layout_params", None)
+            margins = getattr(lp, "margins", [0, 0, 0, 0]) or [0, 0, 0, 0]
+            cw = child.getMeasuredWidth() + margins[0] + margins[2]
+            ch = child.getMeasuredHeight() + margins[1] + margins[3]
+            if vertical:
+                total_h += ch
+                total_w = max(total_w, cw)
+            else:
+                total_w += cw
+                total_h = max(total_h, ch)
+
+        total_w += self.getPaddingLeft() + self.getPaddingRight()
+        total_h += self.getPaddingTop() + self.getPaddingBottom()
+        w = GeometryTranslator.resolve_size(max(total_w, self.getSuggestedMinimumWidth()), width_measure_spec)
+        h = GeometryTranslator.resolve_size(max(total_h, self.getSuggestedMinimumHeight()), height_measure_spec)
+        self.setMeasuredDimension(w, h)
+
+    def onLayout(self, changed, left, top, right, bottom):
+        vertical = (self.getOrientation() == 0)
+        curr_x = self.getPaddingLeft()
+        curr_y = self.getPaddingTop()
+
+        for entry in self._children:
+            child = entry["view"] if isinstance(entry, dict) else entry
+            if getattr(child, "_props", {}).get("visibility", 0) == View.GONE:
+                continue
+            width = child.getMeasuredWidth()
+            height = child.getMeasuredHeight()
+            lp = getattr(child, "_layout_params", None)
+            margins = getattr(lp, "margins", [0, 0, 0, 0]) or [0, 0, 0, 0]
+
+            if vertical:
+                child_left = curr_x + margins[0]
+                child_top = curr_y + margins[1]
+                child.layout(child_left, child_top, child_left + width, child_top + height)
+                curr_y += height + margins[1] + margins[3]
+            else:
+                child_left = curr_x + margins[0]
+                child_top = curr_y + margins[1]
+                child.layout(child_left, child_top, child_left + width, child_top + height)
+                curr_x += width + margins[0] + margins[2]
+
 
 class FrameLayout(ViewGroup):
+    _java_name = "android.widget.FrameLayout"
+
     class LayoutParams(LayoutParams):
         pass
 
     def __init__(self, context=None):
-        ViewGroup.__init__(self, context)
+        super().__init__(context)
         self._props["type"] = "framelayout"
 
 
 class ScrollView(ViewGroup):
+    _java_name = "android.widget.ScrollView"
+
     def __init__(self, context=None):
-        ViewGroup.__init__(self, context)
+        super().__init__(context)
         self._props["type"] = "scrollview"
 
     def scrollTo(self, x, y):
@@ -793,8 +1475,10 @@ class ScrollView(ViewGroup):
 
 
 class TextView(View):
+    _java_name = "android.widget.TextView"
+
     def __init__(self, context=None, text=None):
-        View.__init__(self, context)
+        super().__init__(context)
         self._props.update({
             "type": "textview",
             "text": text if text is not None else "",
@@ -858,10 +1542,48 @@ class TextView(View):
     def getText(self):
         return self._props.get("text", "")
 
+    def onMeasure(self, width_measure_spec, height_measure_spec):
+        text = str(self.getText() or "")
+        size_px = self._props.get("size") or int(14 * density())
+        bold = bool(self._props.get("bold", False))
+        native = _native("measure_text")
+        if native is not None:
+            try:
+                tw = int(native(text, int(size_px), bold))
+            except Exception:
+                tw = int(len(text) * size_px * 0.55)
+        else:
+            tw = int(len(text) * size_px * 0.55)
+        th = int(size_px * 1.3)
+        total_w = tw + self.getPaddingLeft() + self.getPaddingRight()
+        total_h = th + self.getPaddingTop() + self.getPaddingBottom()
+        w = GeometryTranslator.resolve_size(max(total_w, self.getSuggestedMinimumWidth()), width_measure_spec)
+        h = GeometryTranslator.resolve_size(max(total_h, self.getSuggestedMinimumHeight()), height_measure_spec)
+        self.setMeasuredDimension(w, h)
+
+    def onDraw(self, canvas):
+        super().onDraw(canvas)
+        text = str(self.getText() or "")
+        if text:
+            paint = Paint()
+            color = self._props.get("color")
+            if color is not None:
+                paint.setColor(color)
+            size = self._props.get("size")
+            if size is not None:
+                paint.setTextSize(size)
+            if self._props.get("bold"):
+                paint.setTypeface(Typeface.DEFAULT_BOLD)
+            x = float(self.getPaddingLeft())
+            y = float(self.getPaddingTop() + (self.getHeight() or int(paint.getTextSize() * 1.2)) * 0.75)
+            canvas.drawText(text, x, y, paint)
+
 
 class EditText(TextView):
+    _java_name = "android.widget.EditText"
+
     def __init__(self, context=None):
-        TextView.__init__(self, context)
+        super().__init__(context)
         self._props["type"] = "edittext"
         self._props["hint"] = ""
         self._watchers = []
@@ -875,15 +1597,215 @@ class EditText(TextView):
 
 
 class ImageView(View):
+    _java_name = "android.widget.ImageView"
+
     def __init__(self, context=None):
-        View.__init__(self, context)
+        super().__init__(context)
         self._props.update({"type": "imageview", "bitmap": None})
+        self._bitmap_obj = None
 
     def setImageBitmap(self, bitmap):
         if bitmap is None:
             return
+        self._bitmap_obj = bitmap
         bitmap._render()
         self._set_prop("bitmap", bitmap._id, {"op": "bitmap", "value": bitmap._id})
+
+    def getImageBitmap(self):
+        return self._bitmap_obj
+
+    def onMeasure(self, width_measure_spec, height_measure_spec):
+        bw = getattr(self._bitmap_obj, "width", 0) if self._bitmap_obj else 0
+        bh = getattr(self._bitmap_obj, "height", 0) if self._bitmap_obj else 0
+        total_w = bw + self.getPaddingLeft() + self.getPaddingRight()
+        total_h = bh + self.getPaddingTop() + self.getPaddingBottom()
+        w = GeometryTranslator.resolve_size(max(total_w, self.getSuggestedMinimumWidth()), width_measure_spec)
+        h = GeometryTranslator.resolve_size(max(total_h, self.getSuggestedMinimumHeight()), height_measure_spec)
+        self.setMeasuredDimension(w, h)
+
+    def onDraw(self, canvas):
+        super().onDraw(canvas)
+        if self._bitmap_obj:
+            canvas.drawBitmap(self._bitmap_obj, float(self.getPaddingLeft()), float(self.getPaddingTop()))
+
+
+class BaseCell(ViewGroup):
+    _java_name = "org.telegram.ui.Cells.BaseCell"
+
+    def __init__(self, context=None):
+        super().__init__(context)
+
+
+class ChatMessageCell(BaseCell):
+    _java_name = "org.telegram.ui.Cells.ChatMessageCell"
+
+    def __init__(self, context=None):
+        super().__init__(context)
+        self.messageObject = None
+        self.pinned = False
+
+    def setMessageObject(self, messageObject, pinned=False):
+        self.messageObject = messageObject
+        self.pinned = pinned
+        self.requestLayout()
+
+    def getMessageObject(self):
+        return self.messageObject
+
+    def onMeasure(self, width_measure_spec, height_measure_spec):
+        text = ""
+        if self.messageObject:
+            text = getattr(self.messageObject, "messageText", "") or getattr(getattr(self.messageObject, "messageOwner", None), "message", "")
+        scale = density()
+        base_w = int(240 * scale)
+        base_h = int(50 * scale)
+        if text:
+            spec_w = GeometryTranslator.get_size(width_measure_spec) or int(400 * scale)
+            base_w = min(int(spec_w * 0.85), int(len(str(text)) * 8 * scale) + int(40 * scale))
+            lines = max(1, len(str(text)) // 35 + 1)
+            base_h = int((24 + lines * 18) * scale)
+        total_w = base_w + self.getPaddingLeft() + self.getPaddingRight()
+        total_h = base_h + self.getPaddingTop() + self.getPaddingBottom()
+        w = GeometryTranslator.resolve_size(max(total_w, self.getSuggestedMinimumWidth()), width_measure_spec)
+        h = GeometryTranslator.resolve_size(max(total_h, self.getSuggestedMinimumHeight()), height_measure_spec)
+        self.setMeasuredDimension(w, h)
+
+    def onLayout(self, changed, left, top, right, bottom):
+        super().onLayout(changed, left, top, right, bottom)
+
+    def onDraw(self, canvas):
+        super().onDraw(canvas)
+        paint = Paint()
+        paint.setColor(0xFF2B5278)
+        paint.setStyle(Paint.Style.FILL)
+        w = float(self.getWidth() or self.getMeasuredWidth() or 200)
+        h = float(self.getHeight() or self.getMeasuredHeight() or 60)
+        scale = density()
+        canvas.drawRoundRect(0.0, 0.0, w, h, float(12 * scale), float(12 * scale), paint)
+        if self.messageObject:
+            text = getattr(self.messageObject, "messageText", "") or getattr(getattr(self.messageObject, "messageOwner", None), "message", "")
+            if text:
+                text_paint = Paint()
+                text_paint.setColor(0xFFFFFFFF)
+                text_paint.setTextSize(float(14 * scale))
+                canvas.drawText(str(text)[:60], float(12 * scale), float(26 * scale), text_paint)
+
+    def dispatchDraw(self, canvas):
+        super().dispatchDraw(canvas)
+
+
+class DialogCell(BaseCell):
+    _java_name = "org.telegram.ui.Cells.DialogCell"
+
+    def buildLayout(self, *args, **kwargs):
+        return None
+
+    def onMeasure(self, width_measure_spec, height_measure_spec):
+        scale = density()
+        spec_w = GeometryTranslator.get_size(width_measure_spec) or int(360 * scale)
+        w = GeometryTranslator.resolve_size(spec_w, width_measure_spec)
+        h = GeometryTranslator.resolve_size(int(72 * scale), height_measure_spec)
+        self.setMeasuredDimension(w, h)
+
+    def onDraw(self, canvas):
+        super().onDraw(canvas)
+
+    def dispatchDraw(self, canvas):
+        super().dispatchDraw(canvas)
+
+
+class TitleCell(BaseCell):
+    _java_name = "org.telegram.ui.Components.FolderBottomSheet$TitleCell"
+
+    def __init__(self, context=None):
+        super().__init__(context)
+        self.selectedCount = 0
+
+    def setSelectedCount(self, count, *args):
+        self.selectedCount = int(count or 0)
+        self.requestLayout()
+
+    def onMeasure(self, width_measure_spec, height_measure_spec):
+        scale = density()
+        w = GeometryTranslator.resolve_size(int(200 * scale), width_measure_spec)
+        h = GeometryTranslator.resolve_size(int(48 * scale), height_measure_spec)
+        self.setMeasuredDimension(w, h)
+
+
+class TextInfoPrivacyCell(BaseCell):
+    _java_name = "org.telegram.ui.Cells.TextInfoPrivacyCell"
+
+    def __init__(self, context=None):
+        super().__init__(context)
+        self._text = ""
+
+    def setText(self, text, *args):
+        self._text = str(text or "")
+        return self
+
+    def getText(self):
+        return self._text
+
+
+class ChatAvatarContainer(FrameLayout):
+    _java_name = "org.telegram.ui.Components.ChatAvatarContainer"
+
+    def getBotVerificationDrawable(self, *args):
+        return None
+
+
+class SwapAnimatedEmojiDrawable:
+    _java_name = "org.telegram.ui.Components.AnimatedEmojiDrawable$SwapAnimatedEmojiDrawable"
+
+    def __init__(self, *args):
+        self.color = 0
+
+    def setColor(self, color, *args):
+        self.color = color
+        return self
+
+
+class AnimatedEmojiDrawable:
+    _java_name = "org.telegram.ui.Components.AnimatedEmojiDrawable"
+    SwapAnimatedEmojiDrawable = SwapAnimatedEmojiDrawable
+
+
+class FolderBottomSheet:
+    _java_name = "org.telegram.ui.Components.FolderBottomSheet"
+    TitleCell = TitleCell
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def dismiss(self, *args):
+        pass
+
+    def updateCount(self, *args):
+        pass
+
+    def onJoinButtonClicked(self, *args):
+        pass
+
+
+class ChatActivityEnterView(FrameLayout):
+    _java_name = "org.telegram.ui.Components.ChatActivityEnterView"
+
+    def __init__(self, context=None):
+        super().__init__(context)
+        self._text = ""
+
+    def onMeasure(self, width_measure_spec, height_measure_spec):
+        scale = density()
+        spec_w = GeometryTranslator.get_size(width_measure_spec) or int(400 * scale)
+        w = GeometryTranslator.resolve_size(spec_w, width_measure_spec)
+        h = GeometryTranslator.resolve_size(int(52 * scale), height_measure_spec)
+        self.setMeasuredDimension(w, h)
+
+    def onDraw(self, canvas):
+        super().onDraw(canvas)
+
+    def dispatchDraw(self, canvas):
+        super().dispatchDraw(canvas)
 
 
 class TextWatcher:

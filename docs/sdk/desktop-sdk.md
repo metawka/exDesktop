@@ -65,9 +65,19 @@ exDesktop запускает плагины exteraGram на компьютере
 
 ## Хуки методов (Xposed)
 
-На Android плагин может перехватить любой Java-метод Telegram (`hook_method`, `hook_all_methods`, `hook_all_constructors`). В exDesktop нет Java-классов Android-клиента, поэтому срабатывают только перехваты из списка ниже и перехваты методов эмулированных классов. Остальные вызовы проходят без ошибки, но перехват не выполняется. Функции, построенные на перехвате интерфейса Android (ячейки сообщений, отрисовка, камера), на ПК недоступны.
+На Android плагин может перехватить любой Java-метод Telegram (`hook_method`, `hook_all_methods`, `hook_all_constructors`). В exDesktop поддерживаются перехваты эмулированных классов, виртуальные системные события, а также хуки отрисовки и геометрии с автоматическим пересчётом координат под ПК (Linux, Windows, macOS).
 
 Методы эмулированных классов (`AlertDialog.Builder`, `BottomSheet`, `AndroidUtilities`, `Browser` и другие из раздела «Эмуляция Java и Android») перехватываются по-настоящему: `before_hooked_method` и `after_hooked_method` получают аргументы и результат, `param.setResult()` заменяет результат и отменяет вызов оригинала, `replace_hooked_method` заменяет метод целиком.
+
+### Хуки геометрии и отрисовки (onDraw, dispatchDraw, onMeasure, onLayout)
+
+Для ячеек и элементов интерфейса (`View`, `ViewGroup`, `ChatMessageCell`, `BaseCell`, `DialogCell`, `FrameLayout`, `LinearLayout`, `TextView`, `ImageView`) реализована полноценная трансляция геометрии:
+
+- **`onMeasure(widthMeasureSpec, heightMeasureSpec)`**: `MeasureSpec` декодирует режимы `EXACTLY`, `AT_MOST`, `UNSPECIFIED` с пересчётом размеров из Android dp в пиксели десктопа через `GeometryTranslator`. Поддерживается вызов `setMeasuredDimension(w, h)` и чтение `getMeasuredWidth()` / `getMeasuredHeight()`.
+- **`onLayout(changed, left, top, right, bottom)`**: Android-прямоугольник `(left, top, right, bottom)` транслируется в десктопные координаты `(x, y, width, height)`. Доступны геттеры `getWidth()`, `getHeight()`, `getX()`, `getY()`.
+- **`onDraw(canvas)`**: `Canvas` эмулирует операции Android Graphics (`drawRect`, `drawRoundRect`, `drawCircle`, `drawLine`, `drawText`, `drawBitmap`, `clipRect`, `save`, `restore`, `translate`, `scale`, `rotate`) и транслирует их в нативный рендерер десктопа (QPainter в C++).
+- **`dispatchDraw(canvas)`**: хуки в `ViewGroup` позволяют отрисовывать пользовательские фоны до вызова потомков (`before_hooked_method`) и оверлеи/бейджи поверх потомков (`after_hooked_method`).
+- Хуки можно ставить как через `self.hook_method(ChatMessageCell, "onDraw", ...)` или имя класса строкой `"org.telegram.ui.Cells.ChatMessageCell"`, так и через стандартный Xposed API: `XposedBridge.hookMethod(cls.getMethod("onDraw"), XC_MethodHook())`.
 
 Исключение составляет `SendMessagesHelper.sendMessage`: такой хук подключается к конвейеру отправки exDesktop. В `before_hooked_method` первый аргумент `param.args[0]` содержит параметры отправки, изменение `message` меняет текст, `param.setResult(None)` отменяет отправку. `replace_hooked_method` тоже отменяет отправку.
 

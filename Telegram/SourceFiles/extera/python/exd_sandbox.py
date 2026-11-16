@@ -113,17 +113,30 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
     # Pathlib
     _pl_classes = (pathlib.PurePath, pathlib.PurePosixPath, pathlib.PureWindowsPath,
                    pathlib.Path, pathlib.PosixPath, pathlib.WindowsPath)
-    _pl_originals = (("__fspath__", pathlib.PurePath.__dict__["__fspath__"]),
-                     ("__str__", pathlib.PurePath.__dict__["__str__"]),
-                     ("_format_parsed_parts", pathlib.PurePath.__dict__["_format_parsed_parts"]))
-    _pl_slot_str = pathlib.PurePath.__dict__["_str"].__get__
-    _pl_slot_drv = pathlib.PurePath.__dict__["_drv"].__get__
-    _pl_slot_root = pathlib.PurePath.__dict__["_root"].__get__
-    _pl_slot_parts = pathlib.PurePath.__dict__["_parts"].__get__
+    _pl_originals = [("__fspath__", pathlib.PurePath.__dict__["__fspath__"]),
+                     ("__str__", pathlib.PurePath.__dict__["__str__"])]
+    if "_format_parsed_parts" in pathlib.PurePath.__dict__:
+        _pl_originals.append(("_format_parsed_parts", pathlib.PurePath.__dict__["_format_parsed_parts"]))
+    _pl_slot_str = pathlib.PurePath.__dict__.get("_str", lambda s: str(s))
+    if hasattr(_pl_slot_str, "__get__"):
+        _pl_slot_str = _pl_slot_str.__get__
+    _pl_slot_drv = pathlib.PurePath.__dict__.get("_drv", lambda s: s.drive)
+    if hasattr(_pl_slot_drv, "__get__"):
+        _pl_slot_drv = _pl_slot_drv.__get__
+    _pl_slot_root = pathlib.PurePath.__dict__.get("_root", lambda s: s.root)
+    if hasattr(_pl_slot_root, "__get__"):
+        _pl_slot_root = _pl_slot_root.__get__
+    _pl_slot_parts = pathlib.PurePath.__dict__.get("_parts") or pathlib.PurePath.__dict__.get("_raw_paths")
+    if _pl_slot_parts and hasattr(_pl_slot_parts, "__get__"):
+        _pl_slot_parts = _pl_slot_parts.__get__
+    else:
+        _pl_slot_parts = lambda s: list(getattr(s, "parts", ()))
     _flavours = []
-    for flavour in (pathlib._windows_flavour, pathlib._posix_flavour):
-        fdict = dict_getter(_type(flavour))
-        _append(_flavours, (flavour, fdict, flavour.sep, fdict(flavour).get("join")))
+    _has_flavour = hasattr(pathlib, "_windows_flavour") and hasattr(pathlib, "_posix_flavour")
+    if _has_flavour:
+        for flavour in (pathlib._windows_flavour, pathlib._posix_flavour):
+            fdict = dict_getter(_type(flavour))
+            _append(_flavours, (flavour, fdict, flavour.sep, fdict(flavour).get("join")))
 
     def lookup(cls, name):
         for klass in _mro(cls):
@@ -143,6 +156,11 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                 known = True
         if not known:
             return None
+        if not _has_flavour:
+            try:
+                return os.fspath(value)
+            except Exception:
+                return None
         for name, original in _pl_originals:
             if lookup(cls, name) is not original:
                 return None

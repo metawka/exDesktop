@@ -209,8 +209,26 @@ def _exd_shim_target(target, method_name=None):
         return target._cls, target._method
     cls = target
     if not isinstance(cls, type):
-        inner = getattr(target, "_class", None)
-        cls = inner if isinstance(inner, type) else None
+        if isinstance(target, str):
+            if "." in target and not method_name:
+                target_cls, _, m_name = target.rpartition(".")
+                cls = exd_java.lookup(target_cls)
+                method_name = m_name
+            else:
+                cls = exd_java.lookup(target)
+        elif callable(target) and hasattr(target, "__qualname__") and not method_name:
+            qual = target.__qualname__
+            if "." in qual:
+                cls_name, _, m_name = qual.rpartition(".")
+                cls = exd_java.lookup(cls_name) or getattr(target, "__self__", None)
+                if not isinstance(cls, type) and cls is not None:
+                    cls = type(cls)
+                method_name = m_name
+        else:
+            inner = getattr(target, "_class", None)
+            cls = inner if isinstance(inner, type) else None
+    if cls is None and isinstance(target, str):
+        cls = exd_java.lookup(target)
     if cls is None or not method_name:
         return None, None
     if exd_java.shim_method(cls, method_name) is None and not exd_java.has_shim_hooks(cls, method_name):
@@ -450,12 +468,16 @@ class _PluginLogger:
 
 class BasePlugin:
     _extera_plugin_id: Optional[str] = None
+    _last_instance = None
     MenuType = MenuItemType
     _extera_send_message_registered = False
 
     id: Optional[str] = None
     enabled: bool = True
     error_message: Optional[str] = None
+
+    def __init__(self):
+        BasePlugin._last_instance = self
 
     def on_plugin_load(self):
         pass
@@ -694,9 +716,10 @@ class BasePlugin:
 
     def hook_method(self, method, handler=None, priority: int = 50, filters=None,
                     before=None, after=None, before_filters=None, after_filters=None):
-        if isinstance(method, str) and isinstance(handler, str):
+        if (isinstance(method, str) or isinstance(method, type)) and isinstance(handler, str):
             real = priority if not isinstance(priority, int) else filters
-            return self.hook_all_methods(method, handler, real, before=before, after=after)
+            res = self.hook_all_methods(method, handler, real, before=before, after=after)
+            return res[0] if res else UnhookId("exd_unsupported", self)
         handler_obj = self._extera_build_method_handler(handler, before=before, after=after)
         virtual = self._exd_virtual_hook(method, None, handler_obj, priority)
         if virtual is not None:
