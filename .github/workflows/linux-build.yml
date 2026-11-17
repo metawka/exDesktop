@@ -91,7 +91,8 @@ jobs:
               -D TDESKTOP_API_ID="$API_ID" \
               -D TDESKTOP_API_HASH="$API_HASH" \
               -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON \
-              -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON'
+              -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON \
+              -D Python3_EXECUTABLE=/usr/bin/python3.11'
           test -f out/Release/Telegram
 
       - name: Python packages
