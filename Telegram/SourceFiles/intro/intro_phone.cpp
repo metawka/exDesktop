@@ -64,6 +64,9 @@ PhoneWidget::PhoneWidget(
 , _checkRequestTimer([=] { checkRequest(); }) {
 	_code->setAccessibleName(tr::lng_country_code(tr::now));
 	_phone->setAccessibleName(tr::lng_phone_number(tr::now));
+	ExdSetupFieldCard(_country.data());
+	ExdSetupFieldCard(_code.data());
+	ExdSetupFieldCard(_phone.data());
 	_phone->frontBackspaceEvent(
 	) | rpl::on_next([=](not_null<QKeyEvent*> e) {
 		_code->startErasing(e);

@@ -136,16 +136,33 @@ class SimpleSettingFactory:
     def getInstance(cls):
         return _FactoryPeer(None)
 
-    def __getattr__(self, item):
-        return lambda *args, **kwargs: None
+    def release(self):
+        for name in ("create_view", "bind_view", "create_item", "on_click", "on_long_click",
+                     "attached_view", "equals", "content_equals"):
+            setattr(self, name, None)
+        self._released = True
 
-    def __call__(self, *factory_args, link_alias: Optional[str] = None) -> Custom:
-        return Custom(factory=self,
-                      factory_args=factory_args or None,
-                      link_alias=link_alias)
+    def __call__(self, *factory_args, create_sub_fragment=None, link_alias: Optional[str] = None) -> Custom:
+        if getattr(self, "_released", False):
+            raise RuntimeError("SimpleSettingFactory has been released")
+        item = Custom(factory=self, factory_args=factory_args or None, link_alias=link_alias)
+        if create_sub_fragment is not None:
+            item.create_sub_fragment = create_sub_fragment
+        return item
 
 
 PluginItemFactory = SimpleSettingFactory
+
+pyobject_type = object
+object_array_type = list
+
+
+def typehelper(value):
+    return value
+
+
+def pyobject_call_method(obj, name, *args):
+    return getattr(obj, name)(*args)
 
 
 def register_items(plugin_id, items):
@@ -159,10 +176,57 @@ def find_item(plugin_id, index):
     return None
 
 
+_UITEM_KINDS = {
+    "header": "header", "shadow": "divider", "largeshadow": "divider", "space": "divider",
+    "switch": "switch", "check": "switch", "buttoncheck": "switch", "roundcheckbox": "switch",
+    "exteraexpandableswitch": "switch", "radio": "switch", "radiobutton": "switch",
+}
+
+
+def uitem_text(uitem):
+    for key in ("text", "title"):
+        value = getattr(uitem, "__dict__", {}).get(key)
+        if isinstance(value, str) and value:
+            return value
+    args = [a for a in getattr(uitem, "args", ()) if isinstance(a, str)]
+    return args[0] if args else ""
+
+
+def uitem_subtext(uitem):
+    value = getattr(uitem, "__dict__", {}).get("subtext")
+    if isinstance(value, str):
+        return value
+    args = [a for a in getattr(uitem, "args", ()) if isinstance(a, str)]
+    return args[1] if len(args) > 1 else None
+
+
+def _describe_custom(item, index):
+    uitem = getattr(item, "item", None)
+    if uitem is None or not hasattr(uitem, "viewType"):
+        return None
+    kind = _UITEM_KINDS.get(str(uitem.viewType).lower(), "text")
+    data = {"index": index, "kind": kind}
+    text = uitem_text(uitem)
+    if kind == "divider":
+        if text:
+            data["text"] = text
+        return data
+    data["text"] = text
+    subtext = uitem_subtext(uitem)
+    if subtext and kind != "header":
+        data["subtext"] = subtext
+    if kind == "switch":
+        data["default"] = bool(getattr(uitem, "checked", False))
+        data["value"] = data["default"]
+    if getattr(uitem, "__dict__", {}).get("red"):
+        data["red"] = True
+    return data
+
+
 def describe(item, index):
     kind = type(item).__name__.lower()
     if kind == "custom":
-        return None
+        return _describe_custom(item, index)
     data = {"index": index, "kind": kind}
     for key in ("text", "subtext", "key", "default", "items", "hint",
                 "multiline", "max_length", "mask", "accent", "red", "icon",

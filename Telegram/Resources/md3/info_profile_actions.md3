@@ -1,0 +1,5 @@
+group material;
+infoHoursOuter: RoundButton(infoHoursOuter) {
+	fullRadius: false;
+	radius: 12px;
+}

@@ -38,6 +38,8 @@ PasswordCheckWidget::PasswordCheckWidget(
 , _toRecover(this, tr::lng_signin_recover(tr::now))
 , _toPassword(this, tr::lng_signin_try_password(tr::now)) {
 	Expects(_passwordState.hasPassword);
+	ExdSetupFieldCard(_pwdField.data());
+	ExdSetupFieldCard(_codeField.data());
 
 	Lang::Updated(
 	) | rpl::on_next([=] {

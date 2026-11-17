@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/peer_list_box.h"
+#include "ui/widgets/buttons.h"
 
 #include "boxes/peer_list_section_headers.h"
 #include "boxes/peer_list_section_index.h"
@@ -1692,6 +1693,12 @@ void PeerListContent::paintEvent(QPaintEvent *e) {
 	Painter p(this);
 
 	const auto clip = e->rect();
+	if (style::Md3Grouped()
+		&& property("md3GroupedRow").toBool()
+		&& _controller->computeListSt().bg->c.alpha() == 0) {
+		p.fillRect(clip, st::windowBg);
+		Ui::PaintGroupedRow(p, this, st::windowBg->c, false);
+	}
 	const auto repaintByStatusAfter = _repaintByStatus.remainingTime();
 	auto repaintAfterMin = repaintByStatusAfter;
 
@@ -2148,7 +2155,8 @@ crl::time PeerListContent::paintRow(
 		&& !activeElement
 		&& !row->elementsAnimating()
 		&& width() > 0
-		&& row->opacity() == 1.) {
+		&& row->opacity() == 1.
+		&& st.button.textBg->c.alpha() == 255) {
 		const auto ratio = style::DevicePixelRatio();
 		_rowsScrollCache.paintRow(
 			p,

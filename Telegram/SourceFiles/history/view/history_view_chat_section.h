@@ -289,6 +289,12 @@ private:
 	void showAnimatedHook(
 		const Window::SectionSlideParams &params) override;
 	void showFinishedHook() override;
+	[[nodiscard]] bool exdWaitsBeforeShow() const override {
+		return true;
+	}
+	[[nodiscard]] bool exdContentLoaded() const override;
+	[[nodiscard]] bool exdShowReady() const override;
+	void exdBeforeShowGrab() override;
 	void checkActivation() override;
 	void doSetInnerFocus() override;
 

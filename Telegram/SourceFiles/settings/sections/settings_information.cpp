@@ -686,6 +686,7 @@ void SetupBio(
 			tr::lng_bio_placeholder(),
 			*current),
 		st::settingsBioMargins);
+	Ui::SetupGroupedRowBackground(bio, st::settingsBioMargins);
 	if (targets) {
 		targets->bio = bio;
 	}
@@ -1021,6 +1022,7 @@ not_null<Ui::SlideWrap<Ui::SettingsButton>*> AccountsList::setupAdd() {
 					IconType::Round,
 					&st::windowBgActive
 				})))->setDuration(0);
+	Ui::SetupGroupedRowBackground(result, style::margins());
 	const auto button = result->entity();
 
 	using Environment = MTP::Environment;

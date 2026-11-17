@@ -1,45 +1,15 @@
-from typing import Any, List
+from dataclasses import dataclass
+from typing import Any, Tuple
 
-from text_formatting import RawEntity, entity_to_dict, parse_raw
+from text_formatting import RawEntity, TLEntityType, entity_to_dict, parse_raw
 
-
-class MarkdownEntity:
-    __slots__ = ("offset", "length", "type", "url", "language",
-                 "document_id", "collapsed", "_raw")
-
-    def __init__(self, raw: RawEntity):
-        self._raw = raw
-        self.offset = raw.offset
-        self.length = raw.length
-        self.type = raw.type
-        self.url = raw.url
-        self.language = raw.language
-        self.document_id = raw.document_id
-        self.collapsed = raw.collapsed
-
-    def to_tlrpc_object(self) -> Any:
-        raw = RawEntity(
-            offset=int(self.offset),
-            length=int(self.length),
-            type=self.type,
-            url=self.url,
-            language=self.language,
-            document_id=self.document_id,
-            collapsed=bool(self.collapsed),
-        )
-        return entity_to_dict(raw)
-
-    def __repr__(self) -> str:
-        return (f"MarkdownEntity({self.type}, offset={self.offset}, "
-                f"length={self.length})")
+__all__ = ["parse_markdown"]
 
 
-class ParsedText:
-    __slots__ = ("text", "entities")
-
-    def __init__(self, text: str, entities: List[MarkdownEntity]):
-        self.text = text
-        self.entities = entities
+@dataclass
+class ParsedMessage:
+    text: str
+    entities: Tuple[RawEntity, ...]
 
     def __iter__(self):
         return iter((self.text, self.entities))
@@ -50,18 +20,22 @@ class ParsedText:
     def __str__(self) -> str:
         return self.text
 
-    def __repr__(self) -> str:
-        return f"ParsedText({self.text!r}, {len(self.entities)} entities)"
+    def to_dict(self):
+        return {"message": self.text, "entities": [entity_to_dict(e) for e in self.entities]}
 
 
-def _parse(text: Any, parse_mode: str) -> ParsedText:
+MarkdownEntity = RawEntity
+ParsedText = ParsedMessage
+
+
+def _parse(text: Any, parse_mode: str) -> ParsedMessage:
     plain, raw_entities = parse_raw("" if text is None else str(text), parse_mode)
-    return ParsedText(plain, [MarkdownEntity(raw) for raw in raw_entities])
+    return ParsedMessage(plain, tuple(raw_entities))
 
 
-def parse_markdown(text: Any) -> ParsedText:
-    return _parse(text, "Markdown")
+def parse_markdown(markdown: Any) -> ParsedMessage:
+    return _parse(markdown, "Markdown")
 
 
-def parse_html(text: Any) -> ParsedText:
+def parse_html(text: Any) -> ParsedMessage:
     return _parse(text, "HTML")

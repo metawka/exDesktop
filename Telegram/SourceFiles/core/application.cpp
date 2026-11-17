@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/application.h"
+
 #include "data/data_forum_topic.h"
 #include "ui/emoji_config.h"
 #include "extera/extera_update.h"
@@ -17,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/checkbox.h"
 
 #include "extera/extera_config.h"
+#include "extera/exd_md3.h"
 #include "extera/extera_welcome.h"
 #include "extera/extera_badges.h"
 #include "extera/extera_plugins.h"
@@ -581,6 +583,7 @@ void Application::run() {
 	_translator = std::make_unique<Lang::Translator>();
 	QCoreApplication::instance()->installTranslator(_translator.get());
 
+	Extera::Md3::ApplyBeforeStyles();
 	style::StartManager(cScale());
 	Ui::Accessible::Init();
 	Ui::InitTextOptions();

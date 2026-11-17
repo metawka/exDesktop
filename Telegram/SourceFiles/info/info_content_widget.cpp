@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/info_content_widget.h"
+#include "extera/exd_md3.h"
 
 #include "api/api_who_reacted.h"
 #include "boxes/peer_list_box.h"
@@ -356,7 +357,9 @@ rpl::producer<bool> ContentWidget::desiredShadowVisibility() const {
 	return rpl::combine(
 		_scroll->scrollTopValue(),
 		_scrollTopSkip.value()
-	) | rpl::map((_1 > 0) || (_2 > 0));
+	) | rpl::map([](int top, int skip) {
+		return (top > 0) || (skip > 0 && !Extera::Md3::Enabled());
+	});
 }
 
 bool ContentWidget::hasTopBarShadow() const {

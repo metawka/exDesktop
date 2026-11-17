@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "extera/extera_config.h"
 #include "extera/extera_streamer.h"
+#include "extera/extera_plugins.h"
 
 #include "api/api_blocked_peers.h"
 #include "api/api_chat_participants.h"
@@ -85,6 +86,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/controls/userpic_button.h"
 #include "ui/effects/credits_graphics.h"
 #include "ui/effects/toggle_arrow.h"
+#include "ui/style/style_core.h"
 #include "ui/painter.h"
 #include "ui/rect.h"
 #include "ui/ui_utility.h"
@@ -552,6 +554,7 @@ void SetupAboutPeerIdDrag(
 			rpl::single(QString()),
 			st::infoHoursOuter),
 		st::infoProfileLabeledPadding - st::infoHoursOuterMargin);
+	Ui::SetupGroupedRowBackground(result.data());
 	const auto button = result->entity();
 	button->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
 	const auto inner = Ui::CreateChild<Ui::VerticalLayout>(button);
@@ -794,6 +797,16 @@ void SetupAboutPeerIdDrag(
 		state->myTimezone = !state->myTimezone.current();
 		state->expanded = true;
 	});
+	rpl::combine(
+		state->nonTrivial.value(),
+		state->hours.value(),
+		state->mine.value()
+	) | rpl::on_next([=](
+			bool complex,
+			const WorkingHours &hours,
+			const WorkingIntervals &mine) {
+		link->setVisible(complex && hours.intervals != mine);
+	}, link->lifetime());
 
 	rpl::combine(
 		labelWrap->widthValue(),
@@ -1041,6 +1054,7 @@ void DeleteContactNote(
 			st::infoHoursOuter),
 		st::infoProfileLabeledPadding - st::infoHoursOuterMargin);
 	result->setDuration(st::infoSlideDuration);
+	Ui::SetupGroupedRowBackground(result.data());
 	const auto button = result->entity();
 	button->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
 
@@ -1653,6 +1667,31 @@ Section DetailsFiller::makeInfo() {
 		});
 	};
 
+	auto exdRows = QJsonArray();
+	if (!_topic && Extera::Plugins::Started()) {
+		const auto user = _peer->asUser();
+		const auto phone = user ? user->phone() : QString();
+		const auto username = _peer->username();
+		exdRows = Extera::Plugins::ProfileRows(
+			Extera::Plugins::DialogId(_peer),
+			phone.isEmpty() ? QString() : (u"+"_q + phone),
+			username.isEmpty() ? QString() : (u"@"_q + username),
+			_peer->about());
+	}
+	const auto exdText = [=](
+			const QString &kind,
+			rpl::producer<TextWithEntities> &&text)
+	-> rpl::producer<TextWithEntities> {
+		for (const auto &value : exdRows) {
+			const auto row = value.toObject();
+			if (row.value(u"kind"_q).toString() == kind) {
+				return rpl::single(
+					TextWithEntities{ row.value(u"text"_q).toString() });
+			}
+		}
+		return std::move(text);
+	};
+
 	const auto addInfoLineGeneric = [&](
 			v::text::data &&label,
 			rpl::producer<TextWithEntities> &&text,
@@ -1799,7 +1838,9 @@ Section DetailsFiller::makeInfo() {
 
 		const auto phoneLine = addInfoOneLine(
 			tr::lng_info_mobile_label(),
-			PhoneWithSpoilerValue(user, PhoneOrHiddenValue(user)),
+			exdText(
+				u"phone"_q,
+				PhoneWithSpoilerValue(user, PhoneOrHiddenValue(user))),
 			tr::lng_profile_copy_phone(tr::now),
 			st::infoProfileLabeledPadding,
 			st::popupMenuWithIcons);
@@ -1827,9 +1868,11 @@ Section DetailsFiller::makeInfo() {
 			: tr::lng_info_bio_label();
 		const auto about = addInfoLine(
 			std::move(label),
-			(user->isSelf() && Extera::Streamer::HideProfile())
-				? rpl::single(TextWithEntities()) | rpl::type_erased
-				: AboutWithAdvancedValue(user));
+			exdText(
+				u"bio"_q,
+				(user->isSelf() && Extera::Streamer::HideProfile())
+					? rpl::single(TextWithEntities()) | rpl::type_erased
+					: AboutWithAdvancedValue(user)));
 		setupAboutContextMenu(about.text, AboutWithAdvancedValue(user));
 		SetupAboutPeerIdDrag(about.text, user);
 
@@ -1840,11 +1883,12 @@ Section DetailsFiller::makeInfo() {
 				? (tr::lng_info_username_label(tr::marked)
 					| rpl::type_erased)
 				: UsernamesSubtext(_peer, tr::lng_info_username_label()),
-			UsernameValue(user, true) | rpl::map([=](TextWithEntities u) {
+			exdText(u"username"_q, UsernameValue(user, true) | rpl::map([=](
+					TextWithEntities u) {
 				return u.text.isEmpty()
 					? TextWithEntities()
 					: tr::link(u, UsernameUrl(user, u.text.mid(1)));
-			}),
+			})),
 			QString(),
 			st::infoProfileLabeledUsernamePadding);
 		const auto callback = UsernamesLinkCallback(
@@ -2016,7 +2060,7 @@ Section DetailsFiller::makeInfo() {
 
 		const auto about = addInfoLine(tr::lng_info_about_label(), _topic
 			? rpl::single(TextWithEntities())
-			: AboutWithAdvancedValue(_peer));
+			: exdText(u"bio"_q, AboutWithAdvancedValue(_peer)));
 		if (!_topic) {
 			setupAboutContextMenu(about.text, AboutWithAdvancedValue(_peer));
 			SetupAboutPeerIdDrag(about.text, _peer);
@@ -2056,6 +2100,17 @@ Section DetailsFiller::makeInfo() {
 			});
 		}
 	}
+	for (const auto &value : exdRows) {
+		const auto row = value.toObject();
+		if (row.value(u"kind"_q).toString() != u"add"_q) {
+			continue;
+		}
+		const auto text = row.value(u"text"_q).toString();
+		addInfoOneLine(
+			rpl::single(row.value(u"value"_q).toString()),
+			rpl::single(TextWithEntities{ text }),
+			text);
+	}
 	raw->toggleOn(tracker.atLeastOneShownValue());
 	raw->finishAnimating();
 
@@ -2070,13 +2125,23 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 	auto result = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		parent,
 		object_ptr<Ui::VerticalLayout>(parent));
+	Ui::SetupGroupedRowBackground(result.data());
 	const auto container = result->entity();
 	const auto window = _controller->parentController();
 	const auto duration = st::slideWrapDuration;
 
-	result->toggleOn(PersonalChannelValue(
-		user
-	) | rpl::map(rpl::mappers::_1 != nullptr));
+	const auto exdHasMessage = result->lifetime().make_state<
+		rpl::variable<bool>>(false);
+	const auto exdMissing = result->lifetime().make_state<
+		rpl::variable<bool>>(false);
+	result->toggleOn(rpl::combine(
+		PersonalChannelValue(user),
+		exdHasMessage->value(),
+		exdMissing->value()
+	) | rpl::map([=](ChannelData *channel, bool hasMessage, bool missing) {
+		return channel
+			&& (!user->personalChannelMessageId() || hasMessage || missing);
+	}));
 	result->finishAnimating();
 
 	auto channel = PersonalChannelValue(
@@ -2132,9 +2197,14 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 			object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 				container,
 				object_ptr<Ui::VerticalLayout>(container)));
-		onlyChannelWrap->toggleOn(rpl::duplicate(channel) | rpl::map([=] {
+		onlyChannelWrap->toggleOn(rpl::combine(
+			rpl::duplicate(channel),
+			exdHasMessage->value(),
+			exdMissing->value()
+		) | rpl::map([=](ChannelData*, bool hasMessage, bool missing) {
 			return user->personalChannelId()
-				&& !user->personalChannelMessageId();
+				&& !hasMessage
+				&& (!user->personalChannelMessageId() || missing);
 		}));
 		onlyChannelWrap->finishAnimating();
 
@@ -2146,7 +2216,7 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 			return name.isEmpty() ? TextWithEntities() : tr::link(name);
 		});
 		auto line = CreateTextWithLabel(
-			result,
+			onlyChannelWrap->entity(),
 			channelLabelFactory(rpl::duplicate(channel)),
 			std::move(text),
 			st::infoLabel,
@@ -2175,9 +2245,11 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 				container,
 				object_ptr<Ui::VerticalLayout>(container)));
 		messageChannelWrap->setDuration(duration);
-		messageChannelWrap->toggleOn(rpl::duplicate(channel) | rpl::map([=] {
-			return user->personalChannelId()
-				&& user->personalChannelMessageId();
+		messageChannelWrap->toggleOn(rpl::combine(
+			rpl::duplicate(channel),
+			exdHasMessage->value()
+		) | rpl::map([=](ChannelData*, bool hasMessage) {
+			return user->personalChannelId() && hasMessage;
 		}));
 		messageChannelWrap->finishAnimating();
 		messageChannelWrap->toggledValue(
@@ -2186,6 +2258,8 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 		}, messageChannelWrap->lifetime());
 
 		const auto clear = [=] {
+			*exdHasMessage = false;
+			*exdMissing = false;
 			while (messageChannelWrap->entity()->count()) {
 				delete messageChannelWrap->entity()->widgetAt(0);
 			}
@@ -2372,6 +2446,7 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 
 			Ui::ToggleChildrenVisibility(messageChannelWrap->entity(), true);
 			Ui::ToggleChildrenVisibility(line, true);
+			*exdHasMessage = true;
 			messageChannelWrap->toggle(true, animated);
 		};
 
@@ -2383,7 +2458,7 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 			} else {
 				clear();
 			}
-			if (!channel) {
+			if (!channel || !user->personalChannelMessageId()) {
 				return;
 			}
 			const auto id = FullMsgId(
@@ -2392,17 +2467,38 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 			if (const auto item = user->session().data().message(id)) {
 				return rebuild(item, anim::type::instant);
 			}
+			{
+				const auto &stUserpic = st::infoPersonalChannelUserpic;
+				const auto &stLabeled = st::infoProfilePersonalChannelPadding;
+				const auto &font = st::infoLabel.style.font;
+				const auto lineHeight = st::infoLabel.style.lineHeight
+					? st::infoLabel.style.lineHeight
+					: font->height;
+				messageChannelWrap->entity()->add(
+					object_ptr<Ui::FixedHeightWidget>(
+						messageChannelWrap->entity(),
+						stUserpic.photoSize
+							+ rect::m::sum::v(stLabeled)
+							+ lineHeight
+							+ stLabeled.bottom()));
+				*exdHasMessage = true;
+				messageChannelWrap->toggle(true, anim::type::instant);
+			}
 			user->session().api().requestMessageData(
 				channel,
 				user->personalChannelMessageId(),
 				crl::guard(container, [=] {
 					if (const auto i = user->session().data().message(id)) {
-						rebuild(i, anim::type::normal);
+						rebuild(i, anim::type::instant);
+					} else {
+						*exdMissing = true;
 					}
 				}));
 		}, messageChannelWrap->lifetime());
+		messageChannelWrap->finishAnimating();
 	}
 
+	result->finishAnimating();
 	const auto raw = result.data();
 	return Section{
 		.widget = std::move(result),
@@ -2970,6 +3066,9 @@ void DetailsFiller::buildSections() {
 	} else if (const auto channel = _peer->asChannel()) {
 		addBotVerify();
 		if (!channel->isMegagroup()) {
+			if (style::Md3Grouped()) {
+				_stack->addPlainSeparator();
+			}
 			_stack->add(makeViewChannel(channel));
 		}
 		if (const auto forum = channel->forum()) {
@@ -3495,6 +3594,7 @@ object_ptr<Ui::RpWidget> SetupChannelMembersAndManage(
 	)->toggleOn(rpl::duplicate(membersShown));
 
 	const auto members = membersWrap->entity();
+	auto membersButton = (Ui::SettingsButton*)nullptr;
 	{
 		auto button = AddActionButton(
 			members,
@@ -3502,6 +3602,7 @@ object_ptr<Ui::RpWidget> SetupChannelMembersAndManage(
 			rpl::single(true),
 			std::move(membersCallback),
 			nullptr)->entity();
+		membersButton = button;
 
 		SetupAddChannelMember(controller, button, channel);
 	}
@@ -3538,12 +3639,19 @@ object_ptr<Ui::RpWidget> SetupChannelMembersAndManage(
 	)->toggleOn(rpl::duplicate(adminsShown));
 
 	const auto admins = adminsWrap->entity();
-	AddActionButton(
+	const auto adminsButton = AddActionButton(
 		admins,
 		std::move(adminsText),
 		rpl::single(true),
 		std::move(adminsCallback),
-		nullptr);
+		nullptr)->entity();
+	rpl::merge(
+		membersWrap->heightValue() | rpl::to_empty,
+		adminsWrap->heightValue() | rpl::to_empty
+	) | rpl::on_next([=] {
+		membersButton->update();
+		adminsButton->update();
+	}, adminsButton->lifetime());
 
 	object_ptr<FloatingIcon>(
 		admins,

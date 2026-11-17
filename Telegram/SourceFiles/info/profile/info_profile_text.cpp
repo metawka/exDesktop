@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <rpl/before_next.h>
 #include <rpl/filter.h>
 #include <rpl/after_next.h>
+#include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
@@ -65,6 +66,7 @@ TextWithLabel CreateTextWithLabel(
 		}),
 		labelSt));
 	result->finishAnimating();
+	Ui::SetupGroupedRowBackground(result.data());
 	return { std::move(result), labeled, subtext };
 }
 

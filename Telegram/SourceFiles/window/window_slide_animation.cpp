@@ -111,6 +111,33 @@ void SlideAnimation::paintContents(QPainter &p) const {
 			QRect(QPoint(0, height - offset), _cacheOver.size() / retina),
 			_cacheOver,
 			QRect(QPoint(), _cacheOver.size()));
+	} else if (anim::Expressive()) {
+		const auto shift = st::exdSlideAxisShift;
+		const auto size = _cacheOver.size() / retina;
+		p.fillRect(
+			QRect(0, _topSkip, size.width(), size.height() - _topSkip),
+			_topSkip ? st::boxBg : st::windowBg);
+		const auto out = std::clamp(progress / 0.35, 0., 1.);
+		const auto in = std::clamp((progress - 0.2) / 0.8, 0., 1.);
+		if (out < 1.) {
+			p.setOpacity(1. - out);
+			p.drawPixmap(
+				QRect(
+					QPoint(anim::interpolate(0, -shift, progress), 0),
+					_cacheUnder.size() / retina),
+				_cacheUnder,
+				QRect(QPoint(), _cacheUnder.size()));
+		}
+		if (in > 0.) {
+			p.setOpacity(in);
+			p.drawPixmap(
+				QRect(
+					QPoint(anim::interpolate(shift, 0, progress), 0),
+					size),
+				_cacheOver,
+				QRect(QPoint(), _cacheOver.size()));
+		}
+		p.setOpacity(1.);
 	} else {
 		const auto coordUnder = anim::interpolate(
 			0,
@@ -203,9 +230,16 @@ void SlideAnimation::start() {
 		std::swap(_cacheUnder, _cacheOver);
 	}
 	const auto fromBottom = (_direction == SlideDirection::FromBottom);
-	const auto curve = fromBottom ? anim::easeOutQuint : transition();
+	const auto expressive = anim::Expressive() && !fromBottom;
+	const auto curve = fromBottom
+		? anim::easeOutQuint
+		: expressive
+		? anim::exdEmphasized
+		: transition();
 	const auto duration = fromBottom
 		? (st::slideDuration * 2)
+		: expressive
+		? ((_duration ? _duration : st::slideDuration) * 3 / 2)
 		: (_duration ? _duration : st::slideDuration);
 	_animation.start(
 		[this] { animationCallback(); },

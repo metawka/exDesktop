@@ -261,9 +261,12 @@ QuickRow::QuickRow(
 }
 
 void QuickRow::updateHovered() {
-	const auto local = mapFromGlobal(QCursor::pos());
+	const auto global = QCursor::pos();
+	const auto local = mapFromGlobal(global);
+	const auto top = QApplication::widgetAt(global);
+	const auto covered = !top || (top != this && !isAncestorOf(top));
 	auto hovered = -1;
-	if (isVisible() && rect().contains(local)) {
+	if (isVisible() && !covered && rect().contains(local)) {
 		for (auto i = 0; i != int(_buttons.size()); ++i) {
 			if (_buttons[i]->geometry().contains(local)) {
 				hovered = i;

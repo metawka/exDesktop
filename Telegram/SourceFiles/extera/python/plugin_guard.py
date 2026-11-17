@@ -364,11 +364,12 @@ _ESCAPE_ATTRS = {"__closure__", "cell_contents", "__globals__", "f_back", "f_loc
 _ESCAPE_NAMES = {"_extera", "_plugin_context", "_METHODS", "_records", "_imp", "_overlapped", "ProactorEventLoop",
                  "IocpProactor", "ExtensionFileLoader", "create_dynamic", "create_builtin", "owner_scope",
                  "owner_now", "_owners", "_sandbox_api", "FunctionType", "CodeType", "_start_new_thread"}
-_ESCAPE_MODULES = {"os", "builtins", "socket", "ssl", "threading", "_thread", "subprocess", "shutil", "io", "platform",
+_ESCAPE_MODULES = {"dev_server", "os", "builtins", "socket", "ssl", "threading", "_thread", "subprocess", "shutil", "io", "platform",
                    "importlib", "ntpath", "posixpath", "pathlib", "nt", "posix", "_socket", "http", "urllib",
                    "extera_host", "exd_sandbox", "exd_runtime", "exd_java", "exd_picker", "exd_elyx", "exd_porter",
                    "plugin_settings", "requirements_installer", "plugin_guard", "capability_scan", "client_utils",
-                   "android_utils", "base_plugin", "tl_runtime", "tgnet_bridge", "_compat", "intents", "android_views"}
+                   "android_utils", "base_plugin", "tl_runtime", "tgnet_bridge", "_compat", "intents", "android_views", "exd_xposed",
+                   "log_utils", "file_utils", "hook_utils"}
 _ESCAPE_SYS = {"modules", "meta_path", "path_hooks", "path_importer_cache", "audit", "addaudithook", "_getframe"}
 _ESCAPE_SEALED = {"nt", "posix", "_thread", "_uuid", "winreg", "_winreg", "_winapi", "msvcrt", "_overlapped", "pwd",
                   "grp", "_imp", "PIL._imaging", "_socket", "_posixsubprocess", "_io", "_extera", "exd_sandbox"}

@@ -23,6 +23,7 @@
 #include "data/data_user.h"
 #include "extera/extera_config.h"
 #include "extera/extera_views.h"
+#include "extera/exd_plugin_webview.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "lang/lang_keys.h"
@@ -43,6 +44,9 @@
 #include "ui/text/text_entity.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
+#include "ui/widgets/checkbox.h"
+#include "dialogs/dialogs_indexed_list.h"
+#include "dialogs/dialogs_main_list.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
 #include "window/window_controller.h"
@@ -51,6 +55,14 @@
 #include "styles/style_settings.h"
 
 #include "extera/extera_plugin_trust.h"
+#include "media/player/media_player_instance.h"
+#include "media/audio/media_audio.h"
+#include "data/data_media_types.h"
+#include "data/data_document.h"
+#include "history/history_item_components.h"
+#include "data/data_photo.h"
+#include "data/data_chat_filters.h"
+#include "data/data_folder.h"
 
 #include <atomic>
 #include <chrono>
@@ -81,6 +93,41 @@
 #include <QtGui/QGuiApplication>
 
 namespace Extera::Plugins {
+[[nodiscard]] QJsonObject MessageToJson(not_null<HistoryItem*> item);
+
+struct ComposeField {
+	QPointer<QObject> guard;
+	Fn<QString()> get;
+	Fn<void(const QString&, bool)> set;
+};
+
+std::vector<ComposeField> &ComposeFields() {
+	static auto result = std::vector<ComposeField>();
+	return result;
+}
+
+[[nodiscard]] ComposeField *ActiveComposeField() {
+	for (auto &field : ComposeFields()) {
+		const auto widget = qobject_cast<QWidget*>(field.guard.data());
+		if (widget && widget->isVisible() && widget->window()->isActiveWindow()) {
+			return &field;
+		}
+	}
+	for (auto &field : ComposeFields()) {
+		const auto widget = qobject_cast<QWidget*>(field.guard.data());
+		if (widget && widget->isVisible()) {
+			return &field;
+		}
+	}
+	for (auto &field : ComposeFields()) {
+		if (field.guard) {
+			return &field;
+		}
+	}
+	return nullptr;
+}
+
+
 namespace {
 
 struct State {
@@ -94,6 +141,9 @@ struct State {
 	bool eventInFlight = false;
 	bool intentInFlight = false;
 	bool urlInFlight = false;
+	bool fileInFlight = false;
+	bool clientEventInFlight = false;
+	bool uiHookInFlight = false;
 	bool urlFromPlugin = false;
 	std::deque<QJsonObject> recent;
 	std::deque<QJsonObject> pendingEvents;
@@ -394,6 +444,13 @@ void SendFromPlugin(
 	BypassFlag = false;
 }
 
+struct OpenAlert {
+	QPointer<Ui::GenericBox> box;
+	QPointer<Ui::FlatLabel> progress;
+};
+
+base::flat_map<int, OpenAlert> OpenAlerts;
+
 void ShowAlert(const QString &payload) {
 	const auto controller = ActiveController();
 	if (!controller) {
@@ -405,6 +462,14 @@ void ShowAlert(const QString &payload) {
 	const auto message = data.value(u"message"_q).toString();
 	const auto items = data.value(u"items"_q).toArray();
 	const auto buttons = data.value(u"buttons"_q).toArray();
+	const auto alertType = data.value(u"alert_type"_q).toInt();
+	const auto cancelable = data.value(u"cancelable"_q).toBool(true);
+	const auto outside = data.value(u"outside"_q).toBool(cancelable);
+	const auto progress = data.value(u"progress"_q).toInt(-1);
+	auto red = base::flat_set<int>();
+	for (const auto &value : data.value(u"red"_q).toArray()) {
+		red.emplace(value.toInt());
+	}
 	const auto answered = std::make_shared<bool>(false);
 	const auto answer = [=](QJsonValue which) {
 		if (*answered) {
@@ -421,9 +486,13 @@ void ShowAlert(const QString &payload) {
 		return;
 	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		OpenAlerts[id].box = box.get();
 		box->boxClosing() | rpl::on_next([=] {
+			OpenAlerts.remove(id);
 			answer(u"dismiss"_q);
 		}, box->lifetime());
+		box->setCloseByEscape(cancelable);
+		box->setCloseByOutsideClick(outside);
 		if (!title.isEmpty()) {
 			box->setTitle(rpl::single(title));
 		}
@@ -432,6 +501,21 @@ void ShowAlert(const QString &payload) {
 				box,
 				rpl::single(message),
 				st::boxLabel))->setSelectable(true);
+		}
+		if (data.value(u"view"_q).isObject()) {
+			Extera::Views::FillBox(
+				box,
+				int64(data.value(u"view_id"_q).toDouble()),
+				data.value(u"view"_q).toObject());
+		}
+		if (alertType >= 1 && alertType <= 3) {
+			const auto label = box->addRow(object_ptr<Ui::FlatLabel>(
+				box,
+				rpl::single((alertType != 3 && progress >= 0)
+					? QString::number(progress) + u"%"_q
+					: tr::lng_contacts_loading(tr::now)),
+				st::boxLabel));
+			OpenAlerts[id].progress = label;
 		}
 		for (auto i = 0; i != items.size(); ++i) {
 			const auto button = box->verticalLayout()->add(
@@ -447,16 +531,154 @@ void ShowAlert(const QString &payload) {
 		for (const auto &value : buttons) {
 			const auto entry = value.toObject();
 			const auto which = entry.value(u"which"_q).toInt();
-			box->addButton(
-				rpl::single(entry.value(u"text"_q).toString()),
-				[=] {
-					answer(which);
-					box->closeBox();
-				});
+			const auto click = [=] {
+				answer(which);
+				box->closeBox();
+			};
+			if (red.contains(which)) {
+				box->addButton(
+					rpl::single(entry.value(u"text"_q).toString()),
+					click,
+					st::attentionBoxButton);
+			} else {
+				box->addButton(
+					rpl::single(entry.value(u"text"_q).toString()),
+					click);
+			}
 		}
-		if (buttons.isEmpty()) {
+		if (buttons.isEmpty() && cancelable && alertType == 0) {
 			box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 		}
+	}));
+}
+
+void UpdateAlert(const QString &payload) {
+	const auto data = QJsonDocument::fromJson(payload.toUtf8()).object();
+	const auto id = data.value(u"id"_q).toInt();
+	const auto it = OpenAlerts.find(id);
+	if (it == OpenAlerts.end()) {
+		return;
+	}
+	const auto box = it->second.box;
+	const auto label = it->second.progress;
+	if (data.contains(u"progress"_q) && label) {
+		label->setText(QString::number(data.value(u"progress"_q).toInt()) + u"%"_q);
+	}
+	if (data.contains(u"cancelable"_q) && box) {
+		const auto cancelable = data.value(u"cancelable"_q).toBool();
+		box->setCloseByEscape(cancelable);
+		box->setCloseByOutsideClick(cancelable);
+	}
+	if (data.contains(u"outside"_q) && box) {
+		box->setCloseByOutsideClick(data.value(u"outside"_q).toBool());
+	}
+	if (data.value(u"dismiss"_q).toBool() && box) {
+		box->closeBox();
+	}
+}
+
+void ShowPeerPicker(const QString &payload) {
+	const auto controller = ActiveController();
+	if (!controller) {
+		return;
+	}
+	const auto data = QJsonDocument::fromJson(payload.toUtf8()).object();
+	const auto id = int64(data.value(u"id"_q).toDouble());
+	const auto multiple = data.value(u"multiple"_q).toBool();
+	const auto allowUsers = data.value(u"users"_q).toBool(true);
+	const auto allowBots = data.value(u"bots"_q).toBool(true);
+	const auto allowGroups = data.value(u"groups"_q).toBool(true);
+	const auto allowChannels = data.value(u"channels"_q).toBool(true);
+	auto preselected = base::flat_set<int64>();
+	for (const auto &value : data.value(u"selected"_q).toArray()) {
+		preselected.emplace(int64(value.toDouble()));
+	}
+	auto title = data.value(u"title"_q).toString();
+	const auto session = &controller->session();
+	auto peers = std::vector<not_null<PeerData*>>();
+	for (const auto &row : session->data().chatsList()->indexed()->all()) {
+		const auto history = row->history();
+		if (!history) {
+			continue;
+		}
+		const auto peer = history->peer;
+		const auto user = peer->asUser();
+		const auto ok = user
+			? (user->isBot() ? allowBots : allowUsers)
+			: peer->isBroadcast()
+			? allowChannels
+			: allowGroups;
+		if (ok) {
+			peers.push_back(peer);
+		}
+		if (peers.size() >= 400) {
+			break;
+		}
+	}
+	const auto finished = std::make_shared<bool>(false);
+	const auto chosen = std::make_shared<base::flat_set<int64>>(preselected);
+	const auto finish = [=](bool cancelled) {
+		if (*finished) {
+			return;
+		}
+		*finished = true;
+		auto list = QJsonArray();
+		if (!cancelled) {
+			for (const auto dialog : *chosen) {
+				list.append(double(dialog));
+			}
+		}
+		Call(u"event"_q, QJsonObject{
+			{ u"type"_q, u"peers_picked"_q },
+			{ u"id"_q, double(id) },
+			{ u"peers"_q, list },
+			{ u"cancelled"_q, cancelled },
+		});
+	};
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(rpl::single(title.isEmpty()
+			? tr::lng_forward_choose(tr::now)
+			: title));
+		box->setWidth(st::boxWideWidth);
+		box->boxClosing() | rpl::on_next([=] {
+			finish(true);
+		}, box->lifetime());
+		for (const auto &peer : peers) {
+			const auto dialog = DialogId(peer);
+			if (multiple) {
+				const auto check = box->addRow(object_ptr<Ui::Checkbox>(
+					box,
+					peer->name(),
+					chosen->contains(dialog),
+					st::defaultBoxCheckbox));
+				check->checkedChanges() | rpl::on_next([=](bool checked) {
+					if (checked) {
+						chosen->emplace(dialog);
+					} else {
+						chosen->remove(dialog);
+					}
+				}, check->lifetime());
+			} else {
+				const auto button = box->verticalLayout()->add(
+					object_ptr<Ui::SettingsButton>(
+						box,
+						rpl::single(peer->name()),
+						st::settingsButtonNoIcon));
+				button->setClickedCallback([=] {
+					chosen->clear();
+					chosen->emplace(dialog);
+					finish(false);
+					box->closeBox();
+				});
+			}
+		}
+		if (multiple) {
+			box->addButton(tr::lng_box_done(), [=] {
+				finish(false);
+				box->closeBox();
+			});
+		}
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
 	}));
 }
 
@@ -1209,6 +1431,287 @@ PyObject *NativeShowAlert(PyObject *self, PyObject *args) {
 	return Py_BuildValue("");
 }
 
+PyObject *NativeUpdateAlert(PyObject *self, PyObject *args) {
+	const char *payload = nullptr;
+	if (!PyArg_ParseTuple(args, "s", &payload)) {
+		return nullptr;
+	}
+	const auto value = QString::fromUtf8(payload);
+	crl::on_main([=] { UpdateAlert(value); });
+	return Py_BuildValue("");
+}
+
+PyObject *NativeWebviewOpen(PyObject *self, PyObject *args) {
+	const char *payload = nullptr;
+	if (!PyArg_ParseTuple(args, "s", &payload)) {
+		return nullptr;
+	}
+	auto data = QJsonDocument::fromJson(QByteArray(payload)).object();
+	const auto owner = SandboxOwnerNow();
+	auto netOff = owner.isEmpty() || owner == u"<unknown>"_q;
+	if (!netOff) {
+		const auto rules = SandboxQuery(u"permissions"_q, owner).toString();
+		const auto net = QJsonDocument::fromJson(rules.toUtf8()).object().value(u"net"_q).toArray();
+		for (const auto &rule : net) {
+			const auto entry = rule.toObject();
+			if (entry.value(u"key"_q).toString() == u"*"_q
+				&& entry.value(u"rule"_q).toString() == u"deny"_q) {
+				netOff = true;
+			}
+		}
+	}
+	data.insert(u"owner"_q, owner);
+	data.insert(u"net_off"_q, netOff);
+	const auto value = QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Compact));
+	crl::on_main([=] { Extera::PluginWeb::Open(value); });
+	return Py_BuildValue("");
+}
+
+PyObject *NativeWebviewEval(PyObject *self, PyObject *args) {
+	long long id = 0;
+	const char *script = nullptr;
+	if (!PyArg_ParseTuple(args, "Ls", &id, &script)) {
+		return nullptr;
+	}
+	const auto value = QString::fromUtf8(script);
+	crl::on_main([=] { Extera::PluginWeb::Eval(int64(id), value); });
+	return Py_BuildValue("");
+}
+
+PyObject *NativeWebviewClose(PyObject *self, PyObject *args) {
+	long long id = 0;
+	if (!PyArg_ParseTuple(args, "L", &id)) {
+		return nullptr;
+	}
+	crl::on_main([=] { Extera::PluginWeb::Close(int64(id)); });
+	return Py_BuildValue("");
+}
+
+base::flat_set<QString> UiHooks;
+int UiHooksGeneration = 1;
+
+PyObject *NativeSetUiHooks(PyObject *self, PyObject *args) {
+	const char *payload = nullptr;
+	if (!PyArg_ParseTuple(args, "s", &payload)) {
+		return nullptr;
+	}
+	auto kinds = base::flat_set<QString>();
+	for (const auto &value : QJsonDocument::fromJson(QByteArray(payload)).array()) {
+		kinds.emplace(value.toString());
+	}
+	crl::on_main([kinds = std::move(kinds)]() mutable {
+		if (UiHooks != kinds) {
+			UiHooks = std::move(kinds);
+			++UiHooksGeneration;
+		}
+	});
+	return Py_BuildValue("");
+}
+
+[[nodiscard]] std::vector<not_null<History*>> AllHistories(
+		not_null<Main::Session*> session) {
+	auto result = std::vector<not_null<History*>>();
+	const auto collect = [&](not_null<Dialogs::MainList*> list) {
+		for (const auto &row : list->indexed()->all()) {
+			if (const auto history = row->history()) {
+				result.push_back(history);
+			}
+		}
+	};
+	collect(session->data().chatsList());
+	if (const auto folder = session->data().folderLoaded(Data::Folder::kId)) {
+		collect(folder->chatsList());
+	}
+	return result;
+}
+
+PyObject *NativeDialogsList(PyObject *self, PyObject *args) {
+	auto list = QJsonArray();
+	if (const auto controller = ActiveController()) {
+		for (const auto &history : AllHistories(&controller->session())) {
+			const auto last = history->lastMessage();
+			list.push_back(QJsonObject{
+				{ u"id"_q, double(DialogId(history->peer)) },
+				{ u"name"_q, history->peer->name() },
+				{ u"unread"_q, history->unreadCount() },
+				{ u"pinned"_q, history->isPinnedDialog(FilterId()) },
+				{ u"folder_id"_q, history->folder() ? history->folder()->id() : 0 },
+				{ u"top_message"_q, last ? double(last->id.bare) : 0. },
+				{ u"date"_q, double(history->chatListTimeId()) },
+				{ u"muted"_q, history->muted() },
+			});
+		}
+	}
+	const auto bytes = QJsonDocument(list).toJson(QJsonDocument::Compact);
+	return Py_BuildValue("s", bytes.constData());
+}
+
+PyObject *NativeDialogFilters(PyObject *self, PyObject *args) {
+	auto list = QJsonArray();
+	if (const auto controller = ActiveController()) {
+		const auto session = &controller->session();
+		const auto histories = AllHistories(session);
+		for (const auto &filter : session->data().chatsFilters().list()) {
+			auto chats = QJsonArray();
+			if (filter.id()) {
+				for (const auto &history : histories) {
+					if (filter.contains(history)) {
+						chats.push_back(double(DialogId(history->peer)));
+					}
+				}
+			}
+			list.push_back(QJsonObject{
+				{ u"id"_q, double(filter.id()) },
+				{ u"title"_q, filter.title().text.text },
+				{ u"emoji"_q, filter.iconEmoji() },
+				{ u"chats"_q, chats },
+			});
+		}
+	}
+	const auto bytes = QJsonDocument(list).toJson(QJsonDocument::Compact);
+	return Py_BuildValue("s", bytes.constData());
+}
+
+PyObject *NativeComposeGet(PyObject *self, PyObject *args) {
+	const auto field = ActiveComposeField();
+	const auto text = field ? field->get() : QString();
+	return Py_BuildValue("s", text.toUtf8().constData());
+}
+
+PyObject *NativeComposeInfo(PyObject *self, PyObject *args) {
+	auto list = QJsonArray();
+	for (const auto &field : ComposeFields()) {
+		const auto widget = qobject_cast<QWidget*>(field.guard.data());
+		list.push_back(QJsonObject{
+			{ u"alive"_q, bool(field.guard) },
+			{ u"visible"_q, widget && widget->isVisible() },
+			{ u"text"_q, field.guard ? field.get() : QString() },
+		});
+	}
+	const auto bytes = QJsonDocument(list).toJson(QJsonDocument::Compact);
+	return Py_BuildValue("s", bytes.constData());
+}
+
+PyObject *NativeComposeSet(PyObject *self, PyObject *args) {
+	const char *text = nullptr;
+	int append = 0;
+	if (!PyArg_ParseTuple(args, "s|i", &text, &append)) {
+		return nullptr;
+	}
+	const auto value = QString::fromUtf8(text);
+	crl::on_main([=] {
+		if (const auto field = ActiveComposeField()) {
+			field->set(value, append != 0);
+		}
+	});
+	return Py_BuildValue("");
+}
+
+PyObject *NativePlayerState(PyObject *self, PyObject *args) {
+	using Type = AudioMsgId::Type;
+	auto info = QJsonObject();
+	const auto instance = Media::Player::instance();
+	for (const auto type : { Type::Song, Type::Voice }) {
+		const auto current = instance->current(type);
+		const auto document = current.audio();
+		if (!document) {
+			continue;
+		}
+		const auto state = instance->getState(type);
+		info.insert(u"type"_q, type == Type::Song ? u"song"_q : u"voice"_q);
+		info.insert(u"playing"_q, !Media::Player::IsStoppedOrStopping(state.state)
+			&& !Media::Player::IsPausedOrPausing(state.state));
+		info.insert(u"paused"_q, Media::Player::IsPausedOrPausing(state.state));
+		info.insert(u"position_ms"_q, state.frequency
+			? double(state.position * 1000 / state.frequency)
+			: 0.);
+		info.insert(u"duration_ms"_q, state.frequency
+			? double(state.length * 1000 / state.frequency)
+			: double(document->duration()));
+		info.insert(u"has_next"_q, instance->nextAvailable(type));
+		info.insert(u"has_prev"_q, instance->previousAvailable(type));
+		if (const auto song = document->song()) {
+			info.insert(u"title"_q, song->title);
+			info.insert(u"performer"_q, song->performer);
+		}
+		info.insert(u"file_name"_q, document->filename());
+		info.insert(u"document_id"_q, QString::number(document->id));
+		const auto session = &document->session();
+		if (const auto item = session->data().message(current.contextId())) {
+			info.insert(u"message"_q, MessageToJson(item));
+		}
+		break;
+	}
+	const auto bytes = QJsonDocument(info).toJson(QJsonDocument::Compact);
+	return Py_BuildValue("s", bytes.constData());
+}
+
+PyObject *NativePlayerAction(PyObject *self, PyObject *args) {
+	const char *name = nullptr;
+	double value = 0.;
+	long long dialog = 0;
+	if (!PyArg_ParseTuple(args, "s|dL", &name, &value, &dialog)) {
+		return nullptr;
+	}
+	const auto action = QString::fromUtf8(name);
+	crl::on_main([=] {
+		using Type = AudioMsgId::Type;
+		const auto instance = Media::Player::instance();
+		if (action == u"play_msg"_q) {
+			const auto controller = ActiveController();
+			const auto peer = controller
+				? ResolveDialog(&controller->session(), dialog)
+				: nullptr;
+			const auto item = peer
+				? controller->session().data().message(
+					peer->id,
+					MsgId(int64(value)))
+				: nullptr;
+			const auto document = (item && item->media())
+				? item->media()->document()
+				: nullptr;
+			if (document && (document->isAudioFile()
+				|| document->isVoiceMessage()
+				|| document->isVideoMessage())) {
+				instance->playPause({ document, item->fullId() });
+			}
+			return;
+		}
+		const auto type = instance->current(Type::Song).audio()
+			? Type::Song
+			: Type::Voice;
+		if (action == u"play"_q) {
+			instance->play(type);
+		} else if (action == u"pause"_q) {
+			instance->pause(type);
+		} else if (action == u"toggle"_q) {
+			instance->playPause(type);
+		} else if (action == u"next"_q) {
+			instance->next(type);
+		} else if (action == u"prev"_q) {
+			instance->previous(type);
+		} else if (action == u"stop"_q) {
+			instance->stop(type);
+		} else if (action == u"close"_q) {
+			instance->stopAndClose();
+		} else if (action == u"seek"_q) {
+			instance->startSeeking(type);
+			instance->finishSeeking(type, std::clamp(value, 0., 1.));
+		}
+	});
+	return Py_BuildValue("");
+}
+
+PyObject *NativePickPeers(PyObject *self, PyObject *args) {
+	const char *payload = nullptr;
+	if (!PyArg_ParseTuple(args, "s", &payload)) {
+		return nullptr;
+	}
+	const auto value = QString::fromUtf8(payload);
+	crl::on_main([=] { ShowPeerPicker(value); });
+	return Py_BuildValue("");
+}
+
 PyObject *NativeSettingsChanged(PyObject *self, PyObject *args) {
 	const char *id = nullptr;
 	if (!PyArg_ParseTuple(args, "s", &id)) {
@@ -1281,6 +1784,10 @@ PyObject *NativePeerInfo(PyObject *self, PyObject *args) {
 	if (const auto user = peer->asUser()) {
 		info.insert(u"phone"_q, user->phone());
 		info.insert(u"bot"_q, user->isBot());
+		info.insert(u"premium"_q, user->isPremium());
+		info.insert(u"verified"_q, user->isVerified());
+		info.insert(u"scam"_q, user->isScam());
+		info.insert(u"contact"_q, user->isContact());
 		info.insert(u"bare_id"_q, QString::number(peerToUser(peer->id).bare));
 		info.insert(u"access_hash"_q, QString::number(user->accessHash()));
 		info.insert(u"self"_q, user->isSelf());
@@ -1288,8 +1795,15 @@ PyObject *NativePeerInfo(PyObject *self, PyObject *args) {
 		info.insert(u"bare_id"_q, QString::number(peerToChannel(peer->id).bare));
 		info.insert(u"access_hash"_q, QString::number(channel->accessHash()));
 		info.insert(u"megagroup"_q, channel->isMegagroup());
+		info.insert(u"forum"_q, channel->isForum());
+		info.insert(u"verified"_q, channel->isVerified());
+		info.insert(u"members"_q, channel->membersCount());
 	} else if (const auto chat = peer->asChat()) {
 		info.insert(u"bare_id"_q, QString::number(peerToChat(peer->id).bare));
+	}
+	if (const auto history = peer->owner().historyLoaded(peer->id)) {
+		info.insert(u"muted"_q, history->muted());
+		info.insert(u"unread"_q, history->unreadCount());
 	}
 	return Py_BuildValue("s",
 		QJsonDocument(info).toJson(QJsonDocument::Compact).constData());
@@ -1634,6 +2148,19 @@ PyMethodDef NativeMethods[] = {
 	{ "send_message", NativeSendMessage, METH_VARARGS, nullptr },
 	{ "run_on_main", NativeRunOnMain, METH_VARARGS, nullptr },
 	{ "show_alert", NativeShowAlert, METH_VARARGS, nullptr },
+	{ "update_alert", NativeUpdateAlert, METH_VARARGS, nullptr },
+	{ "webview_open", NativeWebviewOpen, METH_VARARGS, nullptr },
+	{ "set_ui_hooks", NativeSetUiHooks, METH_VARARGS, nullptr },
+	{ "pick_peers", NativePickPeers, METH_VARARGS, nullptr },
+	{ "player_state", NativePlayerState, METH_VARARGS, nullptr },
+	{ "dialogs_list", NativeDialogsList, METH_VARARGS, nullptr },
+	{ "compose_get", NativeComposeGet, METH_VARARGS, nullptr },
+	{ "compose_set", NativeComposeSet, METH_VARARGS, nullptr },
+	{ "compose_info", NativeComposeInfo, METH_VARARGS, nullptr },
+	{ "dialog_filters", NativeDialogFilters, METH_VARARGS, nullptr },
+	{ "player_action", NativePlayerAction, METH_VARARGS, nullptr },
+	{ "webview_eval", NativeWebviewEval, METH_VARARGS, nullptr },
+	{ "webview_close", NativeWebviewClose, METH_VARARGS, nullptr },
 	{ "settings_changed", NativeSettingsChanged, METH_VARARGS, nullptr },
 	{ "plugins_changed", NativePluginsChanged, METH_VARARGS, nullptr },
 	{ "open_plugin_settings", NativeOpenPluginSettings, METH_VARARGS, nullptr },
@@ -1984,6 +2511,14 @@ void Start() {
 		Call(u"unknown_sources"_q, QJsonObject{ { u"enabled"_q, enabled } });
 		Instance().listChanges.fire({});
 	}, state.lifetime);
+	if (Extera::Bool(u"plugins_dev_server"_q)) {
+		Call(u"dev_server"_q, QJsonObject{ { u"enabled"_q, true } });
+	}
+	Extera::Config::Instance().boolChanges(
+		u"plugins_dev_server"_q
+	) | rpl::on_next([](bool enabled) {
+		Call(u"dev_server"_q, QJsonObject{ { u"enabled"_q, enabled } });
+	}, state.lifetime);
 	StartWatchdog();
 	base::call_delayed(15000, [] {
 		VerifyInstalledPlugins();
@@ -2209,17 +2744,148 @@ int ExportAll(const QString &folder) {
 	return count;
 }
 
+[[nodiscard]] QString EntityName(EntityType type) {
+	switch (type) {
+	case EntityType::Url: return u"url"_q;
+	case EntityType::CustomUrl: return u"text_link"_q;
+	case EntityType::Email: return u"email"_q;
+	case EntityType::Hashtag: return u"hashtag"_q;
+	case EntityType::Cashtag: return u"cashtag"_q;
+	case EntityType::Mention: return u"mention"_q;
+	case EntityType::MentionName: return u"mention_name"_q;
+	case EntityType::CustomEmoji: return u"custom_emoji"_q;
+	case EntityType::BotCommand: return u"bot_command"_q;
+	case EntityType::Phone: return u"phone"_q;
+	case EntityType::BankCard: return u"bank_card"_q;
+	case EntityType::Bold: return u"bold"_q;
+	case EntityType::Semibold: return u"bold"_q;
+	case EntityType::Italic: return u"italic"_q;
+	case EntityType::Underline: return u"underline"_q;
+	case EntityType::StrikeOut: return u"strikethrough"_q;
+	case EntityType::Code: return u"code"_q;
+	case EntityType::Pre: return u"pre"_q;
+	case EntityType::Blockquote: return u"blockquote"_q;
+	case EntityType::Spoiler: return u"spoiler"_q;
+	default: return QString();
+	}
+}
+
+[[nodiscard]] QString PeerTypeName(not_null<PeerData*> peer) {
+	return peer->isUser()
+		? u"user"_q
+		: peer->isChat()
+		? u"chat"_q
+		: u"channel"_q;
+}
+
+[[nodiscard]] QJsonObject MediaToJson(not_null<HistoryItem*> item) {
+	const auto media = item->media();
+	if (!media) {
+		return {};
+	}
+	auto result = QJsonObject();
+	if (const auto photo = media->photo()) {
+		result.insert(u"type"_q, u"photo"_q);
+		result.insert(u"photo_id"_q, QString::number(photo->id));
+		result.insert(u"width"_q, photo->width());
+		result.insert(u"height"_q, photo->height());
+	} else if (const auto document = media->document()) {
+		const auto type = document->sticker()
+			? u"sticker"_q
+			: document->isVideoMessage()
+			? u"round"_q
+			: document->isVoiceMessage()
+			? u"voice"_q
+			: document->isAudioFile()
+			? u"audio"_q
+			: document->isGifv() || document->isAnimation()
+			? u"gif"_q
+			: document->isVideoFile()
+			? u"video"_q
+			: u"document"_q;
+		result.insert(u"type"_q, type);
+		result.insert(u"document_id"_q, QString::number(document->id));
+		result.insert(u"file_name"_q, document->filename());
+		result.insert(u"mime"_q, document->mimeString());
+		result.insert(u"size"_q, double(document->size));
+		result.insert(u"duration_ms"_q, double(std::max(document->duration(), crl::time(0))));
+		result.insert(u"width"_q, document->dimensions.width());
+		result.insert(u"height"_q, document->dimensions.height());
+		if (const auto sticker = document->sticker()) {
+			result.insert(u"emoji"_q, sticker->alt);
+		}
+		if (const auto song = document->song()) {
+			result.insert(u"title"_q, song->title);
+			result.insert(u"performer"_q, song->performer);
+		}
+	} else if (media->webpage()) {
+		result.insert(u"type"_q, u"webpage"_q);
+	} else if (media->poll()) {
+		result.insert(u"type"_q, u"poll"_q);
+	} else if (media->sharedContact()) {
+		result.insert(u"type"_q, u"contact"_q);
+	} else if (media->location()) {
+		result.insert(u"type"_q, u"geo"_q);
+	} else {
+		result.insert(u"type"_q, u"other"_q);
+	}
+	return result;
+}
+
 [[nodiscard]] QJsonObject MessageToJson(not_null<HistoryItem*> item) {
 	const auto peer = item->history()->peer;
 	const auto from = item->from();
-	return QJsonObject{
+	const auto &text = item->originalText();
+	auto entities = QJsonArray();
+	for (const auto &entity : text.entities) {
+		const auto name = EntityName(entity.type());
+		if (name.isEmpty()) {
+			continue;
+		}
+		auto value = QJsonObject{
+			{ u"type"_q, name },
+			{ u"offset"_q, entity.offset() },
+			{ u"length"_q, entity.length() },
+		};
+		if (!entity.data().isEmpty()) {
+			value.insert(u"data"_q, entity.data());
+		}
+		entities.push_back(value);
+	}
+	auto result = QJsonObject{
 		{ u"id"_q, double(item->id.bare) },
 		{ u"dialog_id"_q, double(DialogId(peer)) },
 		{ u"out"_q, item->out() },
 		{ u"date"_q, double(item->date()) },
 		{ u"sender_id"_q, double(from ? DialogId(from) : 0) },
-		{ u"text"_q, item->originalText().text },
+		{ u"text"_q, text.text },
+		{ u"entities"_q, entities },
+		{ u"service"_q, item->isService() },
+		{ u"post"_q, item->isPost() },
+		{ u"pinned"_q, item->isPinned() },
+		{ u"views"_q, item->viewsCount() },
+		{ u"reply_to"_q, double(item->replyToId().bare) },
+		{ u"group_id"_q, QString::number(item->groupId().value) },
+		{ u"peer_type"_q, PeerTypeName(peer) },
+		{ u"sender_type"_q, from ? PeerTypeName(from) : QString() },
 	};
+	if (const auto media = MediaToJson(item); !media.isEmpty()) {
+		result.insert(u"media"_q, media);
+	}
+	if (const auto edited = item->Get<HistoryMessageEdited>()) {
+		result.insert(u"edit_date"_q, double(edited->date));
+	}
+	if (const auto forwarded = item->Get<HistoryMessageForwarded>()) {
+		result.insert(u"fwd_date"_q, double(forwarded->originalDate));
+		result.insert(u"fwd_from_id"_q, double(forwarded->originalSender
+			? DialogId(forwarded->originalSender)
+			: 0));
+		result.insert(u"fwd_msg_id"_q, double(forwarded->originalId.bare));
+	}
+	if (const auto bot = item->viaBot()) {
+		result.insert(u"via_bot_id"_q, double(DialogId(bot)));
+	}
+	return result;
 }
 
 void QueueFlush();
@@ -2318,6 +2984,143 @@ bool InterceptUrl(const QString &url) {
 	}).toBool();
 	state.urlInFlight = false;
 	return handled;
+}
+
+bool InterceptFileOpen(const QString &path, HistoryItem *item) {
+	auto &state = Instance();
+	if (!state.started || state.fileInFlight || path.isEmpty()) {
+		return false;
+	}
+	auto args = QJsonObject{
+		{ u"path"_q, path },
+		{ u"name"_q, QFileInfo(path).fileName() },
+		{ u"place"_q, u"ChatActivity"_q },
+	};
+	if (item) {
+		args.insert(u"message"_q, MessageToJson(item));
+	}
+	state.fileInFlight = true;
+	const auto handled = Call(u"file_open_hook"_q, args).toBool();
+	state.fileInFlight = false;
+	return handled;
+}
+
+bool InterceptClientEvent(
+		const QString &kind,
+		HistoryItem *item,
+		QJsonObject args) {
+	auto &state = Instance();
+	if (!state.started || state.clientEventInFlight || !HasUiHook(kind)) {
+		return false;
+	}
+	args.insert(u"kind"_q, kind);
+	if (item) {
+		args.insert(u"message"_q, MessageToJson(item));
+	}
+	state.clientEventInFlight = true;
+	const auto cancelled = Call(u"client_event"_q, args).toBool();
+	state.clientEventInFlight = false;
+	return cancelled;
+}
+
+void RegisterComposeField(
+		QObject *guard,
+		Fn<QString()> get,
+		Fn<void(const QString&, bool)> set) {
+	auto &list = ComposeFields();
+	list.erase(ranges::remove_if(list, [](const ComposeField &field) {
+		return !field.guard;
+	}), list.end());
+	list.push_back({ guard, std::move(get), std::move(set) });
+}
+
+void NotifyPlayerShown(bool shown) {
+	if (!Instance().started) {
+		return;
+	}
+	Call(u"player_menu"_q, QJsonObject{
+		{ u"action"_q, shown ? u"open"_q : u"close"_q },
+	});
+}
+
+QJsonArray ProfileRows(
+		int64 dialogId,
+		const QString &phone,
+		const QString &username,
+		const QString &bio) {
+	if (!Instance().started || !dialogId) {
+		return {};
+	}
+	return Call(u"profile_rows"_q, QJsonObject{
+		{ u"dialog_id"_q, double(dialogId) },
+		{ u"phone"_q, phone },
+		{ u"username"_q, username },
+		{ u"bio"_q, bio },
+	}).toArray();
+}
+
+std::vector<std::pair<int, QString>> PlayerMenuItems() {
+	auto result = std::vector<std::pair<int, QString>>();
+	if (!Instance().started) {
+		return result;
+	}
+	const auto list = Call(u"player_menu"_q, QJsonObject{
+		{ u"action"_q, u"items"_q },
+	}).toArray();
+	for (const auto &value : list) {
+		const auto object = value.toObject();
+		const auto text = object.value(u"text"_q).toString();
+		if (!text.isEmpty()) {
+			result.emplace_back(object.value(u"id"_q).toInt(), text);
+		}
+	}
+	return result;
+}
+
+void PlayerMenuClick(int id) {
+	if (!Instance().started) {
+		return;
+	}
+	Call(u"player_menu"_q, QJsonObject{
+		{ u"action"_q, u"click"_q },
+		{ u"id"_q, id },
+	});
+}
+
+int UiHookGeneration() {
+	return UiHooksGeneration;
+}
+
+bool HasUiHook(const QString &kind) {
+	return !UiHooks.empty() && UiHooks.contains(kind) && Instance().started;
+}
+
+std::optional<QString> UiHookText(
+		const QString &kind,
+		HistoryItem *item,
+		PeerData *peer,
+		const QString &text) {
+	auto &state = Instance();
+	if (!HasUiHook(kind) || state.uiHookInFlight) {
+		return std::nullopt;
+	}
+	auto args = QJsonObject{
+		{ u"kind"_q, kind },
+		{ u"text"_q, text },
+	};
+	if (item) {
+		args.insert(u"message"_q, MessageToJson(item));
+	}
+	if (peer) {
+		args.insert(u"dialog_id"_q, double(DialogId(peer)));
+	}
+	state.uiHookInFlight = true;
+	const auto result = Call(u"ui_hook"_q, args);
+	state.uiHookInFlight = false;
+	if (!result.isString()) {
+		return std::nullopt;
+	}
+	return result.toString();
 }
 
 bool InterceptLocalUrl(const QString &url) {

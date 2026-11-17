@@ -1,0 +1,19 @@
+group material;
+dialogsRowHeight: 68px;
+defaultDialogRow: DialogRow(defaultDialogRow) {
+	padding: margins(12px, 9px, 22px, 9px);
+	photoSize: 50px;
+	nameLeft: 74px;
+	nameTop: 12px;
+	textLeft: 74px;
+	textTop: 37px;
+}
+dialogsRowActiveRadius: 12px;
+dialogsRowActiveMargins: margins(6px, 2px, 12px, 2px);
+dialogsFilterIconLeft: 12px;
+dialogsFilter: InputField(dialogsFilter) {
+	textMargins: margins(38px, 8px, 30px, 5px);
+}
+dialogRowOpenBot: DialogRightButton(dialogRowOpenBot) {
+	margin: margins(0px, 32px, 22px, 0px);
+}

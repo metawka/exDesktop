@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_main_menu.h"
+#include "extera/exd_md3.h"
 
 #include "extera/extera_changelog.h"
 #include "extera/extera_config.h"
@@ -63,6 +64,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/effects/toggle_arrow.h"
 #include "ui/new_badges.h"
 #include "ui/painter.h"
+#include <QtGui/QPainterPath>
 #include "ui/text/text_options.h"
 #include "ui/text/text_utilities.h"
 #include "ui/ui_utility.h"
@@ -81,6 +83,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "styles/style_chat.h" // popupMenuExpandedSeparator
 #include "styles/style_dialogs.h"
+#include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
 #include "styles/style_wallet.h"
@@ -369,7 +372,9 @@ MainMenu::MainMenu(
 , _telegram(
 	Ui::CreateChild<Ui::FlatLabel>(_footer.get(), st::mainMenuTelegramLabel))
 , _version(AddVersionLabel(_footer)) {
-	setAttribute(Qt::WA_OpaquePaintEvent);
+	if (st::mainMenuRadius <= 0 || !Extera::Md3::DrawerCorners()) {
+		setAttribute(Qt::WA_OpaquePaintEvent);
+	}
 
 	setupUserpicButton();
 	setupAccountsToggle();
@@ -382,7 +387,12 @@ MainMenu::MainMenu(
 	widthValue(
 	) | rpl::on_next([=](int width) {
 		const auto line = st::lineWidth;
-		shadow->setGeometry(0, st::mainMenuCoverHeight - line, width, line);
+		const auto inset = st::mainMenuDividerInset;
+		shadow->setGeometry(
+			inset,
+			st::mainMenuCoverHeight - line,
+			width - 2 * inset,
+			line);
 	}, shadow->lifetime());
 
 	_nightThemeSwitch.setCallback([this] {
@@ -571,7 +581,7 @@ void MainMenu::setupArchive() {
 		{ &st::menuIconArchiveOpen });
 	inner->add(
 		object_ptr<Ui::PlainShadow>(inner),
-		{ 0, st::mainMenuSkip, 0, st::mainMenuSkip });
+		{ st::mainMenuDividerInset, st::mainMenuSkip, st::mainMenuDividerInset, st::mainMenuSkip });
 	button->setAcceptBoth(true);
 	button->clicks(
 	) | rpl::on_next([=](Qt::MouseButton which) {
@@ -733,7 +743,7 @@ void MainMenu::setupMenu() {
 
 		_menu->add(
 			object_ptr<Ui::PlainShadow>(_menu),
-			{ 0, st::mainMenuSkip, 0, st::mainMenuSkip });
+			{ st::mainMenuDividerInset, st::mainMenuSkip, st::mainMenuDividerInset, st::mainMenuSkip });
 
 		AddMyChannelsBox(addAction(
 			tr::lng_create_group_title(),
@@ -779,7 +789,7 @@ void MainMenu::setupMenu() {
 		if (Extera::Bool(u"feed_in_menu"_q)) {
 			const auto feed = addAction(
 				tr::lng_extera_feed(),
-				{ &st::menuIconChannel });
+				{ &st::exdMenuIconFeed });
 			feed->setClickedCallback([=] {
 				Extera::ShowChannelFeed(controller);
 			});
@@ -913,10 +923,11 @@ void MainMenu::setupMenu() {
 	}
 
 	Extera::Plugins::AddDrawerMenuItems([&](QString text, Fn<void()> handler) {
-		addAction(
+		const auto button = addAction(
 			rpl::single(std::move(text)),
-			{ &st::menuIconBotCommands }
-		)->setClickedCallback(std::move(handler));
+			{ &st::menuIconBotCommands });
+		button->setClickedCallback(std::move(handler));
+		button->setProperty("exd_plugin_item", true);
 	});
 
 	_nightThemeToggle = addAction(
@@ -1052,7 +1063,24 @@ void MainMenu::paintEvent(QPaintEvent *e) {
 	const auto clip = e->rect();
 	const auto cover = QRect(0, 0, width(), st::mainMenuCoverHeight);
 
-	p.fillRect(clip, st::mainMenuBg);
+	if (const auto radius = Extera::Md3::DrawerCorners()
+				? st::mainMenuRadius
+				: 0;
+			radius > 0) {
+		auto path = QPainterPath();
+		path.addRoundedRect(
+			QRect(
+				style::RightToLeft() ? 0 : -radius,
+				0,
+				width() + radius,
+				height()),
+			radius,
+			radius);
+		auto hq = PainterHighQualityEnabler(p);
+		p.fillPath(path, st::mainMenuBg);
+	} else {
+		p.fillRect(clip, st::mainMenuBg);
+	}
 	if (cover.intersects(clip)) {
 		drawName(p);
 	}

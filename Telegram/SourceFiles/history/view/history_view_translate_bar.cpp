@@ -36,6 +36,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "styles/style_chat.h"
 #include "styles/style_menu_icons.h"
+#include "styles/style_chat_helpers.h"
+#include "ui/style/style_core.h"
 
 #include <QtGui/QtEvents>
 
@@ -244,11 +246,14 @@ TranslateBar::TranslateBar(
 	_wrap.hide(anim::type::instant);
 	_shadow->hide();
 
+	const auto md3 = style::Md3Enabled();
 	_shadow->showOn(rpl::combine(
 		_wrap.shownValue(),
 		_wrap.heightValue(),
 		rpl::mappers::_1 && rpl::mappers::_2 > 0
-	) | rpl::filter([=](bool shown) {
+	) | rpl::map([=](bool shown) {
+		return shown && !md3;
+	}) | rpl::filter([=](bool shown) {
 		return (shown == _shadow->isHidden());
 	}));
 
@@ -288,11 +293,27 @@ void TranslateBar::setup(not_null<History*> history) {
 	};
 	const auto button = static_cast<Ui::AbstractButton*>(_wrap.entity());
 	button->resize(0, st::historyTranslateBarHeight);
-	button->setAttribute(Qt::WA_OpaquePaintEvent);
+	const auto md3 = style::Md3Enabled();
+	if (!md3) {
+		button->setAttribute(Qt::WA_OpaquePaintEvent);
+	}
 
 	button->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
-		QPainter(button).fillRect(clip, st::historyComposeButtonBg);
+		auto p = QPainter(button);
+		if (!md3) {
+			p.fillRect(clip, st::historyComposeButtonBg);
+			return;
+		}
+		const auto plaque = QRectF(button->rect()).marginsRemoved(
+			QMarginsF(st::exdPinnedPlaqueMargins));
+		const auto radius = std::min(
+			float64(st::exdPinnedPlaqueRadius),
+			plaque.height() / 2.);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::topBarBg);
+		p.drawRoundedRect(plaque, radius, radius);
 	}, button->lifetime());
 
 	button->setClickedCallback([=] {
@@ -336,7 +357,12 @@ void TranslateBar::setup(not_null<History*> history) {
 	};
 
 	_wrap.sizeValue() | rpl::on_next([=](QSize size) {
-		settings->moveToRight(0, 0, size.width());
+		settings->moveToRight(
+			md3 ? st::exdPinnedPlaqueMargins.right() : 0,
+			md3 ? ((size.height() - settings->height()
+				+ st::exdPinnedPlaqueMargins.top()
+				- st::exdPinnedPlaqueMargins.bottom()) / 2) : 0,
+			size.width());
 		updateLabelGeometry();
 	}, lifetime());
 

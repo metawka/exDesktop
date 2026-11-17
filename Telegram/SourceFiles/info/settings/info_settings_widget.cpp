@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/settings/info_settings_widget.h"
+#include "extera/exd_md3.h"
 
 #include "info/info_memento.h"
 #include "settings/sections/settings_main.h"
@@ -213,7 +214,8 @@ const Ui::RoundRect *Widget::bottomSkipRounding() const {
 
 rpl::producer<bool> Widget::desiredShadowVisibility() const {
 	return (_type == ::Settings::MainId()
-		|| _type == ::Settings::InformationId())
+		|| _type == ::Settings::InformationId()
+		|| Extera::Md3::Enabled())
 		? ContentWidget::desiredShadowVisibility()
 		: rpl::single(true);
 }

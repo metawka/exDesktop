@@ -7,6 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/chat/pinned_bar.h"
 
+#include "ui/painter.h"
+#include "ui/style/style_core.h"
+
 #include "ui/chat/message_bar.h"
 #include "ui/effects/spoiler_mess.h"
 #include "ui/widgets/shadow.h"
@@ -29,19 +32,37 @@ PinnedBar::PinnedBar(
 	_wrap.hide(anim::type::instant);
 	_shadow->hide();
 
+	const auto md3 = style::Md3Enabled();
 	_shadow->showOn(rpl::combine(
 		_wrap.shownValue(),
 		_wrap.heightValue(),
 		rpl::mappers::_1 && rpl::mappers::_2 > 0
-	) | rpl::filter([=](bool shown) {
+	) | rpl::map([=](bool shown) {
+		return shown && !md3;
+	}) | rpl::filter([=](bool shown) {
 		return (shown == _shadow->isHidden());
 	}));
 
 	_wrap.entity()->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
-		QPainter(_wrap.entity()).fillRect(clip, st::historyPinnedBg);
+		auto p = QPainter(_wrap.entity());
+		if (!md3) {
+			p.fillRect(clip, st::historyPinnedBg);
+			return;
+		}
+		const auto plaque = QRectF(_wrap.entity()->rect()).marginsRemoved(
+			QMarginsF(st::exdPinnedPlaqueMargins));
+		const auto radius = std::min(
+			float64(st::exdPinnedPlaqueRadius),
+			plaque.height() / 2.);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::topBarBg);
+		p.drawRoundedRect(plaque, radius, radius);
 	}, lifetime());
-	_wrap.setAttribute(Qt::WA_OpaquePaintEvent);
+	if (!md3) {
+		_wrap.setAttribute(Qt::WA_OpaquePaintEvent);
+	}
 
 	if (customEmojiPausedChanges) {
 		std::move(
@@ -75,7 +96,12 @@ void PinnedBar::setContent(rpl::producer<Ui::MessageBarContent> content) {
 
 		// In most cases the new right button should arrive
 		// before we want to get its width.
-		const auto right = _right.button ? _right.button->width() : 0;
+		const auto right = _right.button
+			? (_right.button->width()
+				+ (style::Md3Enabled()
+					? st::exdPinnedPlaqueMargins.right()
+					: 0))
+			: 0;
 		content.margins = { 0, 0, right, 0 };
 
 		_bar->set(std::move(content));
@@ -133,9 +159,15 @@ void PinnedBar::setRightButton(object_ptr<Ui::RpWidget> button) {
 }
 
 void PinnedBar::updateControlsGeometry(QRect wrapGeometry) {
-	_bar->widget()->resizeToWidth(wrapGeometry.width());
+	const auto exdShift = style::Md3Enabled()
+		? (st::exdPinnedPlaqueMargins.left() * 2)
+		: 0;
+	_bar->widget()->resizeToWidth(wrapGeometry.width() - exdShift);
+	_bar->widget()->move(exdShift, 0);
 	if (_right.button) {
-		_right.button->moveToRight(0, 0);
+		_right.button->moveToRight(
+			style::Md3Enabled() ? st::exdPinnedPlaqueMargins.right() : 0,
+			0);
 	}
 }
 
@@ -192,7 +224,9 @@ void PinnedBar::createControls() {
 	fillClicks(Qt::LeftButton, _barClicks);
 	fillClicks(Qt::RightButton, _barRightClicks);
 
-	_bar->widget()->move(0, 0);
+	_bar->widget()->move(
+		style::Md3Enabled() ? (st::exdPinnedPlaqueMargins.left() * 2) : 0,
+		0);
 	_bar->widget()->show();
 	_wrap.entity()->resize(
 		_wrap.entity()->width(),

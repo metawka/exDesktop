@@ -6,6 +6,7 @@
 #include "core/version.h"
 #include "data/data_user.h"
 #include "extera/extera_config.h"
+#include "extera/exd_md3.h"
 #include "extera/extera_update.h"
 #include "lang/lang_instance.h"
 #include "lang/lang_keys.h"
@@ -338,6 +339,9 @@ void Start() {
 			if (const auto controller = window
 					? window->sessionController()
 					: nullptr) {
+				if (Md3::ShowIntroIfNeeded(controller)) {
+					return;
+				}
 				Config::Instance().setInt(u"changelog_seen"_q, current);
 				ShowWhenReady(controller);
 			}

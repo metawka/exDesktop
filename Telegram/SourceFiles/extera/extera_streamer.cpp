@@ -38,6 +38,10 @@
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QFileDialog>
 
+#include <atomic>
+#include <mutex>
+#include <thread>
+
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -181,24 +185,37 @@ void ApplyCaptureAll() {
 	return QKeySequence(String(key), QKeySequence::PortableText);
 }
 
+void Apply();
 void ApplyNow();
 
 void ToggleByHotkey() {
 	Config::Instance().setBool(u"streamer_mode"_q, !Active());
 }
 
-void TriggerShot() {
+bool ShotSwitching = false;
+
+void TriggerShot(Fn<void()> shown) {
 	static auto active = false;
 	if (active) {
+		shown();
 		return;
 	}
 	active = true;
 	const auto mode = Bool(u"streamer_mode"_q);
-	Config::Instance().setBool(u"streamer_mode"_q, true);
-	ApplyNow();
-	base::call_delayed(crl::time(1000), [=] {
-		Config::Instance().setBool(u"streamer_mode"_q, mode);
+	if (!mode) {
+		ShotSwitching = true;
+		Config::Instance().setBool(u"streamer_mode"_q, true);
+		ShotSwitching = false;
 		ApplyNow();
+	}
+	shown();
+	base::call_delayed(crl::time(1000), [=] {
+		if (!mode) {
+			ShotSwitching = true;
+			Config::Instance().setBool(u"streamer_mode"_q, mode);
+			ShotSwitching = false;
+			Apply();
+		}
 		active = false;
 	});
 }
@@ -285,6 +302,16 @@ void InjectKey(UINT vk, Qt::KeyboardModifiers modifiers) {
 	SendInput(UINT(inputs.size()), inputs.data(), sizeof(INPUT));
 }
 
+[[nodiscard]] std::mutex &HookMutex() {
+	static auto result = std::mutex();
+	return result;
+}
+
+[[nodiscard]] std::atomic<bool> &Capturing() {
+	static auto result = std::atomic<bool>(false);
+	return result;
+}
+
 [[nodiscard]] LowHotkey &ToggleKey() {
 	static auto result = LowHotkey();
 	return result;
@@ -364,16 +391,22 @@ LRESULT CALLBACK LowLevelKeyboard(int code, WPARAM wParam, LPARAM lParam) {
 		const auto vk = UINT(data->vkCode);
 		const auto pressed = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
 		const auto released = (wParam == WM_KEYUP || wParam == WM_SYSKEYUP);
-		if (CaptureCallback()) {
+		if (Capturing()) {
 			const auto name = KeyName(vk);
 			if (!name.isEmpty() && (pressed || (released && vk == VK_SNAPSHOT))) {
 				const auto text = ModifiersText(CurrentModifiers()) + name;
-				const auto callback = CaptureCallback();
-				if (callback(text)) {
+				auto handled = false;
+				QMetaObject::invokeMethod(qApp, [&] {
+					if (const auto callback = CaptureCallback()) {
+						handled = callback(text);
+					}
+				}, Qt::BlockingQueuedConnection);
+				if (handled) {
 					return 1;
 				}
 			}
 		} else {
+			const auto lock = std::lock_guard(HookMutex());
 			for (auto key : { &ToggleKey(), &ShotKey() }) {
 				if (!key->vk || key->vk != vk) {
 					continue;
@@ -396,9 +429,11 @@ LRESULT CALLBACK LowLevelKeyboard(int code, WPARAM wParam, LPARAM lParam) {
 					key->swallowUp = true;
 					const auto modifiers = key->modifiers;
 					crl::on_main([=] {
-						TriggerShot();
-						base::call_delayed(crl::time(150), [=] {
-							InjectKey(vk, modifiers);
+						TriggerShot([=] {
+							std::thread([=] {
+								Sleep(40);
+								InjectKey(vk, modifiers);
+							}).detach();
 						});
 					});
 				} else {
@@ -412,18 +447,32 @@ LRESULT CALLBACK LowLevelKeyboard(int code, WPARAM wParam, LPARAM lParam) {
 }
 
 void EnsureHook() {
-	static auto hook = HHOOK();
-	if (!hook) {
-		hook = SetWindowsHookExW(
+	static auto started = false;
+	if (std::exchange(started, true)) {
+		return;
+	}
+	std::thread([] {
+		SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+		const auto hook = SetWindowsHookExW(
 			WH_KEYBOARD_LL,
 			LowLevelKeyboard,
 			GetModuleHandleW(nullptr),
 			0);
-	}
+		if (!hook) {
+			return;
+		}
+		auto message = MSG();
+		while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+			TranslateMessage(&message);
+			DispatchMessageW(&message);
+		}
+		UnhookWindowsHookEx(hook);
+	}).detach();
 }
 
 void RegisterOne(LowHotkey &slot, const QString &config) {
 	GlobalHotkeys().remove(config);
+	const auto lock = std::lock_guard(HookMutex());
 	slot = LowHotkey();
 	const auto sequence = Hotkey(config);
 	if (sequence.isEmpty()) {
@@ -469,7 +518,7 @@ bool CaptureFilter::eventFilter(QObject *object, QEvent *event) {
 		const auto key = static_cast<QKeyEvent*>(event);
 		if (!key->isAutoRepeat()) {
 			if (MatchHotkey(key, u"streamer_hotkey_shot"_q)) {
-				TriggerShot();
+				TriggerShot([] {});
 				return true;
 			} else if (MatchHotkey(key, u"streamer_hotkey"_q)) {
 				ToggleByHotkey();
@@ -1110,7 +1159,9 @@ QString MaskId(const QString &id) {
 }
 
 void Refresh() {
-	Apply();
+	if (!ShotSwitching) {
+		Apply();
+	}
 }
 
 void Start() {
@@ -1247,6 +1298,7 @@ void ShowHotkeyBox(
 		};
 #ifdef Q_OS_WIN
 		EnsureHook();
+		Capturing() = true;
 		CaptureCallback() = [=](QString text) {
 			const auto focused = QApplication::focusWidget();
 			if (focused && field->isAncestorOf(focused)) {
@@ -1259,9 +1311,13 @@ void ShowHotkeyBox(
 			return true;
 		};
 		box->boxClosing() | rpl::on_next([] {
+			Capturing() = false;
 			CaptureCallback() = nullptr;
 		}, box->lifetime());
-		box->lifetime().add([] { CaptureCallback() = nullptr; });
+		box->lifetime().add([] {
+			Capturing() = false;
+			CaptureCallback() = nullptr;
+		});
 #endif
 		qApp->installEventFilter(new KeyFilter(filter, [=](QKeyEvent *e) {
 			const auto focused = QApplication::focusWidget();

@@ -31,6 +31,7 @@ mainMenuCoverNameTop: 84px;
 mainMenuCoverStatusLeft: mainMenuCoverNameLeft;
 mainMenuCoverStatusTop: 103px;
 mainMenuSkip: 6px;
+mainMenuDividerInset: 0px;
 mainMenuFooterHeightMin: 80px;
 mainMenu: Menu(defaultMenu) {
 	itemFg: windowBoldFg;

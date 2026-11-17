@@ -88,6 +88,12 @@ def hook_scope(account):
             _hook_state.account = previous
 
 
+@contextmanager
+def account_scope(account):
+    with hook_scope(None if account is None else int(account)) as value:
+        yield value
+
+
 def _resolve_account(account, helper_name: str = None) -> int:
     if account is not None:
         return int(account)
@@ -294,8 +300,19 @@ def get_current_fragment():
     return get_last_fragment()
 
 
+_CONTROLLER_PACKAGES = ("org.telegram.messenger.", "org.telegram.tgnet.", "org.telegram.ui.")
+
+
 def _stub_controller(name):
     def getter(account=None):
+        try:
+            import exd_java
+            for package in _CONTROLLER_PACKAGES:
+                cls = exd_java._CLASSES.get(package + name)
+                if cls is not None and callable(getattr(cls, "getInstance", None)):
+                    return cls.getInstance(int(account or 0))
+        except Exception:
+            pass
         return _compat.Stub(name)
     return getter
 

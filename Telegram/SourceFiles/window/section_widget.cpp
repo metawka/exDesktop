@@ -40,6 +40,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "styles/style_polls.h"
 
+#include "extera/exd_md3.h"
+
+#include <QtCore/QTimer>
 #include <rpl/range.h>
 
 namespace Window {
@@ -299,18 +302,120 @@ void SectionWidget::showAnimated(
 		SlideDirection direction,
 		const SectionSlideParams &params) {
 	validateSubsectionTabs();
-	if (_showAnimation) {
+	if (_showAnimation || _exdPendingShow) {
 		return;
 	}
+	if (Extera::Md3::Expressive()
+		&& exdWaitsBeforeShow()
+		&& !params.oldContentCache.isNull()) {
+		const auto id = ++_exdPendingCounter;
+		_exdPendingShow = std::make_unique<ExdPendingShow>(ExdPendingShow{
+			.direction = direction,
+			.params = params,
+			.id = id,
+		});
+		hideChildren();
+		exdCreateCover();
+		show();
+		update();
+		exdShowReadyChanged();
+		return;
+	}
+	exdStartShowAnimation(direction, params);
+}
 
+void SectionWidget::exdCreateCover() {
+	_exdCover = base::make_unique_q<Ui::RpWidget>(this);
+	const auto cover = _exdCover.get();
+	cover->setGeometry(rect());
+	sizeValue() | rpl::on_next([=](QSize size) {
+		cover->setGeometry(QRect(QPoint(), size));
+	}, cover->lifetime());
+	cover->paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(cover);
+		if (_showAnimation) {
+			_showAnimation->paintContents(p);
+		} else if (_exdPendingShow) {
+			p.drawPixmap(0, 0, _exdPendingShow->params.oldContentCache);
+		}
+	}, cover->lifetime());
+	cover->show();
+	cover->raise();
+}
+
+void SectionWidget::exdShowReadyChanged() {
+	if (!_exdPendingShow) {
+		return;
+	}
+	auto &pending = *_exdPendingShow;
+	const auto id = pending.id;
+	if (_exdCover) {
+		_exdCover->raise();
+	}
+	const auto passed = pending.ticks * 30;
+	if (!pending.warmed && exdContentLoaded()) {
+		pending.warmed = true;
+		pending.warmedTick = pending.ticks;
+		showChildren();
+		if (_exdCover) {
+			_exdCover->hide();
+		}
+		exdBeforeShowGrab();
+		[[maybe_unused]] const auto warm = grabForShowAnimation(
+			pending.params);
+		hideChildren();
+		if (_exdCover) {
+			_exdCover->show();
+			_exdCover->raise();
+		}
+	}
+	const auto settled = pending.warmed
+		&& (pending.ticks - pending.warmedTick) * 30 >= 60;
+	if ((settled && exdShowReady()) || passed >= 300) {
+		exdFinishPendingShow(id);
+		return;
+	}
+	if (!pending.scheduled) {
+		pending.scheduled = true;
+		QTimer::singleShot(30, crl::guard(this, [=] {
+			if (_exdPendingShow && _exdPendingShow->id == id) {
+				_exdPendingShow->scheduled = false;
+				++_exdPendingShow->ticks;
+				exdShowReadyChanged();
+			}
+		}));
+	}
+}
+
+void SectionWidget::exdFinishPendingShow(int id) {
+	if (!_exdPendingShow || _exdPendingShow->id != id) {
+		return;
+	}
+	const auto pending = base::take(_exdPendingShow);
+	_exdCover = nullptr;
+	if (isHidden()) {
+		return;
+	}
+	exdStartShowAnimation(pending->direction, pending->params);
+}
+
+void SectionWidget::exdStartShowAnimation(
+		SlideDirection direction,
+		const SectionSlideParams &params) {
 	showChildren();
+	exdBeforeShowGrab();
 	auto myContentCache = grabForShowAnimation(params);
 	hideChildren();
 	showAnimatedHook(params);
 
 	_showAnimation = std::make_unique<SlideAnimation>();
 	_showAnimation->setDirection(direction);
-	_showAnimation->setRepaintCallback([this] { update(); });
+	_showAnimation->setRepaintCallback([this] {
+		update();
+		if (_exdCover) {
+			_exdCover->update();
+		}
+	});
 	_showAnimation->setFinishedCallback([this] { showFinished(); });
 	_showAnimation->setPixmaps(
 		params.oldContentCache,
@@ -320,6 +425,9 @@ void SectionWidget::showAnimated(
 	_showAnimation->setTopSkip(params.topSkip);
 	_showAnimation->setTopBarMask(params.topMask);
 	_showAnimation->start();
+	if (Extera::Md3::Expressive()) {
+		exdCreateCover();
+	}
 
 	show();
 }
@@ -520,24 +628,32 @@ void SectionWidget::PaintBackground(
 }
 
 void SectionWidget::paintEvent(QPaintEvent *e) {
-	if (_showAnimation) {
+	if (_exdCover) {
+		return;
+	} else if (_showAnimation) {
 		auto p = QPainter(this);
 		_showAnimation->paintContents(p);
+	} else if (_exdPendingShow) {
+		auto p = QPainter(this);
+		p.drawPixmap(0, 0, _exdPendingShow->params.oldContentCache);
 	}
 }
 
 bool SectionWidget::animatingShow() const {
-	return (_showAnimation != nullptr);
+	return (_showAnimation != nullptr) || (_exdPendingShow != nullptr);
 }
 
 void SectionWidget::showFinished() {
 	_showAnimation.reset();
+	_exdPendingShow = nullptr;
+	_exdCover = nullptr;
 	if (isHidden()) return;
 
 	showChildren();
 	showFinishedHook();
 
-	if (isAncestorOf(window()->focusWidget())) {
+	if (window()->focusWidget() == this
+		|| isAncestorOf(window()->focusWidget())) {
 		setInnerFocus();
 	} else {
 		controller()->widget()->setInnerFocus();

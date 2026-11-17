@@ -68,6 +68,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_privacy_security.h"
 #include "settings/settings_scale_preview.h"
 #include "storage/localstorage.h"
+#include "ui/wrap/padding_wrap.h"
 #include "ui/basic_click_handlers.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/boxes/peer_qr_box.h"
@@ -407,7 +408,7 @@ void BuildSectionButtons(SectionBuilder &builder) {
 		const auto ai = builder.addButton({
 			.id = u"main/ai_chat"_q,
 			.title = tr::lng_extera_ai_chat(),
-			.icon = { &st::menuIconBotCommands },
+			.icon = { &st::exdMenuIconAi },
 			.onClick = [=] {
 				if (controller) {
 					Extera::ShowAiChat(controller);
@@ -1166,7 +1167,7 @@ void SetupInterfaceScale(
 		container,
 		tr::lng_settings_default_scale(),
 		icon ? st::settingsButton : st::settingsButtonNoIcon,
-		{ icon ? &st::menuIconShowInChat : nullptr }
+		{ icon ? &st::settingsIconInterfaceScale : nullptr }
 	)->toggleOn(toggled->events_starting_with_copy(switched));
 
 	const auto ratio = style::DevicePixelRatio();
@@ -1204,9 +1205,12 @@ void SetupInterfaceScale(
 		st::normalFont->spacew * 2,
 		st::settingsScaleLabel.style.font->width("300%"),
 		true);
-	container->add(
-		std::move(sliderWithLabel.widget),
-		icon ? st::settingsScalePadding : st::settingsBigScalePadding);
+	const auto row = container->add(
+		object_ptr<Ui::PaddingWrap<Ui::RpWidget>>(
+			container,
+			std::move(sliderWithLabel.widget),
+			icon ? st::settingsScalePadding : st::settingsBigScalePadding));
+	Ui::SetupGroupedRowBackground(row);
 	const auto slider = sliderWithLabel.slider;
 	const auto label = sliderWithLabel.label;
 	slider->setAccessibleName(tr::lng_settings_scale(tr::now));

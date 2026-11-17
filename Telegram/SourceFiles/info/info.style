@@ -391,6 +391,7 @@ infoProfileTopBarActionButtonIconTop: 6px;
 infoProfileTopBarActionButtonTextTop: infoProfileTopBarActionButtonIconSize + infoProfileTopBarActionButtonIconTop + 1px;
 infoProfileTopBarActionButtonTextSkip: 4px;
 infoProfileTopBarActionButtonFont: font(11px);
+infoProfileTopBarActionButtonRadius: boxRadius;
 
 infoProfileTopBarActionButtonsPadding: margins(18px, 0px, 18px, 16px);
 infoProfileTopBarActionButtonsHeight: infoProfileTopBarActionButtonSize + infoProfileTopBarActionButtonsPadding.topBottom;
@@ -929,6 +930,18 @@ topBarNameRightPadding: 3px;
 topBarClearButton: RoundButton(defaultLightButton) {
 	width: -18px;
 }
+exdTopBarPlaqueMargins: margins(8px, 4px, 8px, 4px);
+exdTopBarPlaqueRadius: 18px;
+exdFeedSegmentBar: 52px;
+exdFeedSegmentHeight: 36px;
+exdFeedSegmentPadding: 4px;
+exdFeedSegmentItemPadding: 16px;
+exdFeedFabHeight: 56px;
+exdFeedFabRadius: 18px;
+exdFeedFabPadding: 18px;
+exdFeedFabIconSkip: 10px;
+exdFeedFabSkip: 24px;
+exdInfoGroupGap: 12px;
 exdTopBarPlugins: IconButton {
 	width: 40px;
 	height: topBarHeight;
@@ -941,6 +954,32 @@ exdTopBarPlugins: IconButton {
 	rippleAreaSize: 40px;
 	ripple: defaultRippleAnimationBgOver;
 }
+exdFeedSettings: IconButton(exdTopBarPlugins) {
+	icon: icon {{ "menu/settings", menuIconFg }};
+	iconOver: icon {{ "menu/settings", menuIconFgOver }};
+}
+exdAiClear: IconButton(exdTopBarPlugins) {
+	icon: icon {{ "menu/delete", menuIconFg }};
+	iconOver: icon {{ "menu/delete", menuIconFgOver }};
+}
+exdAiBubbleRadius: 22px;
+exdAiCopyHeight: 32px;
+exdAiCopySkip: 10px;
+exdAiCopyPadding: 12px;
+exdAiCopyIconSkip: 4px;
+exdAiComposerMargin: 10px;
+exdAiComposerSkip: 8px;
+exdAiComposerInner: 20px;
+exdAiComposerHeight: 48px;
+exdAiComposerBottom: 14px;
+exdAiColumnMax: 680px;
+exdAiColumnMinSide: 16px;
+exdAiBubbleSkip: 6px;
+exdAiUserPadding: margins(16px, 12px, 16px, 12px);
+exdAiAnswerPadding: margins(16px, 14px, 16px, 14px);
+exdAiTitleLeft: 18px;
+exdAiTitleFont: font(17px semibold);
+exdAiChipFont: font(11px semibold);
 topBarSearch: IconButton {
 	width: 40px;
 	height: topBarHeight;

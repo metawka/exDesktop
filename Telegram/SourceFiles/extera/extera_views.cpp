@@ -24,6 +24,10 @@
 #include <QtGui/QPainter>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
+#include <QtWidgets/QPushButton>
+#include <QtWidgets/QCheckBox>
+#include <QtWidgets/QSlider>
+#include <QtWidgets/QProgressBar>
 #include <QtWidgets/QScrollArea>
 #include <QtWidgets/QVBoxLayout>
 
@@ -222,7 +226,8 @@ void BuildChildren(
 }
 
 [[nodiscard]] QBoxLayout *MakeLayout(const QJsonObject &node) {
-	const auto vertical = node.value(u"orientation"_q).toInt(0) == 0;
+	const auto vertical = (node.value(u"type"_q).toString() != u"linearlayout"_q)
+		|| (node.value(u"orientation"_q).toInt(0) == 1);
 	auto layout = vertical
 		? static_cast<QBoxLayout*>(new QVBoxLayout())
 		: static_cast<QBoxLayout*>(new QHBoxLayout());
@@ -326,6 +331,94 @@ void ApplyCommon(QWidget *widget, const QJsonObject &node) {
 		ApplySize(label, QJsonObject());
 		Widgets[id] = label;
 		return label;
+	}
+	if (type == u"button"_q) {
+		auto button = new QPushButton(node.value(u"text"_q).toString(), parent);
+		button->setCursor(Qt::PointingHandCursor);
+		const auto color = node.value(u"color"_q);
+		auto style = u"QPushButton { padding: 8px 16px; border: none; border-radius: 8px;"
+			" background-color: %1; color: %2; }"_q.arg(
+				st::activeButtonBg->c.name(QColor::HexArgb),
+				color.isDouble()
+					? FromArgb(color.toInteger()).name(QColor::HexArgb)
+					: st::activeButtonFg->c.name(QColor::HexArgb));
+		button->setStyleSheet(style);
+		QObject::connect(button, &QPushButton::clicked, [=] {
+			Extera::Plugins::Call(u"view_click"_q, QJsonObject{
+				{ u"id"_q, double(id) },
+			});
+		});
+		ApplySize(button, QJsonObject());
+		ApplyBackground(button, node.value(u"bg"_q).toObject());
+		Widgets[id] = button;
+		return button;
+	}
+	if (type == u"checkbox"_q || type == u"switch"_q) {
+		auto box = new QCheckBox(node.value(u"text"_q).toString(), parent);
+		box->setChecked(node.value(u"checked"_q).toBool());
+		box->setCursor(Qt::PointingHandCursor);
+		const auto color = node.value(u"color"_q);
+		if (color.isDouble()) {
+			box->setStyleSheet(u"color: %1"_q.arg(
+				FromArgb(color.toInteger()).name(QColor::HexArgb)));
+		}
+		QObject::connect(box, &QCheckBox::toggled, [=](bool checked) {
+			Extera::Plugins::Call(u"view_checked"_q, QJsonObject{
+				{ u"id"_q, double(id) },
+				{ u"checked"_q, checked },
+			});
+		});
+		ApplySize(box, QJsonObject());
+		Widgets[id] = box;
+		return box;
+	}
+	if (type == u"seekbar"_q) {
+		auto slider = new QSlider(Qt::Horizontal, parent);
+		slider->setRange(
+			node.value(u"min"_q).toInt(0),
+			node.value(u"max"_q).toInt(100));
+		slider->setValue(node.value(u"progress"_q).toInt(0));
+		QObject::connect(slider, &QSlider::valueChanged, [=](int value) {
+			Extera::Plugins::Call(u"view_progress"_q, QJsonObject{
+				{ u"id"_q, double(id) },
+				{ u"progress"_q, value },
+			});
+		});
+		QObject::connect(slider, &QSlider::sliderPressed, [=] {
+			Extera::Plugins::Call(u"view_progress"_q, QJsonObject{
+				{ u"id"_q, double(id) },
+				{ u"progress"_q, slider->value() },
+				{ u"phase"_q, u"start"_q },
+			});
+		});
+		QObject::connect(slider, &QSlider::sliderReleased, [=] {
+			Extera::Plugins::Call(u"view_progress"_q, QJsonObject{
+				{ u"id"_q, double(id) },
+				{ u"progress"_q, slider->value() },
+				{ u"phase"_q, u"stop"_q },
+			});
+		});
+		ApplySize(slider, QJsonObject());
+		Widgets[id] = slider;
+		return slider;
+	}
+	if (type == u"progressbar"_q) {
+		auto bar = new QProgressBar(parent);
+		bar->setTextVisible(false);
+		bar->setFixedHeight(4);
+		if (node.value(u"indeterminate"_q).toBool()) {
+			bar->setRange(0, 0);
+		} else {
+			bar->setRange(node.value(u"min"_q).toInt(0), node.value(u"max"_q).toInt(100));
+			bar->setValue(node.value(u"progress"_q).toInt(0));
+		}
+		bar->setStyleSheet(u"QProgressBar { border: none; border-radius: 2px; background: %1; }"
+			" QProgressBar::chunk { border-radius: 2px; background: %2; }"_q.arg(
+				st::windowBgOver->c.name(QColor::HexArgb),
+				st::windowActiveTextFg->c.name(QColor::HexArgb)));
+		ApplySize(bar, QJsonObject());
+		Widgets[id] = bar;
+		return bar;
 	}
 	if (type == u"imageview"_q) {
 		auto label = new QLabel(parent);
@@ -441,6 +534,37 @@ void ApplyUpdate(const QJsonObject &payload) {
 		return;
 	}
 	auto widget = it->second;
+	if (op == u"checked"_q) {
+		if (const auto box = qobject_cast<QCheckBox*>(widget.data())) {
+			const auto blocker = QSignalBlocker(box);
+			box->setChecked(payload.value(u"value"_q).toBool());
+		}
+		return;
+	} else if (op == u"progress"_q || op == u"max"_q || op == u"min"_q
+		|| op == u"indeterminate"_q) {
+		const auto value = payload.value(u"value"_q).toInt();
+		if (const auto slider = qobject_cast<QSlider*>(widget.data())) {
+			const auto blocker = QSignalBlocker(slider);
+			if (op == u"progress"_q) {
+				slider->setValue(value);
+			} else if (op == u"max"_q) {
+				slider->setMaximum(value);
+			} else if (op == u"min"_q) {
+				slider->setMinimum(value);
+			}
+		} else if (const auto bar = qobject_cast<QProgressBar*>(widget.data())) {
+			if (op == u"progress"_q) {
+				bar->setValue(value);
+			} else if (op == u"max"_q) {
+				bar->setMaximum(value);
+			} else if (op == u"min"_q) {
+				bar->setMinimum(value);
+			} else {
+				bar->setRange(0, payload.value(u"value"_q).toBool() ? 0 : 100);
+			}
+		}
+		return;
+	}
 	if (op == u"visibility"_q) {
 		widget->setVisible(payload.value(u"value"_q).toInt() == 0);
 	} else if (op == u"alpha"_q) {
@@ -477,6 +601,8 @@ void ApplyUpdate(const QJsonObject &payload) {
 			label->setText(payload.value(u"value"_q).toString());
 		} else if (auto edit = qobject_cast<QLineEdit*>(widget)) {
 			edit->setText(payload.value(u"value"_q).toString());
+		} else if (auto button = qobject_cast<QAbstractButton*>(widget)) {
+			button->setText(payload.value(u"value"_q).toString());
 		}
 	} else if (op == u"color"_q) {
 		widget->setStyleSheet(u"color: %1"_q
@@ -517,7 +643,7 @@ void ApplyUpdate(const QJsonObject &payload) {
 				padding[2].toInt(), padding[3].toInt());
 		}
 	} else if (op == u"orientation"_q) {
-		const auto vertical = payload.value(u"value"_q).toInt(0) == 0;
+		const auto vertical = payload.value(u"value"_q).toInt(0) == 1;
 		const auto old = widget->layout();
 		auto items = std::vector<QPair<QWidget*, QMargins>>();
 		if (old) {
@@ -666,10 +792,36 @@ void PaintOps(QPainter &p, const QJsonArray &ops) {
 
 } // namespace
 
+bool FillBox(not_null<Ui::GenericBox*> box, int64 id, const QJsonObject &rootJson) {
+	EnsureMetrics();
+	auto root = BuildNode(rootJson, nullptr);
+	if (!root) {
+		return false;
+	}
+	Sheets[id].root = root;
+	auto holder = object_ptr<SheetHolder>(new SheetHolder(box));
+	const auto holderRaw = holder.data();
+	holderRaw->setContent(root);
+	box->addRow(std::move(holder), QMargins());
+	Sheets[id].holder = holderRaw;
+	Sheets[id].close = crl::guard(holderRaw, [=] {
+		box->closeBox();
+	});
+	QObject::connect(holderRaw, &QObject::destroyed, [=] {
+		Extera::Plugins::Call(u"event"_q, QJsonObject{
+			{ u"type"_q, u"sheet_closed"_q },
+			{ u"id"_q, double(id) },
+		});
+		Sheets.erase(id);
+	});
+	return true;
+}
+
 void ShowSheet(const QString &payload) {
 	const auto data = QJsonDocument::fromJson(payload.toUtf8()).object();
 	const auto id = int64(data.value(u"id"_q).toDouble());
 	const auto rootJson = data.value(u"root"_q).toObject();
+	const auto title = data.value(u"title"_q).toString();
 	crl::on_main([=] {
 		const auto controller = ActiveController();
 		if (!controller) {
@@ -685,6 +837,9 @@ void ShowSheet(const QString &payload) {
 		controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 			box->setNoContentMargin(true);
 			box->setWidth(width);
+			if (!title.isEmpty()) {
+				box->setTitle(rpl::single(title));
+			}
 			auto holder = object_ptr<SheetHolder>(new SheetHolder(box));
 			const auto holderRaw = holder.data();
 			holderRaw->setContent(root);

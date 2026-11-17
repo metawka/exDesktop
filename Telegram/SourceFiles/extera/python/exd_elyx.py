@@ -377,13 +377,46 @@ def _normalize(name):
     return re.sub(r"[^A-Za-z0-9]", "_", stem)
 
 
+def normalize_name(name):
+    return _normalize(str(name))
+
+
+def load_data_file(path, plzip=None):
+    if plzip is not None:
+        data = plzip.read(path)
+        name = getattr(path, "filename", str(path))
+    else:
+        name = os.fspath(path)
+        with open(name, "rb") as f:
+            data = f.read()
+    return _parse_structured(name, data)
+
+
 class Asset:
-    def __init__(self, path):
-        self.path = pathlib.Path(path)
-        self.filename = self.path.name
-        self.ext = self.path.suffix.lstrip(".").lower()
-        self.name = _normalize(self.filename)
-        self.path_str = str(self.path)
+    def __init__(self, dir_path, filename=None, name=None):
+        full = pathlib.Path(os.fspath(dir_path) if not hasattr(dir_path, "getAbsolutePath")
+                            else str(dir_path.getAbsolutePath()))
+        if filename is not None:
+            full = full / str(filename)
+        self.path = full
+        self.dir_path = str(full.parent)
+        self.filename = full.name
+        self.ext = full.suffix.lstrip(".").lower()
+        self.name = str(name) if name else _normalize(self.filename)
+        self.path_str = str(full)
+
+    @classmethod
+    def temp_asset_from_url(cls, url, filename):
+        import tempfile
+        import urllib.request
+        url = str(url)
+        if not url.startswith("https://"):
+            raise ValueError("only https:// is allowed")
+        folder = tempfile.mkdtemp(prefix="elyx_")
+        target = os.path.join(folder, os.path.basename(str(filename)) or "asset")
+        with urllib.request.urlopen(url, timeout=30) as response, open(target, "wb") as out:
+            out.write(response.read())
+        return cls(folder, os.path.basename(target))
 
     @property
     def java_file(self):
@@ -466,6 +499,14 @@ class Assets:
             return Assets(full, self)
         return Asset(full)
 
+    @property
+    def files(self):
+        return [entry for entry in self if isinstance(entry, Asset)]
+
+    @property
+    def names(self):
+        return [entry.name for entry in self.files]
+
     def __getitem__(self, name):
         return self.get(name)
 
@@ -500,9 +541,34 @@ class Strings:
     def __init__(self, values=None):
         self._values = {str(k).lower(): dict(v) for k, v in (values or {}).items() if isinstance(v, dict)}
 
-    def _locale(self):
+    @property
+    def all_strings(self):
+        return self._values
+
+    @staticmethod
+    def get_current_language():
         import exd_java
         return exd_java.language()
+
+    @staticmethod
+    def pluralization_string(number, words):
+        words = list(words or ())
+        if not words:
+            return str(number)
+        n = abs(int(number))
+        if len(words) >= 3:
+            if n % 10 == 1 and n % 100 != 11:
+                return words[0]
+            if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+                return words[1]
+            return words[2]
+        return words[0] if n == 1 else words[-1]
+
+    def __setitem__(self, key, value):
+        self._values.setdefault(self.get_current_language(), {})[key] = value
+
+    def _locale(self):
+        return self.get_current_language()
 
     def get_with_locale(self, key, locale=None, default=None):
         for code in (locale or self._locale(), "en"):
@@ -646,6 +712,125 @@ def _caller_context():
     return None
 
 
+
+# Utils
+
+class LazyDict(dict):
+    def __setattr__(self, key, value):
+        self[key] = value
+
+    def __getattr__(self, item):
+        if item.startswith("__"):
+            raise AttributeError(item)
+        try:
+            return self[item]
+        except KeyError:
+            raise AttributeError(item)
+
+
+def _convert(value, to_type):
+    if to_type is None or value is None:
+        return value
+    name = to_type if isinstance(to_type, str) else getattr(to_type, "_java_name", None) or getattr(to_type, "__name__", "")
+    name = str(name).split(".")[-1].lower()
+    if name in ("int", "integer", "long", "short", "byte"):
+        return int(value)
+    if name in ("float", "double"):
+        return float(value)
+    if name in ("bool", "boolean"):
+        return bool(value)
+    if name in ("str", "string", "charsequence"):
+        return str(value)
+    return value
+
+
+def mvel_execute(script, data=None, to_type=None, java_instance=None):
+    from extera_utils.classes import _run_mvel
+    values = dict(data or {})
+    if not isinstance(data, dict) and data is not None:
+        try:
+            values = {str(k): data.get(k) for k in data.keySet()}
+        except Exception:
+            values = {}
+    names = list(values.keys())
+    return _convert(_run_mvel(script, java_instance, names, [values[n] for n in names]), to_type)
+
+
+class _Generated:
+    def __init__(self, java_class, methods, return_value, default_value):
+        self._java_class = java_class
+        self._java_name = getattr(java_class, "_java_name", None) or str(java_class)
+        for method_name, fn in methods.items():
+            setattr(self, method_name, self._wrap(fn, return_value, default_value))
+
+    @staticmethod
+    def _wrap(fn, return_value, default_value):
+        def call(*args):
+            try:
+                result = fn(*args)
+            except Exception:
+                import traceback
+                if _host is not None:
+                    _host.log("elyx callback failed: " + traceback.format_exc(limit=4))
+                return default_value
+            return result if return_value else default_value
+        return call
+
+
+def gen(java_class, method_name, return_value=False, default_value=None):
+    return lambda fn: _Generated(java_class, {method_name: fn}, return_value, default_value)
+
+
+def gen2(java_class, return_value=False, **methods):
+    return _Generated(java_class, methods, return_value, None)
+
+
+def safe_func(fn):
+    def call(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception:
+            import traceback
+            if _host is not None:
+                _host.log("elyx function failed: " + traceback.format_exc(limit=4))
+            return None
+    return call
+
+
+def safe_run_on_queue(fn):
+    import client_utils
+    client_utils.run_on_queue(safe_func(fn))
+
+
+def hash_map(dict_):
+    import exd_java
+    return exd_java.HashMap(dict(dict_ or {}))
+
+
+def resize_image(image, width, height):
+    import io
+    from PIL import Image
+    source = Image.open(io.BytesIO(image))
+    fmt = source.format or "PNG"
+    out = io.BytesIO()
+    source.resize((int(width), int(height))).save(out, format=fmt)
+    return out.getvalue()
+
+
+def _callback(name, method, return_value=False):
+    def factory(fn):
+        return _Generated(name, {method: fn}, return_value, None)
+    return factory
+
+
+OnClickListener = _callback("android.view.View$OnClickListener", "onClick")
+Runnable = _callback("java.lang.Runnable", "run")
+Callback = _callback("org.telegram.messenger.Utilities$Callback", "run")
+Callback2 = _callback("org.telegram.messenger.Utilities$Callback2", "run")
+Callback3 = _callback("org.telegram.messenger.Utilities$Callback3", "run")
+CallbackReturn = _callback("org.telegram.messenger.Utilities$CallbackReturn", "run", True)
+
+
 def install_api(host):
     global _host
     _host = host
@@ -659,6 +844,16 @@ class _ElyxModule(types.ModuleType):
     Asset = Asset
     AssetNotFoundException = AssetNotFoundException
     AssetsDirNotFoundException = AssetsDirNotFoundException
+    LazyDict = LazyDict
+    gen = staticmethod(gen)
+    gen2 = staticmethod(gen2)
+    mvel_execute = staticmethod(mvel_execute)
+    OnClickListener = staticmethod(OnClickListener)
+    Runnable = staticmethod(Runnable)
+    Callback = staticmethod(Callback)
+    Callback2 = staticmethod(Callback2)
+    Callback3 = staticmethod(Callback3)
+    CallbackReturn = staticmethod(CallbackReturn)
 
     def __getattr__(self, name):
         if name.startswith("__"):
@@ -704,6 +899,52 @@ def _ensure_api():
         module = _ElyxModule("elyx")
         module.__path__ = []
         sys.modules["elyx"] = module
+    if not isinstance(sys.modules.get("elyxcore"), _ElyxModule):
+        core = _ElyxModule("elyxcore")
+        core.__path__ = []
+        sys.modules["elyxcore"] = core
+    parts = {
+        "utils": {"LazyDict": LazyDict, "gen": gen, "gen2": gen2, "mvel_execute": mvel_execute,
+                  "safe_run_on_queue": safe_run_on_queue, "safe_func": safe_func, "hash_map": hash_map,
+                  "resize_image": resize_image},
+        "assets": {"Asset": Asset, "Assets": Assets, "AssetNotFoundException": AssetNotFoundException,
+                   "AssetsDirNotFoundException": AssetsDirNotFoundException},
+        "localization": {"Strings": Strings, "OnClickListener": OnClickListener, "Runnable": Runnable,
+                         "Callback": Callback, "Callback2": Callback2, "Callback3": Callback3,
+                         "CallbackReturn": CallbackReturn, "ELYX_ID": "elyx",
+                         "dlog": lambda msg: _host.log("[elyx] %s" % msg) if _host else None},
+        "settings": {"SettingsController": SettingsController},
+    }
+    parts["assets"].update({"load_data_file": load_data_file, "normalize_name": normalize_name})
+    top = {"Asset": Asset, "Assets": Assets, "AssetNotFoundException": AssetNotFoundException,
+           "AssetsDirNotFoundException": AssetsDirNotFoundException, "Strings": Strings,
+           "SettingsController": SettingsController, "LazyDict": LazyDict, "gen": gen, "gen2": gen2,
+           "mvel_execute": mvel_execute, "OnClickListener": OnClickListener, "Runnable": Runnable,
+           "Callback": Callback, "Callback2": Callback2, "Callback3": Callback3, "CallbackReturn": CallbackReturn,
+           "get_environment": get_environment, "import_module": import_module}
+    for root in ("elyx", "elyxcore"):
+        for key, value in top.items():
+            if key not in sys.modules[root].__dict__:
+                setattr(sys.modules[root], key, value)
+    for root in ("elyx", "elyxcore"):
+        for name, values in parts.items():
+            full = root + "." + name
+            if full not in sys.modules:
+                sub = types.ModuleType(full)
+                sub.__dict__.update(values)
+                sys.modules[full] = sub
+
+
+def get_environment():
+    context = _caller_context()
+    if not context:
+        return {}
+    return {"plugin_id": context.get("id"), "root": context.get("root"),
+            "strings": context.get("strings"), "settings": SettingsController(context.get("id"))}
+
+
+def import_module(name, package=None):
+    return importlib.import_module(name, package)
 
 
 def check_requires(meta):

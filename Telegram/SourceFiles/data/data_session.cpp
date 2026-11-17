@@ -2461,6 +2461,52 @@ std::vector<std::pair<TimeId, QString>> Session::exdEditsFor(FullMsgId id) {
 		: std::vector<std::pair<TimeId, QString>>();
 }
 
+[[nodiscard]] QString ExdGhostReadPath(not_null<Main::Session*> session) {
+	return cWorkingDir()
+		+ u"tdata/exd_ghost_read/"_q
+		+ QString::number(session->userId().bare)
+		+ u".bin"_q;
+}
+
+MsgId Session::exdGhostReadTill(PeerId peerId) {
+	if (!_exdGhostRead) {
+		auto &loaded = _exdGhostRead.emplace();
+		auto file = QFile(ExdGhostReadPath(_session));
+		if (file.open(QIODevice::ReadOnly)) {
+			auto stream = QDataStream(&file);
+			stream.setVersion(QDataStream::Qt_5_1);
+			while (!stream.atEnd()) {
+				auto peer = quint64();
+				auto till = qint64();
+				stream >> peer >> till;
+				if (stream.status() != QDataStream::Ok) {
+					break;
+				}
+				loaded[PeerId(peer)] = MsgId(till);
+			}
+		}
+	}
+	const auto i = _exdGhostRead->find(peerId);
+	return (i != _exdGhostRead->end()) ? i->second : MsgId();
+}
+
+void Session::exdRememberGhostRead(PeerId peerId, MsgId tillId) {
+	if (!IsServerMsgId(tillId) || exdGhostReadTill(peerId) >= tillId) {
+		return;
+	}
+	(*_exdGhostRead)[peerId] = tillId;
+	const auto path = ExdGhostReadPath(_session);
+	QDir().mkpath(QFileInfo(path).absolutePath());
+	auto file = QFile(path);
+	if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+		auto stream = QDataStream(&file);
+		stream.setVersion(QDataStream::Qt_5_1);
+		for (const auto &[peer, till] : *_exdGhostRead) {
+			stream << quint64(peer.value) << qint64(till.bare);
+		}
+	}
+}
+
 void Session::exdRememberEdit(
 		FullMsgId id,
 		TimeId date,

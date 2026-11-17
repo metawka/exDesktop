@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/ui_utility.h"
 #include "history/history.h"
 #include "history/history_item.h"
+#include "extera/extera_plugins.h"
 #include "styles/style_dialogs.h" // st::dialogsTextWidthMin
 
 namespace Dialogs {
@@ -329,12 +330,27 @@ void Entry::notifyUnreadStateChange(const UnreadState &wasState) {
 }
 
 const Ui::Text::String &Entry::chatListNameText() const {
+	static auto applied = base::flat_map<const Entry*, int>();
 	const auto version = chatListNameVersion();
-	if (_chatListNameVersion < version) {
+	const auto generation = Extera::Plugins::UiHookGeneration();
+	auto &seen = applied[this];
+	if (_chatListNameVersion < version || seen != generation) {
 		_chatListNameVersion = version;
+		seen = generation;
+		auto name = chatListName();
+		const auto history = asHistory();
+		if (history && Extera::Plugins::HasUiHook(u"dialog_name"_q)) {
+			if (const auto replaced = Extera::Plugins::UiHookText(
+					u"dialog_name"_q,
+					nullptr,
+					history->peer,
+					name)) {
+				name = *replaced;
+			}
+		}
 		_chatListNameText.setText(
 			st::semiboldTextStyle,
-			chatListName(),
+			name,
 			Ui::NameTextOptions());
 	}
 	return _chatListNameText;

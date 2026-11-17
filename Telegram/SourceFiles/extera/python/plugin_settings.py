@@ -140,3 +140,34 @@ def _save_settings_to_file():
                     _json.dump(values, handle, ensure_ascii=False)
             except Exception:
                 continue
+
+
+def init(plugins_dir_path, all_shared_prefs=None):
+    base = str(plugins_dir_path or "")
+    if base and not _settings_dir:
+        configure(_os.path.join(_os.path.dirname(base.rstrip("/\\")), "plugin_settings"))
+    if isinstance(all_shared_prefs, dict):
+        with _lock:
+            for plugin_id, values in all_shared_prefs.items():
+                if isinstance(values, dict):
+                    _settings_cache.setdefault(str(plugin_id), {}).update(decode_values(values))
+            _save_settings_to_file()
+
+
+def clear_settings(plugin_id):
+    with _lock:
+        _settings_cache[plugin_id] = {}
+        try:
+            _os.remove(_path(plugin_id))
+        except OSError:
+            pass
+
+
+def get_all_settings(plugin_id):
+    return get_settings(plugin_id)
+
+
+def set_all_settings(plugin_id, settings):
+    with _lock:
+        _settings_cache[plugin_id] = dict(settings or {})
+        _save_settings_to_file()

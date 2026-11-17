@@ -276,6 +276,11 @@ void ResolveDocument(
 		if (document->isAudioFile()
 			|| document->isVoiceMessage()
 			|| document->isVideoMessage()) {
+			if (Extera::Plugins::InterceptClientEvent(
+					u"play_message"_q,
+					item)) {
+				return;
+			}
 			::Media::Player::instance()->playPause(
 				{ document, msgId },
 				::Media::Player::PlaylistContext{
@@ -301,6 +306,11 @@ void ResolveDocument(
 			return;
 		}
 		const auto path = document->filepath(true);
+		if (!path.isEmpty()
+			&& !Extera::Plugins::IsPluginFile(path)
+			&& Extera::Plugins::InterceptFileOpen(path, item)) {
+			return;
+		}
 		if (!path.isEmpty()) {
 			auto context = QVariant();
 			if (item) {

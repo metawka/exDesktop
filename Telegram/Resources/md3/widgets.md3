@@ -1,0 +1,103 @@
+group material;
+defaultActiveButton: RoundButton(defaultActiveButton) {
+	fullRadius: true;
+}
+defaultPopupMenu: PopupMenu(defaultPopupMenu) {
+	scrollPadding: margins(0px, 6px, 0px, 6px);
+	radius: 14px;
+}
+defaultToast: Toast(defaultToast) {
+	radius: 14px;
+}
+defaultImportantTooltip: ImportantTooltip(defaultImportantTooltip) {
+	radius: 10px;
+}
+defaultSideBarButton: SideBarButton(defaultSideBarButton) {
+	textBgActive: sideBarBg;
+	badgeBgActive: sideBarBadgeBg;
+	badgeBgMutedActive: sideBarBadgeBgMuted;
+}
+menuItemBgRadius: 10px;
+menuItemBgMargins: margins(6px, 1px, 6px, 1px);
+sideBarActivePill: size(52px, 30px);
+searchFieldRowRadius: 20px;
+defaultWindowTitle: WindowTitle(defaultWindowTitle) {
+	minimize: IconButton(windowTitleButton) {
+		icon: icon {
+			{ windowTitleButtonSize, titleButtonBg },
+			{ "title_button_minimize", titleButtonFg },
+		};
+		iconOver: icon {
+			{ windowTitleButtonSize, titleButtonBg },
+			{ "exd_title_hover", titleButtonBgOver },
+			{ "title_button_minimize", titleButtonFgOver },
+		};
+	}
+	minimizeIconActive: icon {
+		{ windowTitleButtonSize, titleButtonBgActive },
+		{ "title_button_minimize", titleButtonFgActive },
+	};
+	minimizeIconActiveOver: icon {
+		{ windowTitleButtonSize, titleButtonBgActive },
+		{ "exd_title_hover", titleButtonBgActiveOver },
+		{ "title_button_minimize", titleButtonFgActiveOver },
+	};
+	maximize: IconButton(windowTitleButton) {
+		icon: icon {
+			{ windowTitleButtonSize, titleButtonBg },
+			{ "title_button_maximize", titleButtonFg },
+		};
+		iconOver: icon {
+			{ windowTitleButtonSize, titleButtonBg },
+			{ "exd_title_hover", titleButtonBgOver },
+			{ "title_button_maximize", titleButtonFgOver },
+		};
+	}
+	maximizeIconActive: icon {
+		{ windowTitleButtonSize, titleButtonBgActive },
+		{ "title_button_maximize", titleButtonFgActive },
+	};
+	maximizeIconActiveOver: icon {
+		{ windowTitleButtonSize, titleButtonBgActive },
+		{ "exd_title_hover", titleButtonBgActiveOver },
+		{ "title_button_maximize", titleButtonFgActiveOver },
+	};
+	close: IconButton(windowTitleButton) {
+		icon: icon {
+			{ windowTitleButtonSize, titleButtonCloseBg },
+			{ "title_button_close", titleButtonCloseFg },
+		};
+		iconOver: icon {
+			{ windowTitleButtonSize, titleButtonCloseBg },
+			{ "exd_title_hover", titleButtonCloseBgOver },
+			{ "title_button_close", titleButtonCloseFgOver },
+		};
+	}
+	closeIconActive: icon {
+		{ windowTitleButtonSize, titleButtonCloseBgActive },
+		{ "title_button_close", titleButtonCloseFgActive },
+	};
+	closeIconActiveOver: icon {
+		{ windowTitleButtonSize, titleButtonCloseBgActive },
+		{ "exd_title_hover", titleButtonCloseBgActiveOver },
+		{ "title_button_close", titleButtonCloseFgActiveOver },
+	};
+	restoreIcon: icon {
+		{ windowTitleButtonSize, titleButtonBg },
+		{ "title_button_restore", titleButtonFg },
+	};
+	restoreIconOver: icon {
+		{ windowTitleButtonSize, titleButtonBg },
+		{ "exd_title_hover", titleButtonBgOver },
+		{ "title_button_restore", titleButtonFgOver },
+	};
+	restoreIconActive: icon {
+		{ windowTitleButtonSize, titleButtonBgActive },
+		{ "title_button_restore", titleButtonFgActive },
+	};
+	restoreIconActiveOver: icon {
+		{ windowTitleButtonSize, titleButtonBgActive },
+		{ "exd_title_hover", titleButtonBgActiveOver },
+		{ "title_button_restore", titleButtonFgActiveOver },
+	};
+}

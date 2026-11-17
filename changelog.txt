@@ -1,3 +1,18 @@
+7.4.3.2 (17.11.26)
+- Material 3 Expressive design: Material Symbols icons, Google Sans font, settings and profile in cards, floating message field, animated transitions. Can be turned off in settings.
+- New plugin hooks: message menu, reactions, notifications, chat header, chat list, player and profile rows.
+- Plugins can read and change the message field.
+- Web windows, bottom sheets, chat pickers and Android widgets in plugin windows.
+- Xposed hooks with the call order and cancellation of exteraGram.
+- Work on plugin compatibility continues.
+- Streamer mode and screenshots by hotkey react instantly.
+- Switching chats without a blank screen or jumps.
+- Plugin settings are shown in full.
+- Saved deleted messages no longer disappear after a restart.
+- Messages read in ghost mode stay read after a restart.
+- Subscriber and administrator rows no longer overlap in channel profiles.
+- The member list no longer flickers.
+
 7.4.3.1 (13.11.26)
 - Updated to Telegram Desktop 7.4.3: search for apps, channels, posts and media in search tabs, HTML widgets in bots, camera and microphone access in mini apps, many fixes.
 - The version number now follows the Telegram Desktop version.

@@ -1,0 +1,32 @@
+group material;
+infoProfileTopBarActionButtonRadius: 14px;
+infoProfileTopBarActionButtonFont: font(12px);
+infoMembersList: PeerList(defaultPeerList) {
+	bg: transparent;
+	item: PeerListItem(defaultPeerListItem) {
+		photoPosition: point(18px, 6px);
+		namePosition: point(79px, 11px);
+		statusPosition: point(79px, 31px);
+		checkbox: RoundImageCheckbox(defaultPeerListCheckbox) {
+			selectExtendTwice: 1px;
+			imageRadius: 21px;
+			imageSmallRadius: 19px;
+			check: RoundCheckbox(defaultPeerListCheck) {
+				size: 0px;
+			}
+		}
+		nameFgChecked: contactsNameFg;
+		button: OutlineButton(defaultPeerListButton) {
+			textBg: transparent;
+		}
+	}
+}
+infoMediaSearch: SearchFieldRow(infoMediaSearch) {
+	height: 52px;
+	padding: margins(12px, 8px, 12px, 8px);
+}
+infoLayerMediaSearch: SearchFieldRow(infoLayerMediaSearch) {
+	height: 54px;
+	padding: margins(12px, 9px, 12px, 9px);
+}
+infoMembersHeader: 45px;

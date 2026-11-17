@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "mainwidget.h"
 
+#include "extera/exd_md3.h"
+
 #include "api/api_updates.h"
 #include "api/api_views.h"
 #include "data/components/scheduled_messages.h"
@@ -1658,17 +1660,29 @@ void MainWidget::showHistory(
 			if (isOneColumn()) {
 				return _dialogs && _dialogs->isHidden();
 			} else {
-				return false;
+				return Extera::Md3::Expressive()
+					&& ((!_history->isHidden() && _history->peer())
+						|| (_mainSection != nullptr));
 			}
 		}
 		if (_history->isHidden()) {
-			if (!isOneColumn() && way == Way::ClearStack) {
+			if (!isOneColumn()
+				&& way == Way::ClearStack
+				&& !Extera::Md3::Expressive()) {
 				return false;
+			}
+			if (Extera::Md3::Expressive() && !isOneColumn()) {
+				return true;
 			}
 			return (_mainSection != nullptr)
 				|| (isOneColumn() && _dialogs && !_dialogs->isHidden());
 		}
 		if (back || way == Way::Forward) {
+			return true;
+		}
+		if (Extera::Md3::Expressive()
+			&& !isOneColumn()
+			&& (!_history->peer() || _history->peer()->id != peerId)) {
 			return true;
 		}
 		return false;
@@ -2081,11 +2095,14 @@ void MainWidget::showNewSection(
 		if (fromBottom) {
 			return true;
 		}
-		if (!isOneColumn() && params.way == SectionShow::Way::ClearStack) {
+		if (!isOneColumn()
+			&& params.way == SectionShow::Way::ClearStack
+			&& !(Extera::Md3::Expressive() && newMainSection)) {
 			return false;
 		} else if (isOneColumn()
 			|| (newThirdSection && _thirdSection)
-			|| (newMainSection && isMainSectionShown())) {
+			|| (newMainSection && isMainSectionShown())
+			|| (newMainSection && Extera::Md3::Expressive())) {
 			return true;
 		}
 		return false;

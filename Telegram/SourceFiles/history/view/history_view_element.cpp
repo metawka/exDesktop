@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_element.h"
+#include "extera/extera_plugins.h"
 
 #include "extera/extera_config.h"
 
@@ -2316,7 +2317,23 @@ void Element::setTextWithLinks(
 		const auto item = data();
 		const auto &options = Ui::ItemTextOptions(item);
 		clearSpecialOnlyEmoji();
-		_text.setMarkedText(st::messageTextStyle, text, options, context);
+		auto shown = std::optional<TextWithEntities>();
+		if (Extera::Plugins::HasUiHook(u"message_text"_q)) {
+			if (const auto replaced = Extera::Plugins::UiHookText(
+					u"message_text"_q,
+					item,
+					item->history()->peer,
+					text.text)) {
+				if (*replaced != text.text) {
+					shown = TextWithEntities{ *replaced };
+				}
+			}
+		}
+		_text.setMarkedText(
+			st::messageTextStyle,
+			shown ? *shown : text,
+			options,
+			context);
 		if (!item->_text.empty() && _text.isEmpty()){
 			// If server has allowed some text that we've trim-ed entirely,
 			// just replace it with something so that UI won't look buggy.

@@ -310,3 +310,6 @@ mediaSpeedSuperFast: icon {{ "player/speed/audiospeed_menu_2.0", mediaviewMenuFg
 mediaSpeedSuperFastActive: icon {{ "player/speed/audiospeed_menu_2.0", mediaviewTextLinkFg }};
 
 menuIconChangeOrder: icon {{ "player/player_order", menuIconColor }};
+
+exdMenuIconFeed: icon {{ "menu/exd_feed", menuIconColor }};
+exdMenuIconAi: icon {{ "menu/exd_ai", menuIconColor }};

@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "settings/sections/settings_privacy_security.h"
 #include "settings/settings_builder.h"
+#include "ui/style/style_core.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
 #include "ui/painter.h"
@@ -1163,6 +1164,9 @@ auto SessionsContent::ListController::Add(
 			container,
 			controller.get()),
 		margins);
+	if (style::Md3Grouped()) {
+		content->setProperty("md3GroupedRow", true);
+	}
 	delegate->setContent(content);
 	controller->setDelegate(delegate);
 	return controller;

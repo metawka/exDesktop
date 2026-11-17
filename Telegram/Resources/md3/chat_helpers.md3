@@ -1,0 +1,32 @@
+group material;
+historySendRight: 8px;
+historyComposePillRadius: 22px;
+historyComposePillBg: historyComposeAreaBg;
+historyComposePillMargins: margins(4px, 4px, 4px, 4px);
+historyComposeField: InputField(historyComposeField) {
+	textBg: transparent;
+	textBgActive: transparent;
+}
+historySend: SendButton(historySend) {
+	sendIconFillPadding: 7px;
+	inner: IconButton(historyAttach) {
+		icon: icon {{ "chat/input_send_round", windowBgActive }};
+		iconOver: icon {{ "chat/input_send_round", windowBgActive }};
+	}
+	sendIconFg: windowBgActive;
+}
+defaultComposeControls: ComposeControls(defaultComposeControls) {
+	radius: 22px;
+}
+historyAttachEmoji: EmojiButton(historyAttachEmoji) {
+	bg: transparent;
+}
+historyReplyIconPosition: point(14px, 7px);
+historyReplySkip: 58px;
+historyComposeButton: FlatButton(historyComposeButton) {
+	exdRadius: 22px;
+	exdMargins: margins(4px, 4px, 4px, 4px);
+}
+historyContactStatusButton: FlatButton(historyContactStatusButton) {
+	exdRadius: 0px;
+}

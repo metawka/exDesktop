@@ -123,6 +123,7 @@ void InitCaptureButton(
 			container,
 			st::defaultLevelMeter),
 		st::settingsLevelMeterPadding);
+	Ui::SetupGroupedRowBackground(level, st::settingsLevelMeterPadding);
 	const auto state = level->lifetime().make_state<LevelState>();
 	level->resize(QSize(0, st::defaultLevelMeter.height));
 
@@ -784,6 +785,7 @@ Webrtc::VideoTrack *AddCameraSubsection(
 		}));
 	});
 	const auto bubbleWrap = content->add(object_ptr<Ui::RpWidget>(content));
+	Ui::SetupGroupedRowBackground(bubbleWrap, style::margins());
 	const auto bubble = lifetime.make_state<::Calls::VideoBubble>(
 		bubbleWrap,
 		track);

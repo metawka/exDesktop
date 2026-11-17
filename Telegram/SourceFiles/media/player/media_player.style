@@ -349,3 +349,4 @@ mediaPlayerOrderIconReverse: icon{{ "player/player_order", windowFg }};
 mediaPlayerOrderIconReverseActive: icon{{ "player/player_order", windowActiveTextFg }};
 mediaPlayerOrderIconShuffle: icon{{ "player/player_shuffle", windowFg }};
 mediaPlayerOrderIconShuffleActive: icon{{ "player/player_shuffle", windowActiveTextFg }};
+exdMediaPlayerPlaqueMargins: margins(8px, 3px, 8px, 2px);

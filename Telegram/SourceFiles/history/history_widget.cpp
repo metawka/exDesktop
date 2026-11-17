@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_widget.h"
+#include "extera/extera_plugins.h"
+#include "extera/exd_md3.h"
 #include "ui/wrap/fade_wrap.h"
 
 #include "extera/extera_utils.h"
@@ -400,6 +402,7 @@ HistoryWidget::HistoryWidget(
 	// its left. The outer ordering above sees each of them as a single
 	// child and keeps whatever order they have, so they arrange themselves.
 	_topBar->setVisualTabOrder(true);
+	_topBar->setExdFloating(true);
 	_topBars->setVisualTabOrder(true);
 	_muteUnmute->setVisualTabOrder(true);
 
@@ -512,6 +515,27 @@ HistoryWidget::HistoryWidget(
 	) | rpl::filter(rpl::mappers::_1) | rpl::on_next([=] {
 		fieldFocused();
 	}, _field->lifetime());
+	{
+		const auto weak = QPointer<QWidget>(this);
+		Extera::Plugins::RegisterComposeField(
+			_field.data(),
+			[=]() -> QString {
+				return (weak && _history)
+					? _field->getTextWithTags().text
+					: QString();
+			},
+			[=](const QString &text, bool append) {
+				if (!weak || !_history) {
+					return;
+				}
+				if (append) {
+					_field->insertTag(text);
+				} else {
+					setFieldText({ text, {} });
+				}
+				_field->setFocus();
+			});
+	}
 	if (session().settings().shouldShowStashHint()) {
 		using StashHintManager = HistoryView::Controls::StashHintManager;
 		_stashHintManager = std::make_unique<StashHintManager>(
@@ -6784,7 +6808,7 @@ void HistoryWidget::updateOverStates(QPoint pos) {
 	const auto detailsRect = QRect(
 		0,
 		_field->y() - st::historySendPadding - st::historyReplyHeight,
-		width() - _fieldBarCancel->width(),
+		_fieldBarCancel->x(),
 		st::historyReplyHeight);
 	const auto hasWebPage = !!_previewDrawPreview;
 	const auto inDetails = detailsRect.contains(pos)
@@ -7196,6 +7220,13 @@ void HistoryWidget::updateSendButtonType() {
 			.richMessage = richMessage,
 		});
 	const auto stars = perMessage ? (perMessage * messages) : 0;
+	const auto exdWasInside = (_send->type() == Type::Record)
+		|| (_send->type() == Type::Round);
+	const auto exdInside = (delay <= 0)
+		&& (type == Type::Record || type == Type::Round);
+	if (exdWasInside != exdInside && Extera::Md3::FloatingField()) {
+		update();
+	}
 	_send->setState({
 		.type = (delay > 0) ? Type::Slowmode : type,
 		.slowmodeDelay = delay,
@@ -7877,9 +7908,16 @@ void HistoryWidget::moveFieldControls() {
 	updateExpandButtonGeometry();
 	updateDiscardRichDraftGeometry();
 
+	const auto exdFloating = Extera::Md3::FloatingField()
+		&& (st::historyComposePillRadius > 0);
 	_fieldBarCancel->moveToRight(
-		0,
-		_field->y() - st::historySendPadding - _fieldBarCancel->height());
+		exdFloating
+			? (_send->width() + st::historyComposePillMargins.right())
+			: 0,
+		_field->y()
+			- st::historySendPadding
+			- _fieldBarCancel->height()
+			+ (exdFloating ? st::historyComposePillMargins.top() : 0));
 	if (_exdCharsCounter) {
 		const auto barTop = _fieldBarCancel->isHidden()
 			? (_field->y() - st::historySendPadding)
@@ -8626,7 +8664,7 @@ void HistoryWidget::updateControlsGeometry() {
 		topShadowLeft,
 		_topBar->bottomNoMargins(),
 		width - topShadowLeft - topShadowRight,
-		st::lineWidth);
+		_topBar->exdFloating() ? 0 : st::lineWidth);
 }
 
 void HistoryWidget::itemRemoved(not_null<const HistoryItem*> item) {
@@ -10833,6 +10871,9 @@ void HistoryWidget::replyToMessage(
 	if (isJoinChannel()) {
 		return;
 	}
+	if (Extera::Plugins::InterceptClientEvent(u"reply"_q, item)) {
+		return;
+	}
 	fields.messageId = item->fullId();
 	if (Extera::Bool(u"quote_reply"_q) && fields.quote.empty()) {
 		const auto text = item->originalText();
@@ -11702,7 +11743,33 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
 	}
 	p.setInactive(
 		controller()->isGifPausedAtLeastFor(Window::GifPauseReason::Any));
-	p.fillRect(myrtlrect(0, backy, width(), backh), st::historyReplyBg);
+	if (const auto pillRadius = Extera::Md3::FloatingField()
+				? st::historyComposePillRadius
+				: 0;
+			pillRadius > 0) {
+		const auto &margins = st::historyComposePillMargins;
+		const auto sendType = _send
+			? _send->type()
+			: Ui::SendButton::Type::Send;
+		const auto sendInside = (sendType == Ui::SendButton::Type::Record)
+			|| (sendType == Ui::SendButton::Type::Round);
+		const auto right = (_send && !_send->isHidden() && !sendInside)
+			? _send->x()
+			: width();
+		const auto pill = QRect(
+			margins.left(),
+			backy + margins.top(),
+			right - margins.right() - margins.left(),
+			backh - margins.top() - margins.bottom());
+		const auto radius = std::min(pillRadius, pill.height() / 2);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::historyComposePillBg);
+		p.drawRoundedRect(myrtlrect(pill), radius, radius);
+		backy += margins.top();
+	} else {
+		p.fillRect(myrtlrect(0, backy, width(), backh), st::historyReplyBg);
+	}
 
 	const auto media = (!_previewDrawPreview && drawMsgText)
 		? drawMsgText->media()
@@ -11757,7 +11824,7 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
 		p.setPen(st::historyReplyNameFg);
 		const auto elidedWidth = width()
 			- previewLeft
-			- _fieldBarCancel->width()
+			- (width() - _fieldBarCancel->x())
 			- st::msgReplyPadding.right();
 
 		_previewTitle.drawElided(
@@ -11841,7 +11908,7 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
 						backy + st::msgReplyPadding.top(),
 						width()
 							- replyLeft
-							- _fieldBarCancel->width()
+							- (width() - _fieldBarCancel->x())
 							- st::msgReplyPadding.right());
 				}
 				p.setPen(st::historyComposeAreaFg);
@@ -11853,7 +11920,7 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
 							+ backy),
 					.availableWidth = width()
 						- replyLeft
-						- _fieldBarCancel->width()
+						- (width() - _fieldBarCancel->x())
 						- st::msgReplyPadding.right(),
 					.palette = &st::historyComposeAreaPalette,
 					.spoiler = Ui::Text::DefaultSpoilerCache(),
@@ -11875,7 +11942,7 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
 					tr::lng_profile_loading(tr::now),
 					width()
 						- replyLeft
-						- _fieldBarCancel->width()
+						- (width() - _fieldBarCancel->x())
 						- st::msgReplyPadding.right()));
 		}
 	} else if (hasForward) {
@@ -11885,7 +11952,7 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
 		const auto x = st::historyReplySkip;
 		const auto available = width()
 			- x
-			- _fieldBarCancel->width()
+			- (width() - _fieldBarCancel->x())
 			- st::msgReplyPadding.right();
 		_forwardPanel->paint(p, x, backy, available, width());
 	} else if (_suggestOptions) {

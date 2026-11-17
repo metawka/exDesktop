@@ -428,7 +428,7 @@ void BuildWindowCloseBehaviorSection(SectionBuilder &builder) {
 			const auto group = std::make_shared<Ui::RadioenumGroup<Behavior>>(
 				settings->closeBehavior());
 			const auto addRadio = [&](Behavior value, const QString &label) {
-				inner->add(
+				const auto exdRow = inner->add(
 					object_ptr<Ui::Radioenum<Behavior>>(
 						inner,
 						group,
@@ -436,6 +436,7 @@ void BuildWindowCloseBehaviorSection(SectionBuilder &builder) {
 						label,
 						st::settingsSendType),
 					st::settingsSendTypePadding);
+				Ui::SetupGroupedRowBackground(exdRow, st::settingsSendTypePadding);
 			};
 
 			addRadio(
@@ -1572,9 +1573,11 @@ void SetupWindowTitleContent(
 	const auto addCheckbox = [&](
 			rpl::producer<QString> &&label,
 			bool checked) {
-		return container->add(
+		const auto result = container->add(
 			checkbox(std::move(label), checked),
 			st::settingsCheckboxPadding);
+		Ui::SetupGroupedRowBackground(result, st::settingsCheckboxPadding);
+		return result;
 	};
 	const auto settings = &Core::App().settings();
 	if (controller) {
@@ -1655,18 +1658,22 @@ void SetupSystemIntegrationContent(
 	const auto addCheckbox = [&](
 			rpl::producer<QString> &&label,
 			bool checked) {
-		return container->add(
+		const auto result = container->add(
 			checkbox(std::move(label), checked),
 			st::settingsCheckboxPadding);
+		Ui::SetupGroupedRowBackground(result, st::settingsCheckboxPadding);
+		return result;
 	};
 	const auto addSlidingCheckbox = [&](
 			rpl::producer<QString> &&label,
 			bool checked) {
-		return container->add(
+		const auto result = container->add(
 			object_ptr<Ui::SlideWrap<Ui::Checkbox>>(
 				container,
 				checkbox(std::move(label), checked),
 				st::settingsCheckboxPadding));
+		Ui::SetupGroupedRowBackground(result, style::margins());
+		return result;
 	};
 
 	const auto settings = &Core::App().settings();

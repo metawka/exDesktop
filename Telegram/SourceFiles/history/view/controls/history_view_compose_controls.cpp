@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/controls/history_view_compose_controls.h"
+#include "extera/exd_md3.h"
 
 #include "history/view/controls/history_view_bot_menu_button.h"
 
@@ -142,6 +143,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_credits.h"
 #include "styles/style_iv.h"
 #include "styles/style_layers.h"
+#include "extera/extera_plugins.h"
 
 namespace HistoryView {
 namespace {
@@ -397,7 +399,10 @@ void FieldHeader::init() {
 	) | rpl::on_next([=] {
 		Painter p(this);
 		p.setInactive(_show->paused(Window::GifPauseReason::Any));
-		p.fillRect(rect(), st::historyComposeAreaBg);
+		if (st::historyComposePillRadius <= 0
+			|| !Extera::Md3::FloatingField()) {
+			p.fillRect(rect(), st::historyComposeAreaBg);
+		}
 
 		const auto position = st::historyReplyIconPosition;
 		if (_suggestOptions) {
@@ -1300,7 +1305,9 @@ ComposeControls::ComposeControls(
 , _unavailableEmojiPasted(std::move(descriptor.unavailableEmojiPasted))
 , _saveDraftTimer([=] { saveDraft(); })
 , _saveCloudDraftTimer([=] { saveCloudDraft(); }) {
-	if (_st.radius > 0) {
+	if (_st.radius > 0
+		&& (&_st != &st::defaultComposeControls
+			|| Extera::Md3::FloatingField())) {
 		_backgroundRect.emplace(_st.radius, _st.bg);
 	}
 	rpl::combine(
@@ -3249,6 +3256,22 @@ void ComposeControls::initKeyHandler() {
 
 void ComposeControls::initField() {
 	_field->setMaxHeight(st::historyComposeFieldMaxHeight);
+	Extera::Plugins::RegisterComposeField(
+		_field.get(),
+		[=]() -> QString {
+			return _history ? _field->getTextWithTags().text : QString();
+		},
+		[=](const QString &text, bool append) {
+			if (!_history) {
+				return;
+			}
+			if (append) {
+				_field->insertTag(text);
+			} else {
+				setText({ text, {} });
+			}
+			_field->setFocus();
+		});
 	updateSubmitSettings();
 	_field->submits(
 	) | rpl::on_next([=](Qt::KeyboardModifiers modifiers) {
@@ -5052,6 +5075,7 @@ void ComposeControls::updateSendButtonType() {
 			});
 		return perMessage * messages;
 	}();
+	_wrap->update();
 	_send->setState({
 		.type = (delay > 0) ? Type::Slowmode : type,
 		.fillBgOverride = (_chosenStarsCount.value_or(0)
@@ -5792,6 +5816,22 @@ void ComposeControls::updateAttachBotsMenu() {
 }
 
 void ComposeControls::paintBackground(QPainter &p, QRect full, QRect clip) {
+	if (_backgroundRect
+		&& &_st == &st::defaultComposeControls
+		&& st::historyComposePillRadius > 0) {
+		full = full.marginsRemoved(st::historyComposePillMargins);
+		const auto sendType = _send
+			? _send->type()
+			: Ui::SendButton::Type::Send;
+		const auto sendInside = (sendType == Ui::SendButton::Type::Record)
+			|| (sendType == Ui::SendButton::Type::Round);
+		if (_send
+			&& !_send->isHidden()
+			&& !sendInside
+			&& _st.send.sendIconFillPadding > 0) {
+			full.setRight(_send->x() - st::historyComposePillMargins.right() - 1);
+		}
+	}
 	if (_backgroundRect) {
 		auto hq = PainterHighQualityEnabler(p);
 		p.setBrush(_st.bg);

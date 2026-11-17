@@ -1,3 +1,4 @@
+import sys
 import os
 import secrets
 import threading
@@ -165,7 +166,7 @@ def uri_path(uri):
 # Pick
 
 def pick(callback, title="", filters="", multiple=False, plugin_id=None):
-    import _extera
+    _extera = sys.modules["_extera"]
     if plugin_id is None:
         try:
             import extera_host

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/dialogs_widget.h"
+#include "ui/style/style_core.h"
 
 #include "ui/widgets/popup_menu.h"
 #include "styles/style_menu_icons.h"
@@ -277,6 +278,21 @@ Widget::Widget(
 , _searchTimer([=] { search(); })
 , _peerSearch(&controller->session(), Api::PeerSearch::Type::WithSponsored)
 , _singleMessageSearch(&controller->session()) {
+	if (st::dialogsFilterIconLeft > 0) {
+		const auto icon = Ui::CreateChild<Ui::RpWidget>(_search.data());
+		icon->setAttribute(Qt::WA_TransparentForMouseEvents);
+		icon->resize(st::dialogsFilterIcon.size());
+		_search->heightValue() | rpl::on_next([=](int height) {
+			icon->move(
+				st::dialogsFilterIconLeft,
+				(height - icon->height()) / 2);
+		}, icon->lifetime());
+		icon->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(icon);
+			st::dialogsFilterIcon.paint(p, 0, 0, icon->width());
+		}, icon->lifetime());
+		icon->show();
+	}
 	const auto makeChildListShown = [](PeerId peerId, float64 shown) {
 		return InnerWidget::ChildListShown{ peerId, shown };
 	};
@@ -2343,6 +2359,9 @@ void Widget::refreshTopBars() {
 	if (_openedFolder || _openedForum || _openedCommunity) {
 		if (!_subsectionTopBar) {
 			_subsectionTopBar.create(this, controller());
+			_subsectionTopBar->setExdFloating(true);
+			_subsectionTopBar->setExdPlaqueBg(&st::dialogsFilter.textBg);
+			_subsectionTopBar->setExdPlaqueMargins(st::exdArchiveTopBarMargins);
 			if (_stories) {
 				_stories->raise();
 			}
@@ -4640,17 +4659,23 @@ void Widget::updateControlsGeometry() {
 		st::dialogsFilterPadding.y());
 
 	auto right = filterLeft + filterWidth;
-	_cancelSearch->moveToLeft(right - _cancelSearch->width(), _search->y());
+	const auto exdCenter = [&](QWidget *button) {
+		return _search->y()
+			+ std::max((_search->height() - button->height()) / 2, 0);
+	};
+	_cancelSearch->moveToLeft(
+		right - _cancelSearch->width(),
+		exdCenter(_cancelSearch.data()));
 	right -= _jumpToDate->width();
-	_jumpToDate->moveToLeft(right, _search->y());
+	_jumpToDate->moveToLeft(right, exdCenter(_jumpToDate.data()));
 	right -= _chooseFromUser->width();
-	_chooseFromUser->moveToLeft(right, _search->y());
+	_chooseFromUser->moveToLeft(right, exdCenter(_chooseFromUser.data()));
 	const auto mediaRight = _chooseFromUser->toggled()
 		? right
 		: (right + _chooseFromUser->width());
 	_exdMediaFilter->moveToLeft(
 		mediaRight - _exdMediaFilter->width(),
-		_search->y());
+		exdCenter(_exdMediaFilter.data()));
 
 	const auto barw = width();
 	const auto expandedStoriesTop = filterAreaTop + filterAreaHeight;
@@ -4666,7 +4691,9 @@ void Widget::updateControlsGeometry() {
 					- st::dialogsStories.photoLeft),
 				_narrowWidth,
 				narrowRatio)
-			: (filterLeft + filterWidth);
+			: (filterLeft
+				+ filterWidth
+				- (style::Md3Enabled() ? st::exdStoriesSearchInset : 0));
 		_stories->setLayoutConstraints(
 			{ storiesLeft, filterTop + added },
 			inFolderTitle ? style::al_left : style::al_right,

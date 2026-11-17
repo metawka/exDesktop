@@ -120,6 +120,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat_helpers.h"
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
+#include "extera/extera_plugins.h"
 
 #include <QtGui/QGuiApplication>
 #include <QtGui/QClipboard>
@@ -1898,6 +1899,20 @@ void FillContextMenuItems(
 				result->addAction(tr::lng_context_copy_text(tr::now), [=] {
 					if (const auto item = owner->message(itemId)) {
 						if (!list->showCopyRestriction(item)) {
+							if (Extera::Plugins::HasUiHook(u"copy_text"_q)) {
+								const auto original = HistoryItemText(item);
+								if (const auto replaced = Extera::Plugins::UiHookText(
+										u"copy_text"_q,
+										item,
+										nullptr,
+										original.expanded)) {
+									if (*replaced != original.expanded) {
+										TextUtilities::SetClipboardText(
+											TextForMimeData::Simple(*replaced));
+										return;
+									}
+								}
+							}
 							if (asGroup) {
 								if (const auto group = owner->groups().find(item)) {
 									TextUtilities::SetClipboardText(HistoryGroupText(group));

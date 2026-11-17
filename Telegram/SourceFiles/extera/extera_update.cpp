@@ -22,7 +22,7 @@ namespace {
 
 constexpr auto kExteraBase = AppVersionStr;
 constexpr auto kExteraBaseNumber = AppVersion;
-constexpr auto kExteraBuild = 1;
+constexpr auto kExteraBuild = 2;
 constexpr auto kCheckInterval = 6 * 60 * 60 * crl::time(1000);
 constexpr auto kFirstCheckDelay = 10 * crl::time(1000);
 

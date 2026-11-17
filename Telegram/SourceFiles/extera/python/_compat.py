@@ -355,6 +355,38 @@ class _Context(Stub):
         return self
 
 
+class _ClassAccessor:
+    def __init__(self, name):
+        self.name = name
+
+    def __get__(self, obj, owner):
+        name = self.name
+
+        def getter(*args):
+            import exd_java
+            return exd_java.JavaClassInfo(name, owner)
+        return getter
+
+
+def _attach_class_getters(exd_java):
+    import inspect
+    import tgnet_bridge
+    for cls in (tgnet_bridge.ConnectionsManager, tgnet_bridge.MessagesController, tgnet_bridge.UserConfig):
+        exd_java._CLASSES.setdefault(cls._java_name, cls)
+    for name, cls in list(exd_java._CLASSES.items()):
+        if not isinstance(cls, type):
+            continue
+        try:
+            inspect.getattr_static(cls, "getClass")
+            continue
+        except AttributeError:
+            pass
+        try:
+            setattr(cls, "getClass", _ClassAccessor(getattr(cls, "_java_name", None) or name))
+        except Exception:
+            pass
+
+
 _BROWSER_EXTERNAL = [True]
 
 
@@ -365,6 +397,29 @@ class _Browser:
             _BROWSER_EXTERNAL[0] = True
             return None
         return _open_url(str(getattr(url, "toString", lambda: url)()))
+
+    @staticmethod
+    def openInTelegramBrowser(context, url, *args):
+        _Browser.openUrl(context, url)
+        return True
+
+    @staticmethod
+    def openInExternalBrowser(context, url, *args):
+        return _open_url(str(getattr(url, "toString", lambda: url)()))
+
+    @staticmethod
+    def openInExternalApp(context, url, *args):
+        _open_url(str(getattr(url, "toString", lambda: url)()))
+        return True
+
+    @staticmethod
+    def isInternalUrl(url, *args):
+        text = str(getattr(url, "toString", lambda: url)())
+        return text.startswith(("tg://", "https://t.me/", "http://t.me/", "https://telegram.me/"))
+
+    @staticmethod
+    def isTelegraphUrl(url, *args):
+        return "telegra.ph/" in str(url)
 
 
 class LenientMeta(type):
@@ -430,7 +485,26 @@ class _LocaleController(Stub):
         return ""
 
 
+def _jarray(kind, values):
+    if isinstance(values, int) and not isinstance(values, bool):
+        default = None
+        if kind in (int, float):
+            default = kind()
+        elif kind is bool:
+            default = False
+        return [default] * values
+    return list(values)
+
+
 def _dynamic_proxy(*interfaces):
+    bases = tuple(i for i in interfaces if isinstance(i, type))
+    if not bases:
+        return object
+    for candidate in (bases, bases[:1]):
+        try:
+            return type("DynamicProxy", candidate, {})
+        except TypeError:
+            continue
     return object
 
 
@@ -444,6 +518,12 @@ def _widget_shims():
             "TextView": android_views.TextView,
             "EditText": android_views.EditText,
             "ImageView": android_views.ImageView,
+            "Button": android_views.Button,
+            "CompoundButton": android_views.CompoundButton,
+            "CheckBox": android_views.CheckBox,
+            "Switch": android_views.Switch,
+            "SeekBar": android_views.SeekBar,
+            "ProgressBar": android_views.ProgressBar,
             "Toast": _Toast,
         },
         "android.view": {
@@ -498,7 +578,7 @@ SHIMS = {
     "java": {
         "jclass": lambda name: Stub(str(name)),
         "dynamic_proxy": _dynamic_proxy,
-        "jarray": lambda kind: (lambda values: list(values)),
+        "jarray": lambda kind: (lambda values: _jarray(kind, values)),
         "cast": lambda kind, value: value,
         "jint": int,
         "jlong": int,
@@ -552,10 +632,29 @@ def install():
         import tgnet_bridge
         tgnet_bridge.install(SHIMS)
         import exd_java
+        import exd_java_more
+        import exd_java_more2
+        import exd_java_more3
+        import exd_java_more4
         exd_java.install(SHIMS)
         import exd_android
         exd_android.install(SHIMS)
+        import exd_xposed
+        exd_xposed.install(SHIMS)
+        import exd_webview
+        exd_webview.install(SHIMS)
+        import exd_context
+        exd_context.install(SHIMS)
+        import exd_pickers
+        exd_pickers.install(SHIMS)
+        import exd_misc
+        exd_misc.install(SHIMS)
+        import exd_player
+        exd_player.install(SHIMS)
+        import exd_profile
+        exd_profile.install(SHIMS)
         SHIMS["java"]["jclass"] = lambda name: exd_java.lookup(str(name)) or Stub(str(name))
+        _attach_class_getters(exd_java)
         android = SHIMS.setdefault("org.telegram.messenger", {})["AndroidUtilities"]
         android.displaySize = android_views.displaySize
         android.density = android_views.density()

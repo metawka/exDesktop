@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/connection_box.h"
 #include "boxes/reactions_settings_box.h"
 #include "boxes/stickers_box.h"
+#include "ui/style/style_core.h"
 #include "ui/boxes/confirm_box.h"
 #include "boxes/background_box.h"
 #include "boxes/background_preview_box.h"
@@ -1105,7 +1106,7 @@ void BuildSupportSection(SectionBuilder &builder) {
 			controller->session().settings().supportSwitch());
 
 		const auto addRadio = [&](SwitchType value, const QString &label) {
-			inner->add(
+			const auto exdRow = inner->add(
 				object_ptr<Ui::Radioenum<SwitchType>>(
 					inner,
 					group,
@@ -1113,6 +1114,7 @@ void BuildSupportSection(SectionBuilder &builder) {
 					label,
 					st::settingsSendType),
 				st::settingsSendTypePadding);
+			Ui::SetupGroupedRowBackground(exdRow, st::settingsSendTypePadding);
 		};
 		addRadio(SwitchType::None, "Just send the reply");
 		addRadio(SwitchType::Next, "Send and switch to next");
@@ -1196,7 +1198,7 @@ void BuildSupportSection(SectionBuilder &builder) {
 
 		const auto group = std::make_shared<Ui::RadiobuttonGroup>(best->days);
 		for (const auto &option : options) {
-			inner->add(
+			const auto exdRow = inner->add(
 				object_ptr<Ui::Radiobutton>(
 					inner,
 					group,
@@ -1204,6 +1206,7 @@ void BuildSupportSection(SectionBuilder &builder) {
 					option.label,
 					st::settingsSendType),
 				st::settingsSendTypePadding);
+			Ui::SetupGroupedRowBackground(exdRow, st::settingsSendTypePadding);
 		}
 		group->setChangedCallback([=](int days) {
 			controller->session().settings().setSupportChatsTimeSlice(
@@ -1339,7 +1342,11 @@ void SetupStickersEmoji(
 	container->add(object_ptr<Ui::OverrideMargins>(
 		container,
 		std::move(wrap),
-		QMargins(0, 0, 0, st::settingsCheckbox.margin.bottom())));
+		QMargins(
+			0,
+			0,
+			0,
+			style::Md3Grouped() ? 0 : st::settingsCheckbox.margin.bottom())));
 
 	const auto checkbox = [&](const QString &label, bool checked) {
 		return object_ptr<Ui::Checkbox>(
@@ -1355,6 +1362,7 @@ void SetupStickersEmoji(
 		const auto result = inner->add(
 			checkbox(label, checked),
 			st::settingsCheckboxPadding);
+		Ui::SetupGroupedRowBackground(result, st::settingsCheckboxPadding);
 		result->checkedChanges(
 		) | rpl::on_next(
 			std::move(handle),
@@ -1371,6 +1379,7 @@ void SetupStickersEmoji(
 				inner,
 				checkbox(label, checked),
 				st::settingsCheckboxPadding));
+		Ui::SetupGroupedRowBackground(wrap, style::margins());
 		wrap->setDuration(0)->toggleOn(std::move(shown))->entity()->checkedChanges(
 		) | rpl::on_next(
 			std::move(handle),
@@ -1523,12 +1532,14 @@ void SetupMessages(
 		} });
 	}
 
-	Ui::AddSkip(container, st::settingsSendTypeSkip);
+	if (!style::Md3Grouped()) {
+		Ui::AddSkip(container, st::settingsSendTypeSkip);
+	}
 
 	using SendByType = Ui::InputSubmitSettings;
 	using Quick = HistoryView::DoubleClickQuickAction;
 
-	const auto skip = st::settingsSendTypeSkip;
+	const auto skip = style::Md3Grouped() ? 0 : st::settingsSendTypeSkip;
 	auto wrap = object_ptr<Ui::VerticalLayout>(container);
 	const auto inner = wrap.data();
 	container->add(
@@ -1540,7 +1551,7 @@ void SetupMessages(
 	const auto groupSend = std::make_shared<Ui::RadioenumGroup<SendByType>>(
 		Core::App().settings().sendSubmitWay());
 	const auto addSend = [&](SendByType value, const QString &text) {
-		return inner->add(
+		const auto exdRow = inner->add(
 			object_ptr<Ui::Radioenum<SendByType>>(
 				inner,
 				groupSend,
@@ -1548,6 +1559,8 @@ void SetupMessages(
 				text,
 				st::settingsSendType),
 			st::settingsSendTypePadding);
+		Ui::SetupGroupedRowBackground(exdRow, st::settingsSendTypePadding);
+		return exdRow;
 	};
 	const auto sendEnter = addSend(
 		SendByType::Enter,
@@ -1574,7 +1587,7 @@ void SetupMessages(
 	const auto groupQuick = std::make_shared<Ui::RadioenumGroup<Quick>>(
 		Core::App().settings().chatQuickAction());
 	const auto addQuick = [&](Quick value, const QString &text) {
-		return inner->add(
+		const auto exdRow = inner->add(
 			object_ptr<Ui::Radioenum<Quick>>(
 				inner,
 				groupQuick,
@@ -1582,6 +1595,8 @@ void SetupMessages(
 				text,
 				st::settingsSendType),
 			st::settingsSendTypePadding);
+		Ui::SetupGroupedRowBackground(exdRow, st::settingsSendTypePadding);
+		return exdRow;
 	};
 	addQuick(Quick::Reply, tr::lng_settings_chat_quick_action_reply(tr::now));
 	const auto react = addQuick(
@@ -1692,7 +1707,11 @@ void SetupMessages(
 		} });
 	}
 
-	Ui::AddSkip(inner, st::settingsSendTypeSkip);
+	Ui::AddSkip(
+		inner,
+		style::Md3Grouped()
+			? st::settingsCheckboxesSkip
+			: st::settingsSendTypeSkip);
 
 	const auto cornerReply = inner->add(
 		object_ptr<Ui::Checkbox>(
@@ -1701,6 +1720,7 @@ void SetupMessages(
 			Core::App().settings().cornerReply(),
 			st::settingsCheckbox),
 		st::settingsCheckboxPadding);
+	Ui::SetupGroupedRowBackground(cornerReply, st::settingsCheckboxPadding);
 	cornerReply->checkedChanges(
 	) | rpl::on_next([=](bool checked) {
 		Core::App().settings().setCornerReply(checked);
@@ -1720,6 +1740,7 @@ void SetupMessages(
 			Core::App().settings().cornerReaction(),
 			st::settingsCheckbox),
 		st::settingsCheckboxPadding);
+	Ui::SetupGroupedRowBackground(cornerReaction, st::settingsCheckboxPadding);
 	cornerReaction->checkedChanges(
 	) | rpl::on_next([=](bool checked) {
 		Core::App().settings().setCornerReaction(checked);
@@ -1739,6 +1760,7 @@ void SetupMessages(
 			Core::App().settings().pullToNextChannel(),
 			st::settingsCheckbox),
 		st::settingsCheckboxPadding);
+	Ui::SetupGroupedRowBackground(pullToNext, st::settingsCheckboxPadding);
 	pullToNext->checkedChanges(
 	) | rpl::on_next([=](bool checked) {
 		Core::App().settings().setPullToNextChannel(checked);
@@ -1762,6 +1784,7 @@ void SetupChatBackground(
 	const auto row = container->add(
 		object_ptr<BackgroundRow>(container, controller),
 		st::settingsBackgroundPadding);
+	Ui::SetupGroupedRowBackground(row, st::settingsBackgroundPadding);
 
 	if (highlights) {
 		highlights->push_back({ u"chat/wallpapers"_q, {
@@ -1778,8 +1801,12 @@ void SetupChatBackground(
 		} });
 	}
 
-	const auto skipTop = st::settingsCheckbox.margin.top();
-	const auto skipBottom = st::settingsCheckbox.margin.bottom();
+	const auto skipTop = style::Md3Grouped()
+		? 0
+		: st::settingsCheckbox.margin.top();
+	const auto skipBottom = style::Md3Grouped()
+		? 0
+		: st::settingsCheckbox.margin.bottom();
 	auto wrap = object_ptr<Ui::VerticalLayout>(container);
 	const auto inner = wrap.data();
 	container->add(
@@ -1809,6 +1836,8 @@ void SetupChatBackground(
 				Core::App().settings().adaptiveForWide(),
 				st::settingsCheckbox),
 			st::settingsSendTypePadding));
+	Ui::SetupGroupedRowBackground(tile, style::margins());
+	Ui::SetupGroupedRowBackground(adaptive, style::margins());
 
 	tile->entity()->checkedChanges(
 	) | rpl::on_next([=](bool checked) {
@@ -2046,7 +2075,7 @@ void SetupChatListQuickAction(
 		controller->uiShow()->showBox(Box([=](not_null<Ui::GenericBox*> box) {
 			box->setTitle(tr::lng_settings_quick_dialog_action_title());
 			const auto addRadio = [&](Type value, tr::phrase<> phrase) {
-				box->verticalLayout()->add(
+				const auto exdRow = box->verticalLayout()->add(
 					object_ptr<Ui::Radioenum<Type>>(
 						box->verticalLayout(),
 						group,
@@ -2054,6 +2083,7 @@ void SetupChatListQuickAction(
 						phrase(tr::now),
 						st::settingsSendType),
 					st::settingsSendTypePadding);
+				Ui::SetupGroupedRowBackground(exdRow, st::settingsSendTypePadding);
 			};
 			addPreview(box->verticalLayout());
 			Ui::AddSkip(box->verticalLayout());
@@ -2100,6 +2130,9 @@ void SetupDefaultThemes(
 	const auto palette = Ui::CreateChild<ColorsPalette>(
 		container.get(),
 		container.get());
+	if (style::Md3Grouped()) {
+		Ui::AddSkip(container, st::settingsCheckboxPadding.top() * 2);
+	}
 	const auto systemAccentWrap = container->add(
 		object_ptr<Ui::SlideWrap<Ui::Checkbox>>(
 			container,
@@ -2108,6 +2141,9 @@ void SetupDefaultThemes(
 				tr::lng_settings_theme_system_accent_color(tr::now),
 				Core::App().settings().systemAccentColorEnabled(),
 				st::settingsCheckbox)),
+		st::settingsCheckboxPadding);
+	Ui::SetupGroupedRowBackground(
+		systemAccentWrap,
 		st::settingsCheckboxPadding);
 	systemAccentWrap->setDuration(0);
 

@@ -52,6 +52,17 @@ def _missing(name):
     return _compat.Missing(name)
 
 
+def _field_or_missing(cls, owner, name):
+    if isinstance(cls, type):
+        import inspect
+        try:
+            inspect.getattr_static(cls, name)
+            return ShimField(cls, name)
+        except AttributeError:
+            pass
+    return ShimField(cls, name) if isinstance(cls, type) else _missing("%s.%s" % (owner, name))
+
+
 class JavaClassInfo:
     def __init__(self, name, python_class=None):
         self._name = name
@@ -82,19 +93,83 @@ class JavaClassInfo:
         return None
 
     def getDeclaredMethods(self):
-        return []
+        return shim_methods(self._class, True)
 
     def getDeclaredFields(self):
-        return []
+        return shim_fields(self._class)
 
     def getMethods(self):
-        return []
+        return shim_methods(self._class)
 
     def getFields(self):
-        return []
+        return shim_fields(self._class)
+
+    def getDeclaredMethod(self, name, *args):
+        return shim_method(self._class, name) or _missing("%s.%s" % (self._name, name))
+
+    def getMethod(self, name, *args):
+        return self.getDeclaredMethod(name, *args)
+
+    def getDeclaredField(self, name):
+        return _field_or_missing(self._class, self._name, name)
+
+    def getField(self, name):
+        return _field_or_missing(self._class, self._name, name)
+
+    def getDeclaredConstructors(self):
+        return [ShimConstructor(self._class)] if isinstance(self._class, type) else []
+
+    def getConstructors(self):
+        return self.getDeclaredConstructors()
+
+    def getDeclaredConstructor(self, *args):
+        if isinstance(self._class, type):
+            return ShimConstructor(self._class)
+        return _missing("%s.<init>" % self._name)
+
+    def getConstructor(self, *args):
+        return self.getDeclaredConstructor(*args)
+
+    def isAssignableFrom(self, other):
+        other_cls = getattr(other, "_class", other)
+        return isinstance(self._class, type) and isinstance(other_cls, type) and issubclass(other_cls, self._class)
+
+    def cast(self, value):
+        return value
+
+    def getModifiers(self):
+        return 1
+
+    def getClass(self):
+        return self
+
+    def isInterface(self):
+        return False
+
+    def isArray(self):
+        return False
+
+    def isPrimitive(self):
+        return self._name in ("int", "long", "boolean", "float", "double", "short", "byte", "char", "void")
+
+    def getClassLoader(self):
+        return None
 
     def getInterfaces(self):
         return []
+
+    def equals(self, other):
+        return isinstance(other, JavaClassInfo) and other._name == self._name
+
+    def __eq__(self, other):
+        if isinstance(other, JavaClassInfo):
+            return other._name == self._name
+        if isinstance(other, str):
+            return other == self._name
+        return isinstance(other, type) and other is self._class
+
+    def __hash__(self):
+        return hash(self._name)
 
     def __call__(self, *args, **kwargs):
         if self._class is None:
@@ -132,31 +207,45 @@ class JavaObject(metaclass=_LenientJavaMeta):
 
     @hybridmethod
     def getDeclaredMethod(target, name, *args):
-        return _missing("%s.%s" % (_java_name_of(target), name))
+        cls = target if isinstance(target, type) else type(target)
+        return shim_method(cls, name) or _missing("%s.%s" % (_java_name_of(target), name))
 
     @hybridmethod
     def getMethod(target, name, *args):
-        return _missing("%s.%s" % (_java_name_of(target), name))
+        cls = target if isinstance(target, type) else type(target)
+        return shim_method(cls, name) or _missing("%s.%s" % (_java_name_of(target), name))
 
     @hybridmethod
     def getDeclaredField(target, name):
-        return _missing("%s.%s" % (_java_name_of(target), name))
+        cls = target if isinstance(target, type) else type(target)
+        return _field_or_missing(cls, _java_name_of(target), name)
 
     @hybridmethod
     def getField(target, name):
-        return _missing("%s.%s" % (_java_name_of(target), name))
+        cls = target if isinstance(target, type) else type(target)
+        return _field_or_missing(cls, _java_name_of(target), name)
 
     @hybridmethod
     def getDeclaredConstructor(target, *args):
-        return _missing("%s.<init>" % _java_name_of(target))
+        cls = target if isinstance(target, type) else type(target)
+        return ShimConstructor(cls)
+
+    @hybridmethod
+    def getDeclaredConstructors(target):
+        cls = target if isinstance(target, type) else type(target)
+        return [ShimConstructor(cls)]
 
     @hybridmethod
     def getDeclaredMethods(target):
-        return []
+        return shim_methods(target if isinstance(target, type) else type(target), True)
+
+    @hybridmethod
+    def getMethods(target):
+        return shim_methods(target if isinstance(target, type) else type(target))
 
     @hybridmethod
     def getDeclaredFields(target):
-        return []
+        return shim_fields(target if isinstance(target, type) else type(target))
 
     def hashCode(self):
         return hash(self) & 0x7FFFFFFF
@@ -572,7 +661,36 @@ class Math(JavaObject):
         return math.cos(a)
 
 
-class Class(JavaObject):
+def _is_java_class(obj):
+    if isinstance(obj, JavaClassInfo):
+        return True
+    if isinstance(obj, type):
+        return bool(getattr(obj, "_java_name", None)) or issubclass(obj, JavaObject)
+    import _compat
+    return isinstance(obj, _compat.Stub)
+
+
+class _ClassMeta(_LenientJavaMeta):
+    def __instancecheck__(cls, obj):
+        return _is_java_class(obj) or type.__instancecheck__(cls, obj)
+
+
+class _ObjectMeta(_LenientJavaMeta):
+    def __instancecheck__(cls, obj):
+        if obj is None:
+            return False
+        return isinstance(obj, (JavaObject, JavaClassInfo, list, dict, str, int, float, bool, set))             or hasattr(type(obj), "_java_name") or type.__instancecheck__(cls, obj)
+
+
+class JavaClass(JavaObject, metaclass=_ClassMeta):
+    _java_name = "java.chaquopy.JavaClass"
+
+
+class ChaquopyJavaObject(JavaObject, metaclass=_ObjectMeta):
+    _java_name = "java.chaquopy.JavaObject"
+
+
+class Class(JavaObject, metaclass=_ClassMeta):
     _java_name = "java.lang.Class"
 
     @staticmethod
@@ -704,6 +822,9 @@ class HashSet(set, JavaObject):
 
     def __init__(self, values=None):
         super().__init__(values if values is not None and not isinstance(values, int) else ())
+
+    def toArray(self, *args):
+        return list(self)
 
     def add(self, value):
         if value in self:
@@ -1769,7 +1890,17 @@ class _LocaleInfo(JavaObject):
         return self.shortName
 
 
-class _LocaleControllerInstance(JavaObject):
+class LocaleController(JavaObject):
+    _java_name = "org.telegram.messenger.LocaleController"
+    isRTL = False
+    _instance = None
+
+    @staticmethod
+    def getInstance():
+        if LocaleController._instance is None:
+            LocaleController._instance = LocaleController()
+        return LocaleController._instance
+
     def getCurrentLocale(self):
         return Locale(language())
 
@@ -1779,23 +1910,22 @@ class _LocaleControllerInstance(JavaObject):
     def getLanguageOverride(self):
         return language()
 
-    def __getattr__(self, item):
-        if item.startswith("__"):
-            raise AttributeError(item)
-        import _compat
-        return _compat.Stub("LocaleController.getInstance." + item)
+    def getSystemLocaleStringIso639(self):
+        return language()
 
+    def applyLanguage(self, info=None, *args):
+        code = info if isinstance(info, str) else None
+        for attr in ("shortName", "pluralLangCode"):
+            if code:
+                break
+            value = getattr(info, attr, None) if info is not None else None
+            code = value if isinstance(value, str) and value else None
+        if code:
+            set_language(code)
+        return None
 
-class LocaleController(JavaObject):
-    _java_name = "org.telegram.messenger.LocaleController"
-    isRTL = False
-    _instance = None
-
-    @staticmethod
-    def getInstance():
-        if LocaleController._instance is None:
-            LocaleController._instance = _LocaleControllerInstance()
-        return LocaleController._instance
+    def recreateFormatters(self, *args):
+        return None
 
     @staticmethod
     def getString(*args):
@@ -1849,6 +1979,108 @@ class _PeerRef(JavaObject):
         self.channel_id = -dialog_id if dialog_id < 0 else 0
 
 
+_ENTITY_TL = {
+    "bold": "TL_messageEntityBold", "italic": "TL_messageEntityItalic", "underline": "TL_messageEntityUnderline",
+    "strikethrough": "TL_messageEntityStrike", "code": "TL_messageEntityCode", "pre": "TL_messageEntityPre",
+    "blockquote": "TL_messageEntityBlockquote", "spoiler": "TL_messageEntitySpoiler", "url": "TL_messageEntityUrl",
+    "text_link": "TL_messageEntityTextUrl", "email": "TL_messageEntityEmail", "hashtag": "TL_messageEntityHashtag",
+    "cashtag": "TL_messageEntityCashtag", "mention": "TL_messageEntityMention",
+    "mention_name": "TL_messageEntityMentionName", "custom_emoji": "TL_messageEntityCustomEmoji",
+    "bot_command": "TL_messageEntityBotCommand", "phone": "TL_messageEntityPhone",
+    "bank_card": "TL_messageEntityBankCard",
+}
+
+
+def _tl(name, **fields):
+    import tl_runtime
+    cls = tl_runtime.lookup(name)
+    if cls is None:
+        return None
+    obj = cls()
+    for key, value in fields.items():
+        setattr(obj, key, value)
+    return obj
+
+
+def _peer(dialog_id, kind=None):
+    peer = _peer_object(dialog_id, kind)
+    for field in ("user_id", "chat_id", "channel_id"):
+        if not hasattr(peer, field) or getattr(peer, field) is None:
+            try:
+                setattr(peer, field, 0)
+            except Exception:
+                pass
+    return peer
+
+
+def _peer_object(dialog_id, kind=None):
+    dialog_id = int(dialog_id or 0)
+    if dialog_id > 0:
+        return _tl("TL_peerUser", user_id=dialog_id) or _PeerRef(dialog_id)
+    if dialog_id < 0 and kind == "chat":
+        return _tl("TL_peerChat", chat_id=-dialog_id) or _PeerRef(dialog_id)
+    if dialog_id < 0:
+        return _tl("TL_peerChannel", channel_id=-dialog_id) or _PeerRef(dialog_id)
+    return _PeerRef(0)
+
+
+def _entity(data):
+    name = _ENTITY_TL.get(str(data.get("type") or ""))
+    entity = _tl(name, offset=int(data.get("offset") or 0), length=int(data.get("length") or 0)) if name else None
+    if entity is None:
+        return None
+    extra = str(data.get("data") or "")
+    if name == "TL_messageEntityTextUrl":
+        entity.url = extra
+    elif name == "TL_messageEntityPre":
+        entity.language = extra
+    elif name == "TL_messageEntityCustomEmoji":
+        entity.document_id = int(extra) if extra.isdigit() else 0
+    elif name == "TL_messageEntityMentionName":
+        head = extra.split(".")[0]
+        entity.user_id = int(head) if head.isdigit() else 0
+    return entity
+
+
+def _media(data):
+    if not data:
+        return None
+    kind = str(data.get("type") or "")
+    if kind == "photo":
+        photo = _tl("TL_photo", id=int(data.get("photo_id") or 0))
+        return _tl("TL_messageMediaPhoto", photo=photo)
+    if kind in ("document", "audio", "voice", "video", "round", "gif", "sticker"):
+        attributes = ArrayList()
+        seconds = float(data.get("duration_ms") or 0) / 1000.0
+        name = str(data.get("file_name") or "")
+        if name:
+            attributes.add(_tl("TL_documentAttributeFilename", file_name=name))
+        if kind in ("audio", "voice"):
+            attributes.add(_tl("TL_documentAttributeAudio", voice=kind == "voice", duration=seconds,
+                               title=data.get("title") or None, performer=data.get("performer") or None))
+        elif kind in ("video", "round"):
+            attributes.add(_tl("TL_documentAttributeVideo", round_message=kind == "round", duration=seconds,
+                               w=int(data.get("width") or 0), h=int(data.get("height") or 0)))
+        elif kind == "gif":
+            attributes.add(_tl("TL_documentAttributeAnimated"))
+        elif kind == "sticker":
+            attributes.add(_tl("TL_documentAttributeSticker", alt=str(data.get("emoji") or "")))
+        document = _tl("TL_document", id=int(data.get("document_id") or 0), mime_type=str(data.get("mime") or ""),
+                       size=int(data.get("size") or 0),
+                       attributes=ArrayList([a for a in attributes if a is not None]))
+        return _tl("TL_messageMediaDocument", document=document, video=kind == "video", round=kind == "round",
+                   voice=kind == "voice")
+    if kind == "webpage":
+        return _tl("TL_messageMediaWebPage")
+    if kind == "poll":
+        return _tl("TL_messageMediaPoll")
+    if kind == "contact":
+        return _tl("TL_messageMediaContact")
+    if kind == "geo":
+        return _tl("TL_messageMediaGeo")
+    return None
+
+
 class _MessageOwner(JavaObject):
     _java_name = "org.telegram.tgnet.TLRPC$TL_message"
 
@@ -1858,32 +2090,84 @@ class _MessageOwner(JavaObject):
         self.date = int(data.get("date") or 0)
         self.out = bool(data.get("out"))
         self.dialog_id = int(data.get("dialog_id") or 0)
-        self.peer_id = _PeerRef(self.dialog_id)
-        self.from_id = _PeerRef(int(data.get("sender_id") or 0))
-        self.entities = ArrayList()
-        self.media = None
-        self.reply_to = None
+        self.peer_id = _peer(self.dialog_id, data.get("peer_type"))
+        self.from_id = _peer(int(data.get("sender_id") or 0), data.get("sender_type"))
+        self.entities = ArrayList([e for e in (_entity(x) for x in data.get("entities") or ()) if e is not None])
+        self.media = _media(data.get("media"))
+        self.post = bool(data.get("post"))
+        self.pinned = bool(data.get("pinned"))
+        self.views = int(data.get("views") or 0)
+        self.edit_date = int(data.get("edit_date") or 0)
+        self.grouped_id = int(data.get("group_id") or 0)
+        self.via_bot_id = int(data.get("via_bot_id") or 0)
+        reply = int(data.get("reply_to") or 0)
+        self.reply_to = _tl("TL_messageReplyHeader", reply_to_msg_id=reply) if reply else None
         self.fwd_from = None
+        if data.get("fwd_date") or data.get("fwd_from_id"):
+            self.fwd_from = _tl("TL_messageFwdHeader", date=int(data.get("fwd_date") or 0),
+                                from_id=_peer(int(data.get("fwd_from_id") or 0)),
+                                channel_post=int(data.get("fwd_msg_id") or 0))
+        self.action = _tl("TL_messageActionEmpty") if data.get("service") else None
         self.flags = 0
+        self._exd_data = data
 
 
 class MessageObject(JavaObject):
     _java_name = "org.telegram.messenger.MessageObject"
+    TYPE_TEXT = 0
+    TYPE_PHOTO = 1
+    TYPE_VOICE = 2
+    TYPE_VIDEO = 3
+    TYPE_GEO = 4
+    TYPE_ROUND_VIDEO = 5
+    TYPE_GIF = 8
+    TYPE_FILE = 9
+    TYPE_DATE = 10
+    TYPE_CONTACT = 12
+    TYPE_STICKER = 13
+    TYPE_MUSIC = 14
+    TYPE_ANIMATED_STICKER = 15
+    TYPE_POLL = 17
+    _TYPES = {"photo": 1, "voice": 2, "video": 3, "geo": 4, "round": 5, "gif": 8, "document": 9, "contact": 12,
+              "sticker": 13, "audio": 14, "poll": 17}
 
     def __init__(self, account=0, owner=None, *args):
         if isinstance(owner, dict):
             owner = _MessageOwner(owner)
         self.currentAccount = int(account or 0) if isinstance(account, int) else 0
         self.messageOwner = owner if owner is not None else _MessageOwner({})
-        self.messageText = String(getattr(self.messageOwner, "message", "") or "")
-        self.caption = None
-        self.type = 0
+        data = getattr(self.messageOwner, "_exd_data", {}) or {}
+        self._media_data = data.get("media") or {}
+        text = getattr(self.messageOwner, "message", "") or ""
+        has_media = bool(self._media_data) and self._media_data.get("type") not in ("webpage",)
+        self.messageText = String(text)
+        self.caption = String(text) if has_media and text else None
+        if data.get("service"):
+            self.type = self.TYPE_DATE
+        else:
+            self.type = self._TYPES.get(self._media_data.get("type"), self.TYPE_TEXT)
+        self.contentType = 0
+        self.audioProgress = 0.0
+        self.audioProgressSec = 0
+        self.audioPlayerDuration = int(float(self._media_data.get("duration_ms") or 0) / 1000)
+        self.replyMessageObject = None
+        self.forceUpdate = False
+
+    def _kind(self):
+        return self._media_data.get("type")
 
     def getId(self):
         return self.messageOwner.id
 
+    def getRealId(self):
+        return self.messageOwner.id
+
     def getDialogId(self):
         return self.messageOwner.dialog_id
+
+    def getChatId(self):
+        dialog = self.getDialogId()
+        return -dialog if dialog < 0 else 0
 
     def isOut(self):
         return bool(self.messageOwner.out)
@@ -1892,32 +2176,199 @@ class MessageObject(JavaObject):
         return bool(self.messageOwner.out)
 
     def getFromChatId(self):
-        peer = self.messageOwner.from_id
-        return peer.user_id or -(peer.chat_id or 0)
+        data = getattr(self.messageOwner, "_exd_data", {}) or {}
+        return int(data.get("sender_id") or 0)
 
     def getSenderId(self):
         return self.getFromChatId()
 
-    def getChatId(self):
-        return self.messageOwner.peer_id.chat_id
-
     def isFromUser(self):
-        return self.messageOwner.from_id.user_id > 0
+        return self.getFromChatId() > 0
+
+    def isFromChannel(self):
+        data = getattr(self.messageOwner, "_exd_data", {}) or {}
+        return data.get("sender_type") == "channel"
+
+    def isFromGroup(self):
+        return self.getDialogId() < 0 and not self.isPost()
+
+    def isPost(self):
+        return bool(getattr(self.messageOwner, "post", False))
 
     def isSent(self):
         return True
 
+    def isSending(self):
+        return False
+
+    def isSendError(self):
+        return False
+
     def isUnread(self):
         return not self.messageOwner.out
+
+    def isContentUnread(self):
+        return False
 
     def getMessageText(self):
         return self.messageText
 
     def isMediaEmpty(self):
-        return True
+        return not self._media_data or self._kind() in ("webpage",)
+
+    def isWebpage(self):
+        return self._kind() == "webpage"
+
+    def isPhoto(self):
+        return self._kind() == "photo"
+
+    def isVideo(self):
+        return self._kind() == "video"
+
+    def isGif(self):
+        return self._kind() == "gif"
+
+    def isVoice(self):
+        return self._kind() == "voice"
+
+    def isRoundVideo(self):
+        return self._kind() == "round"
+
+    def isMusic(self):
+        return self._kind() == "audio"
+
+    def isSticker(self):
+        return self._kind() == "sticker"
+
+    def isAnimatedSticker(self):
+        return self.isSticker() and "tgsticker" in str(self._media_data.get("mime") or "")
+
+    def isVideoSticker(self):
+        return self.isSticker() and "webm" in str(self._media_data.get("mime") or "")
+
+    def isAnyKindOfSticker(self):
+        return self.isSticker()
+
+    def isDocument(self):
+        return self._kind() == "document"
+
+    def isPoll(self):
+        return self._kind() == "poll"
+
+    def isContact(self):
+        return self._kind() == "contact"
+
+    def isLocation(self):
+        return self._kind() == "geo"
+
+    def isService(self):
+        return self.type == self.TYPE_DATE
+
+    def isSecretMedia(self):
+        return False
+
+    def needDrawBluredPreview(self):
+        return False
+
+    def hasMediaSpoilers(self):
+        return False
+
+    def getDocument(self):
+        media = self.messageOwner.media
+        return getattr(media, "document", None) if media is not None else None
+
+    def getMedia(self, *args):
+        return self.messageOwner.media
+
+    def getMediaType(self):
+        return self.type
+
+    def getDuration(self):
+        return float(self._media_data.get("duration_ms") or 0) / 1000.0
+
+    def getSize(self):
+        return int(self._media_data.get("size") or 0)
+
+    def getFileName(self):
+        return str(self._media_data.get("file_name") or "")
+
+    def getMimeType(self):
+        return str(self._media_data.get("mime") or "")
+
+    def getMusicTitle(self, *args):
+        title = self._media_data.get("title")
+        if title:
+            return str(title)
+        name = self.getFileName()
+        return name.rsplit(".", 1)[0] if name else "Unknown"
+
+    def getMusicAuthor(self, *args):
+        return str(self._media_data.get("performer") or "")
+
+    def getStickerEmoji(self):
+        return self._media_data.get("emoji") or None
+
+    def isForwarded(self):
+        return self.messageOwner.fwd_from is not None
+
+    def getForwardedFromId(self):
+        data = getattr(self.messageOwner, "_exd_data", {}) or {}
+        return int(data.get("fwd_from_id") or 0)
+
+    def isReply(self):
+        return self.messageOwner.reply_to is not None
+
+    def getReplyMsgId(self):
+        reply = self.messageOwner.reply_to
+        return int(getattr(reply, "reply_to_msg_id", 0) or 0) if reply is not None else 0
+
+    def getReplyTopMsgId(self, *args):
+        return 0
+
+    def getTopicId(self, *args):
+        return 0
 
     def hasValidReplyMessageObject(self):
+        return self.replyMessageObject is not None
+
+    def isEdited(self):
+        return bool(getattr(self.messageOwner, "edit_date", 0))
+
+    def isPinned(self):
+        return bool(getattr(self.messageOwner, "pinned", False))
+
+    def getGroupId(self):
+        return int(getattr(self.messageOwner, "grouped_id", 0) or 0)
+
+    getGroupIdForUse = getGroupId
+
+    def hasValidGroupId(self):
+        return self.getGroupId() != 0
+
+    def getViaBotId(self):
+        return int(getattr(self.messageOwner, "via_bot_id", 0) or 0)
+
+    def isVoiceTranscriptionOpen(self):
         return False
+
+    def canForwardMessage(self):
+        return not self.isService()
+
+    def canEditMessage(self, *args):
+        return self.isOut() and not self.isService()
+
+    def canDeleteMessage(self, *args):
+        return True
+
+    def needDrawShareButton(self):
+        return self.isPost()
+
+    def getChatMode(self):
+        return 0
+
+    def equals(self, other):
+        return isinstance(other, MessageObject) and other.getId() == self.getId() \
+            and other.getDialogId() == self.getDialogId()
 
 
 def message_object(data, account=0):
@@ -1953,36 +2404,220 @@ for _alias, _cls in (("java.util.LinkedList", ArrayList), ("java.util.List", Arr
     _CLASSES[_alias] = _cls
 
 
-class ShimMethod:
+_REFLECTION_NAMES = frozenset((
+    "getClass", "getDeclaredMethod", "getMethod", "getDeclaredField", "getField", "getDeclaredConstructor",
+    "getDeclaredMethods", "getDeclaredFields", "getMethods", "getFields", "getDeclaredConstructors",
+    "getConstructors", "getInterfaces", "getName", "getSimpleName", "getCanonicalName", "getSuperclass",
+    "getClassLoader", "isInstance", "hashCode", "equals", "toString", "mro"))
+
+
+def _signature_count(func, kind):
+    import inspect
+    try:
+        params = list(inspect.signature(func).parameters.values())
+    except (TypeError, ValueError):
+        return 0
+    if kind == "method" and params:
+        params = params[1:]
+    return sum(1 for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD))
+
+
+def _raw_kind(cls, name):
+    import inspect
+    try:
+        raw = inspect.getattr_static(cls, name)
+    except AttributeError:
+        return None, None
+    if isinstance(raw, staticmethod):
+        return raw.__func__, "static"
+    if isinstance(raw, classmethod):
+        return raw.__func__, "class"
+    return raw, "method"
+
+
+class ShimMember:
+    _modifiers = 1
+
+    def setAccessible(self, *args):
+        return None
+
+    def isAccessible(self, *args):
+        return True
+
+    def getModifiers(self, *args):
+        return self._modifiers
+
+    def getDeclaringClass(self, *args):
+        return self._cls
+
+    def isSynthetic(self, *args):
+        return False
+
+    def isVarArgs(self, *args):
+        return False
+
+    def getAnnotations(self, *args):
+        return []
+
+    def hashCode(self):
+        return hash((self._cls, self._method)) & 0x7FFFFFFF
+
+    def equals(self, other):
+        return self == other
+
+    def __eq__(self, other):
+        return isinstance(other, ShimMember) and other._cls is self._cls and other._method == self._method
+
+    def __hash__(self):
+        return hash((self._cls, self._method))
+
+    def toString(self):
+        return self._java_name
+
+    def getClass(self):
+        return JavaClassInfo("java.lang.reflect.Method" if self._method != "<init>"
+                             else "java.lang.reflect.Constructor", type(self))
+
+
+class ShimMethod(ShimMember):
+    _java_name = "java.lang.reflect.Method"
+
     def __init__(self, cls, name):
         self._cls = cls
         self._method = name
         self._java_name = "%s.%s" % (getattr(cls, "_java_name", cls.__name__), name)
 
+    def _func(self):
+        original = _SHIM_ORIGINALS.get((self._cls, self._method))
+        if original is not None:
+            if isinstance(original, staticmethod):
+                return original.__func__, "static"
+            if isinstance(original, classmethod):
+                return original.__func__, "class"
+            return original, "method"
+        return _raw_kind(self._cls, self._method)
+
     def getName(self, *args):
         return self._method
 
-    def getDeclaringClass(self, *args):
-        return self._cls
-
-    def setAccessible(self, *args):
-        return None
+    def getParameterCount(self, *args):
+        func, kind = self._func()
+        return _signature_count(func, kind) if func is not None else 0
 
     def getParameterTypes(self, *args):
-        return []
+        return [JavaClassInfo("java.lang.Object", object)] * self.getParameterCount()
 
-    def getParameterCount(self, *args):
-        return 0
+    def getGenericParameterTypes(self, *args):
+        return self.getParameterTypes()
 
     def getReturnType(self, *args):
-        return None
+        return JavaClassInfo("java.lang.Object", object)
+
+    def getModifiers(self, *args):
+        func, kind = self._func()
+        return 9 if kind in ("static", "class") else 1
+
+    def isVarArgs(self, *args):
+        import inspect
+        func, _ = self._func()
+        try:
+            return any(p.kind == p.VAR_POSITIONAL for p in inspect.signature(func).parameters.values())
+        except (TypeError, ValueError):
+            return False
 
     def invoke(self, target=None, *args):
+        if len(args) == 1 and isinstance(args[0], (list, tuple)) and self.getParameterCount() != 1:
+            args = tuple(args[0])
         owner = target if target is not None else self._cls
         return getattr(owner, self._method)(*args)
 
+    def invokeOriginal(self, target=None, *args):
+        func, kind = self._func()
+        if func is None:
+            return None
+        if kind == "static":
+            return func(*args)
+        if kind == "class":
+            return func(self._cls, *args)
+        return func(target, *args)
+
     def __repr__(self):
         return "<method %s>" % self._java_name
+
+
+class ShimConstructor(ShimMember):
+    _java_name = "java.lang.reflect.Constructor"
+
+    def __init__(self, cls):
+        self._cls = cls
+        self._method = "<init>"
+        self._java_name = "%s.<init>" % getattr(cls, "_java_name", cls.__name__)
+
+    def getName(self, *args):
+        return getattr(self._cls, "_java_name", self._cls.__name__)
+
+    def getParameterCount(self, *args):
+        init = _SHIM_ORIGINALS.get((self._cls, "<init>")) or self._cls.__init__
+        return _signature_count(init, "method")
+
+    def getParameterTypes(self, *args):
+        return [JavaClassInfo("java.lang.Object", object)] * self.getParameterCount()
+
+    def newInstance(self, *args):
+        if len(args) == 1 and isinstance(args[0], (list, tuple)) and self.getParameterCount() != 1:
+            args = tuple(args[0])
+        return self._cls(*args)
+
+    def __repr__(self):
+        return "<constructor %s>" % self._java_name
+
+
+class ShimField(ShimMember):
+    _java_name = "java.lang.reflect.Field"
+
+    def __init__(self, cls, name):
+        self._cls = cls
+        self._method = str(name)
+        self._java_name = "%s.%s" % (getattr(cls, "_java_name", getattr(cls, "__name__", "?")), name)
+
+    def getName(self, *args):
+        return self._method
+
+    def getType(self, *args):
+        import inspect
+        try:
+            value = inspect.getattr_static(self._cls, self._method)
+        except AttributeError:
+            value = None
+        if isinstance(value, bool):
+            return JavaClassInfo("boolean", bool)
+        if isinstance(value, int):
+            return JavaClassInfo("int", int)
+        if isinstance(value, float):
+            return JavaClassInfo("float", float)
+        if isinstance(value, str):
+            return JavaClassInfo("java.lang.String", str)
+        return JavaClassInfo("java.lang.Object", object)
+
+    def get(self, target=None):
+        import exd_xposed
+        return exd_xposed.get_field(target if target is not None else self._cls, self._method)
+
+    def set(self, target, value):
+        import exd_xposed
+        exd_xposed.set_field(target if target is not None else self._cls, self._method, value)
+
+    def __getattr__(self, item):
+        if item.startswith("get") and len(item) > 3 and item[3:] in (
+                "Int", "Long", "Boolean", "Float", "Double", "Short", "Byte", "Char"):
+            return self.get
+        if item.startswith("set") and len(item) > 3 and item[3:] in (
+                "Int", "Long", "Boolean", "Float", "Double", "Short", "Byte", "Char"):
+            return self.set
+        raise AttributeError(item)
+
+    def __repr__(self):
+        return "<field %s>" % self._java_name
 
 
 _SHIM_HOOKS = {}
@@ -1990,23 +2625,95 @@ _SHIM_ORIGINALS = {}
 _SHIM_COUNTER = [0]
 
 
+def _reflection_default(cls, name):
+    if name not in _REFLECTION_NAMES:
+        return False
+    for base in cls.__mro__:
+        if name in base.__dict__:
+            value = base.__dict__[name]
+            return base.__name__ in ("JavaObject", "Stub", "object") or isinstance(value, hybridmethod)                 or getattr(getattr(value, "__func__", value), "_exd_default", False)
+    return True
+
+
 def shim_method(cls, name):
-    if not isinstance(cls, type) or not name or name.startswith("_"):
+    if not isinstance(cls, type) or not name or not isinstance(name, str):
         return None
-    import inspect
-    try:
-        raw = inspect.getattr_static(cls, name)
-    except AttributeError:
+    if (cls, name) in _SHIM_ORIGINALS:
+        return ShimMethod(cls, name)
+    if name.startswith("_") or _reflection_default(cls, name):
         return None
-    if isinstance(raw, (staticmethod, classmethod)):
-        raw = raw.__func__
-    if not callable(raw) or getattr(raw, "_exd_default", False):
+    func, kind = _raw_kind(cls, name)
+    if func is None or not callable(func) or isinstance(func, type) or getattr(func, "_exd_default", False):
         return None
     return ShimMethod(cls, name)
 
 
+def shim_methods(cls, declared=False):
+    if not isinstance(cls, type):
+        return []
+    names = []
+    seen = set()
+    for base in cls.__mro__:
+        if base is object or base.__name__ in ("JavaObject", "Stub"):
+            continue
+        if declared and base is not cls and getattr(base, "_java_name", None) != getattr(cls, "_java_name", None):
+            continue
+        for name in list(base.__dict__):
+            if name in seen:
+                continue
+            seen.add(name)
+            if shim_method(cls, name) is not None:
+                names.append(name)
+    return [ShimMethod(cls, n) for n in names]
+
+
+def shim_fields(cls):
+    if not isinstance(cls, type):
+        return []
+    out = []
+    for base in cls.__mro__:
+        if base is object or base.__name__ in ("JavaObject", "Stub"):
+            continue
+        for name, value in list(base.__dict__.items()):
+            if name.startswith("_") or callable(value) or isinstance(value, (staticmethod, classmethod, property)):
+                continue
+            out.append(ShimField(cls, name))
+    return out
+
+
+def _constructor_dispatch(cls):
+    key = (cls, "<init>")
+    original = cls.__dict__.get("__init__")
+    _SHIM_ORIGINALS[key] = original
+    member = ShimConstructor(cls)
+    parent_init = super(cls, cls).__init__ if original is None else None
+
+    def init(self, *args, **kwargs):
+        import base_plugin
+        import exd_xposed
+        param = base_plugin.MethodHookParam(member, self, list(args))
+
+        def call_original(p):
+            if original is not None:
+                original(self, *p.args, **kwargs)
+            else:
+                try:
+                    parent_init(self, *p.args, **kwargs)
+                except TypeError:
+                    parent_init(self)
+            return None
+
+        exd_xposed.run(list(_SHIM_HOOKS.get(key, ())), param, call_original)
+
+    init._exd_shim = True
+    cls.__init__ = init
+
+
 def _shim_dispatch(cls, name):
     import inspect
+    if name == "<init>":
+        _constructor_dispatch(cls)
+        return
     raw = inspect.getattr_static(cls, name)
     kind = "static" if isinstance(raw, staticmethod) else "class" if isinstance(raw, classmethod) else "method"
     original = raw.__func__ if kind != "method" else raw
@@ -2015,56 +2722,37 @@ def _shim_dispatch(cls, name):
 
     def call(*args, **kwargs):
         import base_plugin
-        import extera_host
+        import exd_xposed
         if kind == "method":
             this, params = (args[0] if args else None), list(args[1:])
         else:
             this, params = None, list(args)
-        entries = sorted(_SHIM_HOOKS.get((cls, name), ()), key=lambda e: -e["priority"])
-        param = base_plugin.VirtualParam(params, this, method)
-        for entry in entries:
-            before = getattr(entry["handler"], "before_hooked_method", None)
-            replace = getattr(entry["handler"], "replace_hooked_method", None)
-            try:
-                with extera_host._plugin_context(entry["plugin"]):
-                    if callable(replace):
-                        param.setResult(replace(param))
-                    elif callable(before):
-                        before(param)
-            except Exception as e:
-                extera_host.log("[%s] %s hook failed: %r" % (entry["plugin"], method._java_name, e))
-            if param.returnEarly:
-                break
-        if not param.returnEarly:
+        param = base_plugin.MethodHookParam(method, this, params)
+
+        def call_original(p):
             if kind == "method":
-                param._result = original(this, *param.args, **kwargs)
-            elif kind == "class":
-                param._result = original(cls, *param.args, **kwargs)
-            else:
-                param._result = original(*param.args, **kwargs)
-        for entry in entries:
-            after = getattr(entry["handler"], "after_hooked_method", None)
-            if callable(after):
-                try:
-                    with extera_host._plugin_context(entry["plugin"]):
-                        after(param)
-                except Exception as e:
-                    extera_host.log("[%s] %s hook failed: %r" % (entry["plugin"], method._java_name, e))
-        if isinstance(param._throwable, BaseException):
-            raise param._throwable
-        return param._result
+                return original(this, *p.args, **kwargs)
+            if kind == "class":
+                return original(cls, *p.args, **kwargs)
+            return original(*p.args, **kwargs)
+
+        return exd_xposed.run(list(_SHIM_HOOKS.get((cls, name), ())), param, call_original)
 
     call._exd_shim = True
-    if kind == "static":
-        setattr(cls, name, staticmethod(call))
-    elif kind == "class":
+    try:
+        call.__name__ = name
+    except Exception:
+        pass
+    if kind in ("static", "class"):
         setattr(cls, name, staticmethod(call))
     else:
         setattr(cls, name, call)
 
 
 def hook_shim(cls, name, plugin_id, handler, priority=50):
-    if shim_method(cls, name) is None and (cls, name) not in _SHIM_ORIGINALS:
+    if name != "<init>" and shim_method(cls, name) is None and (cls, name) not in _SHIM_ORIGINALS:
+        return None
+    if name == "<init>" and not isinstance(cls, type):
         return None
     key = (cls, name)
     if key not in _SHIM_ORIGINALS:
@@ -2072,7 +2760,8 @@ def hook_shim(cls, name, plugin_id, handler, priority=50):
     _SHIM_COUNTER[0] += 1
     hook_id = "exd_shim_%d" % _SHIM_COUNTER[0]
     _SHIM_HOOKS.setdefault(key, []).append({
-        "id": hook_id, "plugin": plugin_id, "handler": handler, "priority": int(priority or 0)})
+        "id": hook_id, "plugin": plugin_id, "handler": handler,
+        "priority": int(priority if isinstance(priority, int) else 50)})
     return hook_id
 
 
@@ -2083,8 +2772,15 @@ def has_shim_hooks(cls, name):
 def _restore(key):
     if not _SHIM_HOOKS.get(key) and key in _SHIM_ORIGINALS:
         _SHIM_HOOKS.pop(key, None)
+        original = _SHIM_ORIGINALS.pop(key)
         try:
-            setattr(key[0], key[1], _SHIM_ORIGINALS.pop(key))
+            if key[1] == "<init>":
+                if original is None:
+                    del key[0].__init__
+                else:
+                    key[0].__init__ = original
+            else:
+                setattr(key[0], key[1], original)
         except Exception:
             pass
 
@@ -2106,17 +2802,17 @@ def _ensure_reflection(cls, name):
         return
     simple = name.split(".")[-1].split("$")[-1]
     defaults = {
-        "getDeclaredMethods": lambda *a: [],
-        "getMethods": lambda *a: [],
-        "getDeclaredFields": lambda *a: [],
-        "getFields": lambda *a: [],
-        "getDeclaredConstructors": lambda *a: [],
+        "getDeclaredMethods": lambda *a: shim_methods(cls, True),
+        "getMethods": lambda *a: shim_methods(cls),
+        "getDeclaredFields": lambda *a: shim_fields(cls),
+        "getFields": lambda *a: shim_fields(cls),
+        "getDeclaredConstructors": lambda *a: [ShimConstructor(cls)],
         "getInterfaces": lambda *a: [],
         "getDeclaredMethod": lambda method="", *a: shim_method(cls, method) or _missing("%s.%s" % (name, method)),
         "getMethod": lambda method="", *a: shim_method(cls, method) or _missing("%s.%s" % (name, method)),
-        "getDeclaredField": lambda field="", *a: _missing("%s.%s" % (name, field)),
-        "getField": lambda field="", *a: _missing("%s.%s" % (name, field)),
-        "getDeclaredConstructor": lambda *a: _missing("%s.<init>" % name),
+        "getDeclaredField": lambda field="", *a: _field_or_missing(cls, name, field),
+        "getField": lambda field="", *a: _field_or_missing(cls, name, field),
+        "getDeclaredConstructor": lambda *a: ShimConstructor(cls),
         "getName": lambda *a: name,
         "getSimpleName": lambda *a: simple,
         "getCanonicalName": lambda *a: name.replace("$", "."),
@@ -2176,11 +2872,10 @@ def lookup(name):
 
 def install(shims):
     import tgnet_bridge
-    tgnet_bridge.ChatActivity.getClass = hybridmethod(
-        lambda target: tl_runtime._ClassInfo("ChatActivity"))
-    for _fragment in ("ProfileActivity", "DialogsActivity"):
-        getattr(tgnet_bridge, _fragment).getClass = hybridmethod(
-            (lambda name: lambda target: tl_runtime._ClassInfo(name))(_fragment))
+    for _fragment in ("ChatActivity", "ProfileActivity", "DialogsActivity"):
+        _cls = getattr(tgnet_bridge, _fragment)
+        _cls.getClass = hybridmethod(
+            (lambda name, cls: lambda target: tl_runtime._ClassInfo(name, cls))(_fragment, _cls))
     original = tl_runtime.TLObject.getClass
 
     def tl_get_class(target):

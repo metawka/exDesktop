@@ -71,6 +71,7 @@ struct PaintContext {
 	int width = 0;
 	bool active = false;
 	bool selected = false;
+	float64 exdHover = -1.;
 	bool topicJumpSelected = false;
 	bool paused = false;
 	bool search = false;

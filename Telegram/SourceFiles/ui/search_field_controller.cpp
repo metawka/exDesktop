@@ -47,7 +47,7 @@ auto SearchFieldController::createRowView(
 	cancel->finishAnimating();
 
 	auto shadow = CreateChild<Ui::PlainShadow>(wrap);
-	shadow->show();
+	shadow->setVisible(st::searchFieldRowRadius <= 0);
 
 	wrap->widthValue(
 	) | rpl::on_next([=, &st](int newWidth) {
@@ -69,6 +69,20 @@ auto SearchFieldController::createRowView(
 	wrap->paintRequest(
 	) | rpl::on_next([=, &st] {
 		auto p = QPainter(wrap);
+		if (const auto radius = st::searchFieldRowRadius; radius > 0) {
+			const auto pill = QRect(
+				st.padding.left(),
+				st.padding.top(),
+				wrap->width() - st.padding.left() - st.padding.right(),
+				st.height - st.padding.top() - st.padding.bottom());
+			const auto r = std::min(radius, pill.height() / 2);
+			auto hq = QPainter::RenderHints(p.renderHints());
+			p.setRenderHint(QPainter::Antialiasing);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::filterInputInactiveBg);
+			p.drawRoundedRect(pill, r, r);
+			p.setRenderHints(hq);
+		}
 		st.fieldIcon.paint(
 			p,
 			st.padding.left(),

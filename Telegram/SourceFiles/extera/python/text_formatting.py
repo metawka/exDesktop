@@ -17,16 +17,65 @@ class TLEntityType(Enum):
     CUSTOM_EMOJI = "custom_emoji"
     BLOCKQUOTE = "blockquote"
 
+    @classmethod
+    def from_(cls, entity):
+        if isinstance(entity, cls):
+            return entity
+        if isinstance(entity, str):
+            return cls(entity.lower())
+        name = type(entity).__name__
+        for key, value in _TL_NAMES.items():
+            if name == value or name.endswith(value):
+                return cls(key)
+        kind = entity.get("type") if isinstance(entity, dict) else getattr(entity, "type", None)
+        if isinstance(kind, str):
+            return cls(kind.lower())
+        raise ValueError("unknown entity %r" % (entity,))
+
+
+_TL_NAMES = {
+    "code": "TL_messageEntityCode",
+    "pre": "TL_messageEntityPre",
+    "strikethrough": "TL_messageEntityStrike",
+    "text_link": "TL_messageEntityTextUrl",
+    "bold": "TL_messageEntityBold",
+    "italic": "TL_messageEntityItalic",
+    "underline": "TL_messageEntityUnderline",
+    "spoiler": "TL_messageEntitySpoiler",
+    "custom_emoji": "TL_messageEntityCustomEmoji",
+    "blockquote": "TL_messageEntityBlockquote",
+}
+
 
 @dataclass
 class RawEntity:
+    type: TLEntityType
     offset: int
     length: int
-    type: TLEntityType
-    url: Optional[str] = None
     language: Optional[str] = None
+    url: Optional[str] = None
     document_id: Optional[int] = None
-    collapsed: bool = False
+    collapsed: Optional[bool] = False
+
+    @property
+    def TLRPC_ENTITIES_MAP(self):
+        return dict(_TL_NAMES)
+
+    def to_tlrpc_object(self):
+        from org.telegram.tgnet import TLRPC
+        entity = getattr(TLRPC, _TL_NAMES[TLEntityType.from_(self.type).value])()
+        entity.offset = int(self.offset)
+        entity.length = int(self.length)
+        kind = TLEntityType.from_(self.type)
+        if kind is TLEntityType.PRE:
+            entity.language = self.language or ""
+        elif kind is TLEntityType.TEXT_LINK:
+            entity.url = self.url or ""
+        elif kind is TLEntityType.CUSTOM_EMOJI:
+            entity.document_id = int(self.document_id or 0)
+        elif kind is TLEntityType.BLOCKQUOTE:
+            entity.collapsed = bool(self.collapsed)
+        return entity
 
 
 # HTML
@@ -155,7 +204,8 @@ _MD_RE = re.compile(
     r"|(?P<spoiler>\|\|(?P<spoilerbody>.+?)\|\|)"
     r"|(?P<bold2>\*\*(?P<bold2body>[^*\n]+?)\*\*)"
     r"|(?P<bold>\*(?P<boldbody>[^*\n]+?)\*)"
-    r"|(?P<underline>(?<![\w])__(?P<underlinebody>[^_\n]+?)__(?![\w]))"
+    r"|(?P<italic2>__(?P<italic2body>[^_\n]+?)__)"
+    r"|(?P<underline>--(?P<underlinebody>[^-\n]+?)--)"
     r"|(?P<italic>(?<![\w])_(?P<italicbody>[^_\n]+?)_(?![\w]))"
     r"|(?P<strike2>~~(?P<strike2body>[^~\n]+?)~~)"
     r"|(?P<strike>~(?P<strikebody>[^~\n]+?)~)",
@@ -169,6 +219,7 @@ _MD_INLINE_TYPES = {
     "spoiler": ("spoilerbody", TLEntityType.SPOILER),
     "bold2": ("bold2body", TLEntityType.BOLD),
     "bold": ("boldbody", TLEntityType.BOLD),
+    "italic2": ("italic2body", TLEntityType.ITALIC),
     "underline": ("underlinebody", TLEntityType.UNDERLINE),
     "italic": ("italicbody", TLEntityType.ITALIC),
     "strike2": ("strike2body", TLEntityType.STRIKETHROUGH),
@@ -176,7 +227,7 @@ _MD_INLINE_TYPES = {
 }
 
 
-def _parse_markdown(text: str) -> Tuple[str, List[RawEntity]]:
+def _parse_markdown_plain(text: str) -> Tuple[str, List[RawEntity]]:
     out: List[str] = []
     entities: List[RawEntity] = []
     plain_length = 0
@@ -196,7 +247,7 @@ def _parse_markdown(text: str) -> Tuple[str, List[RawEntity]]:
             out.append(body)
             plain_length += len(body)
             if body:
-                entities.append(RawEntity(offset, len(body), TLEntityType.PRE,
+                entities.append(RawEntity(TLEntityType.PRE, offset, len(body),
                                           language=language))
         elif kind == "quote":
             raw = match.group("quote")
@@ -206,14 +257,14 @@ def _parse_markdown(text: str) -> Tuple[str, List[RawEntity]]:
             out.append(body)
             plain_length += len(body)
             if body:
-                entities.append(RawEntity(offset, len(body), TLEntityType.BLOCKQUOTE,
+                entities.append(RawEntity(TLEntityType.BLOCKQUOTE, offset, len(body),
                                           collapsed=collapsed))
         elif kind == "emoji":
             alt = match.group("emojialt") or "\U0001F642"
             document_id = int(match.group("emojiid"))
             out.append(alt)
             plain_length += len(alt)
-            entities.append(RawEntity(offset, len(alt), TLEntityType.CUSTOM_EMOJI,
+            entities.append(RawEntity(TLEntityType.CUSTOM_EMOJI, offset, len(alt),
                                       document_id=document_id))
         elif kind == "link":
             body = match.group("linktext")
@@ -222,23 +273,45 @@ def _parse_markdown(text: str) -> Tuple[str, List[RawEntity]]:
             plain_length += len(body)
             emoji_id = url[len("tg://emoji?id="):] if url.startswith("tg://emoji?id=") else url
             if emoji_id.isdigit():
-                entities.append(RawEntity(offset, len(body), TLEntityType.CUSTOM_EMOJI,
+                entities.append(RawEntity(TLEntityType.CUSTOM_EMOJI, offset, len(body),
                                           document_id=int(emoji_id)))
             else:
-                entities.append(RawEntity(offset, len(body), TLEntityType.TEXT_LINK,
+                entities.append(RawEntity(TLEntityType.TEXT_LINK, offset, len(body),
                                           url=url))
         else:
             group_name, entity_type = _MD_INLINE_TYPES[kind]
             body = match.group(group_name)
             out.append(body)
             plain_length += len(body)
-            entities.append(RawEntity(offset, len(body), entity_type))
+            entities.append(RawEntity(entity_type, offset, len(body)))
         position = end
     out.append(text[position:])
     return "".join(out), entities
 
 
 # API
+
+_MD_ESCAPABLE = "\\`*_~|>[]()-"
+
+
+def _parse_markdown(text: str) -> Tuple[str, List[RawEntity]]:
+    kept = []
+    out = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == chr(92) and index + 1 < len(text) and text[index + 1] in _MD_ESCAPABLE:
+            out.append(chr(0xF0000 + len(kept)))
+            kept.append(text[index + 1])
+            index += 2
+            continue
+        out.append(char)
+        index += 1
+    plain, entities = _parse_markdown_plain("".join(out))
+    if kept:
+        plain = "".join(kept[ord(c) - 0xF0000] if 0xF0000 <= ord(c) < 0xF0000 + len(kept) else c for c in plain)
+    return plain, entities
+
 
 def _utf16_length(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2

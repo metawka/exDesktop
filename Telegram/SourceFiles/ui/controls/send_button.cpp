@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/effects/ripple_animation.h"
 #include "ui/text/text_utilities.h"
 #include "ui/painter.h"
+#include "ui/style/style_core.h"
 #include "ui/ui_utility.h"
 #include "styles/style_chat_helpers.h"
 #include "styles/style_credits.h"
@@ -304,8 +305,20 @@ void SendButton::paintSend(QPainter &p, bool over) {
 		{
 			auto hq = PainterHighQualityEnabler(p);
 			p.setPen(Qt::NoPen);
+			const auto tonal = (padding == st::historySend.sendIconFillPadding)
+				&& style::Md3Enabled();
 			if (_state.fillBgOverride.isValid()) {
 				p.setBrush(_state.fillBgOverride);
+			} else if (tonal) {
+				const auto base = st::historyComposeAreaBg->c;
+				const auto accent = st::windowBgActive->c;
+				const auto mix = [](int a, int b) {
+					return int(a + (b - a) * 0.22);
+				};
+				p.setBrush(QColor(
+					mix(base.red(), accent.red()),
+					mix(base.green(), accent.green()),
+					mix(base.blue(), accent.blue())));
 			} else {
 				p.setBrush(st::windowBgActive);
 			}

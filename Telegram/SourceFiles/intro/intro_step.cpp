@@ -30,6 +30,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/labels.h"
 #include "ui/wrap/fade_wrap.h"
 #include "ui/effects/slide_animation.h"
+#include "ui/style/style_core.h"
+#include "ui/painter.h"
+#include "base/event_filter.h"
+
+#include <QtGui/QPainterPath>
 #include "ui/ui_utility.h"
 #include "data/data_user.h"
 #include "data/data_auto_download.h"
@@ -41,6 +46,47 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Intro {
 namespace details {
+
+void ExdSetupFieldCard(not_null<QWidget*> field) {
+	if (!style::Md3Enabled()) {
+		return;
+	}
+	const auto parent = field->parentWidget();
+	if (!parent) {
+		return;
+	}
+	const auto back = Ui::CreateChild<Ui::RpWidget>(parent);
+	back->setAttribute(Qt::WA_TransparentForMouseEvents);
+	const auto sync = [=] {
+		back->setGeometry(field->geometry());
+		back->setVisible(!field->isHidden());
+		back->stackUnder(field);
+	};
+	sync();
+	base::install_event_filter(back, field, [=](not_null<QEvent*> e) {
+		const auto type = e->type();
+		if (type == QEvent::Move
+			|| type == QEvent::Resize
+			|| type == QEvent::Show
+			|| type == QEvent::Hide) {
+			sync();
+		}
+		return base::EventFilterResult::Continue;
+	});
+	back->paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(back);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto r = QRectF(back->rect());
+		const auto radius = float64(st::exdIntroFieldRadius);
+		auto path = QPainterPath();
+		path.setFillRule(Qt::WindingFill);
+		path.addRoundedRect(r, radius, radius);
+		path.addRect(r.adjusted(0, r.height() / 2., 0, 0));
+		p.fillPath(
+			path.simplified(),
+			anim::color(st::windowBg, st::windowFg, 0.06));
+	}, back->lifetime());
+}
 namespace {
 
 void PrepareSupportMode(not_null<Main::Session*> session) {

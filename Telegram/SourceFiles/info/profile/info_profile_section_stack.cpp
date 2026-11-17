@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/vertical_list.h"
 #include "ui/rect_part.h"
 #include "ui/ui_utility.h"
+#include "ui/style/style_core.h"
 
 #include "styles/style_info.h"
 
@@ -23,6 +24,12 @@ namespace {
 [[nodiscard]] not_null<Ui::SlideWrap<>*> CreatePlainSeparator(
 		not_null<Ui::VerticalLayout*> layout) {
 	auto inner = object_ptr<Ui::VerticalLayout>(layout);
+	if (style::Md3Grouped()) {
+		Ui::AddSkip(inner.data(), st::exdInfoGroupGap);
+		return layout->add(object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+			layout,
+			std::move(inner)));
+	}
 	Ui::AddSkip(inner.data(), st::infoProfileSkip);
 	inner->add(object_ptr<Ui::BoxContentDivider>(
 		inner.data(),
@@ -181,6 +188,9 @@ void SectionStack::finalize() {
 	_finalized = true;
 
 	Ui::AddSkip(_layout, st::infoProfileSkip);
+	if (style::Md3Grouped()) {
+		Ui::AddSkip(_layout, st::exdInfoGroupGap);
+	}
 
 	const auto count = int(_rows.size());
 	auto kinds = std::vector<RowType>();

@@ -76,7 +76,15 @@ These Android hooks work on desktop with `self.hook_all_methods(find_class("org.
 - DialogsActivity onResume (chat list shown), onPause (chat opened from the list).
 - LaunchActivity onCreate (plugin loaded), onResume (window activated), onPause (window deactivated).
 - Browser.openUrl: param.args[1] is the url of every clicked link, param.setResult(None) stops opening it.
-- Methods of emulated classes (AlertDialog.Builder, BottomSheet, AndroidUtilities, Browser and others in section java).
+- LaunchActivity.handleIntent: param.args[0].getData() is the tg:// link, param.setResult(True) stops handling it.
+- MediaController.playMessage: param.args[0] is the MessageObject being played, param.setResult(False) stops playback. AudioPlayerAlert.updateTitle runs after playback starts.
+- ChatActivityEnterView.setReplyingMessageObject: param.args[0] is the MessageObject chosen for reply, param.setResult(None) cancels.
+- VoIPHelper.startCall: param.args[0] is the TL_user, param.args[1] is True for video, param.setResult(None) cancels the call.
+- PluginsController.setPluginEnabled(id, enabled), PythonPluginsEngine.loadPlugin/unloadPlugin(id), LocaleController.applyLanguage run on real client actions.
+- ChatMessageCell.setMessageObject: assign param.args[0].messageText to change the text shown in the chat (display only).
+- ChatAvatarContainer.updateSubtitle: param.thisObject.setSubtitle(text) replaces the chat header status.
+- android.webkit.WebView and ui.webapp.WebApp(title, html=..., on_message=...) open an HTML window; JS uses exd.send(data) and exd.onMessage(fn). Prefer it over Android popups with custom views.
+- Methods and constructors of emulated classes (AlertDialog.Builder, BottomSheet, AndroidUtilities, Browser and others in section java), with hook filters (HookFilter, hook_filters) and XposedHelpers.findAndHookMethod.
 Hooks on cells, views and drawing (ChatMessageCell, DialogCell, onDraw, setMessageObject) do nothing on desktop.
 
 ## java

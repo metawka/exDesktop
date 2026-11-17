@@ -1971,6 +1971,8 @@ PRIVATE
     extera/exd_plugin_porter.h
     extera/exd_port_bar.cpp
     extera/exd_port_bar.h
+    extera/exd_plugin_webview.cpp
+    extera/exd_plugin_webview.h
     extera/exd_ai_chat_section.cpp
     extera/exd_ai_chat_section.h
     extera/extera_round_video.cpp
@@ -1988,6 +1990,8 @@ PRIVATE
     extera/extera_navigation.h
     extera/extera_streamer.cpp
     extera/extera_update.cpp
+    extera/exd_md3.cpp
+    extera/exd_md3.h
     extera/extera_changelog.cpp
     extera/extera_changelog.h
     extera/extera_cross_send.cpp

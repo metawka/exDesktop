@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/dialogs_key.h"
 #include "media/player/media_player_float.h" // FloatSectionDelegate
 #include "base/object_ptr.h"
+#include "base/unique_qptr.h"
 #include "window/window_section_common.h"
 
 #include <optional>
@@ -234,6 +235,10 @@ public:
 	}
 
 	void setInnerFocus() {
+		if (animatingShow()) {
+			setFocus();
+			return;
+		}
 		doSetInnerFocus();
 	}
 	virtual void checkActivation() {
@@ -303,12 +308,43 @@ protected:
 		setFocus();
 	}
 
+	[[nodiscard]] virtual bool exdWaitsBeforeShow() const {
+		return false;
+	}
+	[[nodiscard]] virtual bool exdContentLoaded() const {
+		return true;
+	}
+	[[nodiscard]] virtual bool exdShowReady() const {
+		return true;
+	}
+	void exdShowReadyChanged();
+	virtual void exdBeforeShowGrab() {
+	}
+
 	~SectionWidget();
 
 private:
+	struct ExdPendingShow {
+		SlideDirection direction = SlideDirection();
+		SectionSlideParams params;
+		int id = 0;
+		int ticks = 0;
+		int warmedTick = 0;
+		bool warmed = false;
+		bool scheduled = false;
+	};
+
 	void showFinished();
+	void exdStartShowAnimation(
+		SlideDirection direction,
+		const SectionSlideParams &params);
+	void exdFinishPendingShow(int id);
+	void exdCreateCover();
 
 	std::unique_ptr<SlideAnimation> _showAnimation;
+	std::unique_ptr<ExdPendingShow> _exdPendingShow;
+	base::unique_qptr<Ui::RpWidget> _exdCover;
+	int _exdPendingCounter = 0;
 
 	int _topDelta = 0;
 
