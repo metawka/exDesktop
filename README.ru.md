@@ -241,8 +241,9 @@ cmake --build out --config Release --target Telegram
 <summary><b>Third-party libraries and components</b></summary>
 
 - [Telegram Desktop](https://github.com/telegramdesktop/tdesktop): client sources, GPL-3.0 with an OpenSSL linking exception
-- desktop-app libraries: [lib_base](https://github.com/desktop-app/lib_base), [lib_rpl](https://github.com/desktop-app/lib_rpl), [lib_crl](https://github.com/desktop-app/lib_crl), [lib_storage](https://github.com/desktop-app/lib_storage), [lib_tl](https://github.com/desktop-app/lib_tl), [lib_lottie](https://github.com/desktop-app/lib_lottie), [lib_spellcheck](https://github.com/desktop-app/lib_spellcheck), [lib_qr](https://github.com/desktop-app/lib_qr), [lib_webrtc](https://github.com/desktop-app/lib_webrtc), [lib_webview](https://github.com/desktop-app/lib_webview), [lib_translate](https://github.com/desktop-app/lib_translate), [codegen](https://github.com/desktop-app/codegen), [cmake_helpers](https://github.com/desktop-app/cmake_helpers): GPL-3.0 with an OpenSSL linking exception
+- desktop-app libraries: [lib_base](https://github.com/desktop-app/lib_base), [lib_rpl](https://github.com/desktop-app/lib_rpl), [lib_crl](https://github.com/desktop-app/lib_crl), [lib_storage](https://github.com/desktop-app/lib_storage), [lib_tl](https://github.com/desktop-app/lib_tl), [lib_lottie](https://github.com/desktop-app/lib_lottie), [lib_spellcheck](https://github.com/desktop-app/lib_spellcheck), [lib_qr](https://github.com/desktop-app/lib_qr), [lib_webrtc](https://github.com/desktop-app/lib_webrtc), [lib_webview](https://github.com/desktop-app/lib_webview), [lib_translate](https://github.com/desktop-app/lib_translate), [cmake_helpers](https://github.com/desktop-app/cmake_helpers): GPL-3.0 with an OpenSSL linking exception
 - [lib_ui](https://github.com/metawka/lib_ui): fork with exDesktop changes, GPL-3.0 with an OpenSSL linking exception
+- [codegen](https://github.com/metawka/codegen): fork with exDesktop changes, GPL-3.0 with an OpenSSL linking exception
 - [Qt 6](https://github.com/qt/qtbase): LGPL-3.0 or GPL-3.0
 - [OpenSSL 3](https://github.com/openssl/openssl): Apache-2.0
 - [WebRTC (tg_owt)](https://github.com/desktop-app/tg_owt): BSD-3-Clause
@@ -287,6 +288,8 @@ cmake --build out --config Release --target Telegram
 - [xdg-desktop-portal](https://github.com/flatpak/xdg-desktop-portal): LGPL-2.1-or-later
 - [Open Sans](https://github.com/googlefonts/opensans): Apache-2.0
 - [Vazirmatn](https://github.com/rastikerdar/vazirmatn): OFL-1.1
+- [Material Symbols](https://github.com/google/material-design-icons): Apache-2.0
+- [materialgram](https://github.com/materialgram/materialgram): icons, GPL-3.0
 - [Emoji alpha codes](https://github.com/emojione/emojione): MIT
 - [FrequencyWords](https://github.com/hermitdave/FrequencyWords) by Hermit Dave: CC BY-SA 4.0
 - [Python 3.11 (CPython)](https://github.com/python/cpython): PSF-2.0
