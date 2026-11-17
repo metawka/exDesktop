@@ -57,21 +57,23 @@ jobs:
             ${{ github.workspace }}/ThirdParty
           key: mac-libs-${{ matrix.name }}-${{ hashFiles('tdesktop/Telegram/build/prepare/prepare.py', 'tdesktop/Telegram/build/prepare/mac.sh') }}
           restore-keys: |
+            mac-libs-${{ matrix.name }}-${{ hashFiles('tdesktop/Telegram/build/prepare/prepare.py', 'tdesktop/Telegram/build/prepare/mac.sh') }}-
             mac-libs-${{ matrix.name }}-
 
       - name: Build ThirdParty libraries
+        timeout-minutes: 300
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./tdesktop/Telegram/build/prepare/mac.sh silent ${{ matrix.prepare }}
 
       - name: Save ThirdParty libraries
-        if: steps.libs.outputs.cache-hit != 'true'
+        if: always() && steps.libs.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ${{ github.workspace }}/Libraries
             ${{ github.workspace }}/ThirdParty
-          key: ${{ steps.libs.outputs.cache-primary-key }}
+          key: ${{ steps.libs.outputs.cache-primary-key }}-${{ github.run_id }}
 
       - name: Set up ccache
         uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639 # v1.2
