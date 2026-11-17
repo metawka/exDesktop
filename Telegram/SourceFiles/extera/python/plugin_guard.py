@@ -620,7 +620,7 @@ def _remote_loader(tree, low):
     if not download or not urls:
         return None
     match = _CODE_LOADERS.search(low)
-    return ("downloads code from %s and loads it with %s" % (urls[0][:80], match.group(1))) if match else None
+    return ("downloads code from %s and loads it with %s" % (urls[0][:240], match.group(1))) if match else None
 
 
 def _codes_forwarded(tree):
@@ -770,12 +770,16 @@ def _rules(source, capabilities):
     entropy = "NORMAL"
     if tree is not None:
         worst = 0.0
+        worst_value = ""
         for value in _literals(tree):
             if len(value) >= 200 and " " not in value[:200]:
-                worst = max(worst, _entropy(value))
+                current = _entropy(value)
+                if current > worst:
+                    worst, worst_value = current, value
         if worst >= 5.6:
             entropy = "HIGH"
-            add("HIGH_ENTROPY_LITERAL_DETECTED", "WARNING", f"{worst:.2f}")
+            if _blob_kind(worst_value) is None:
+                add("HIGH_ENTROPY_LITERAL_DETECTED", "WARNING", "string of %d characters, entropy %.2f" % (len(worst_value), worst))
         elif worst >= 5.0:
             entropy = "ELEVATED"
     return findings, entropy

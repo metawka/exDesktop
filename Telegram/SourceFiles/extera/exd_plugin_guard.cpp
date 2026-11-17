@@ -868,9 +868,10 @@ QString RuleTitle(const QString &rule) {
 		return tr::lng_exd_guard_rule_codes(tr::now);
 	} else if (rule == u"CLIPBOARD_CRYPTO_CLIPPER"_q) {
 		return tr::lng_exd_guard_rule_clipper(tr::now);
-	} else if (rule == u"OBFUSCATED_CODE_STRUCTURE"_q
-		|| rule == u"HIGH_ENTROPY_LITERAL_DETECTED"_q) {
+	} else if (rule == u"OBFUSCATED_CODE_STRUCTURE"_q) {
 		return tr::lng_exd_guard_rule_obfuscation(tr::now);
+	} else if (rule == u"HIGH_ENTROPY_LITERAL_DETECTED"_q) {
+		return tr::lng_exd_guard_rule_encoded(tr::now);
 	} else if (rule == u"TELEGRAM_STORAGE_MENTION"_q) {
 		return tr::lng_exd_guard_rule_session(tr::now);
 	} else if (rule == u"PRIVILEGED_COMMAND_EXECUTION"_q

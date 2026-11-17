@@ -9607,6 +9607,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_guard_rule_ai_text" = "Text addressed to the AI check";
 "lng_exd_guard_rule_unverified" = "Loads code from the network that cannot be checked";
 "lng_exd_guard_rule_binary" = "Embedded executable file";
+"lng_exd_guard_rule_encoded" = "Encoded data";
 "lng_exd_guard_rule_malware" = "Malicious fragments found: {amount}";
 "lng_exd_support_other" = "\"Other\"";
 "lng_exd_donate_card" = "Bank Card (Russia)";

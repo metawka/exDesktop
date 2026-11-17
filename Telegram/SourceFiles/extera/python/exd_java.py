@@ -696,6 +696,8 @@ class Class(JavaObject, metaclass=_ClassMeta):
     @staticmethod
     def forName(name, *args):
         found = lookup(str(name))
+        if isinstance(found, type):
+            return JavaClassInfo(getattr(found, "_java_name", str(name)), found)
         if found is not None:
             return found
         import _compat

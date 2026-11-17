@@ -2737,8 +2737,9 @@ void ShowGuardAnalysis(
 			const auto row = threats->add(
 				object_ptr<Ui::VerticalLayout>(threats),
 				QMargins(st::exteraInstallCardPadding.left(), 6, st::exteraInstallCardPadding.left(), 0));
-			const auto head = row->add(
-				object_ptr<Ui::FixedHeightWidget>(row, style::ConvertScale(26)));
+			const auto base = style::ConvertScale(26);
+			const auto head = row->add(object_ptr<Ui::RpWidget>(row));
+			head->resize(head->width(), base);
 			const auto chip = Ui::CreateChild<GuardChip>(
 				head,
 				FindingLevelTitle(finding.level),
@@ -2748,10 +2749,16 @@ void ShowGuardAnalysis(
 				RuleTitle(finding.rule),
 				st::exteraThreatTitle);
 			head->widthValue() | rpl::on_next([=](int width) {
-				chip->moveToLeft(0, (head->height() - chip->height()) / 2, width);
 				const auto left = chip->width() + 8;
-				title->resizeToWidth(width - left);
-				title->moveToLeft(left, (head->height() - title->height()) / 2, width);
+				title->resizeToWidth(std::max(width - left, 1));
+				const auto line = st::exteraThreatTitle.style.font->height;
+				const auto top = (base - line) / 2;
+				chip->moveToLeft(0, (base - chip->height()) / 2, width);
+				title->moveToLeft(left, top, width);
+				const auto height = std::max(base, top + title->height() + top);
+				if (head->height() != height) {
+					head->resize(width, height);
+				}
 			}, head->lifetime());
 			auto details = finding.detail;
 			if (finding.line > 0) {
