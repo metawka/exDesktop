@@ -11,8 +11,8 @@ jobs:
     outputs:
       relevant: ${{ steps.filter.outputs.workflows == 'true' || steps.filter.outputs.preparepy == 'true' || steps.filter.outputs.shell == 'true' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         id: filter
         with:
           filters: |
@@ -29,13 +29,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.x"
 
       # Same hooks as .pre-commit-config.yaml, so CI and local `git commit`
       # agree: trailing whitespace, shfmt, shellcheck, actionlint, etc.,
       # all scoped to .github/ and Telegram/build/prepare/ only.
-      - uses: pre-commit/action@v3.0.1
+      - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
