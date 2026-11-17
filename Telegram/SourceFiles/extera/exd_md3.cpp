@@ -438,20 +438,34 @@ bool ShowIntroIfNeeded(not_null<Window::SessionController*> controller) {
 		return false;
 	}
 	Config::Instance().setBool(u"md3_intro_shown"_q, true);
-	controller->show(Ui::MakeConfirmBox({
-		.text = tr::lng_exd_md3_intro_text(),
-		.confirmed = [](Fn<void()> close) { close(); },
-		.cancelled = [](Fn<void()> close) {
-			close();
-			if (Enabled()) {
-				Config::Instance().setBool(u"md3"_q, false);
-				Core::Restart();
-			}
-		},
-		.confirmText = tr::lng_exd_md3_intro_keep(),
-		.cancelText = tr::lng_exd_md3_intro_revert(),
-		.title = tr::lng_exd_md3_intro_title(),
-		.strictCancel = true,
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		Ui::ConfirmBox(box, {
+			.text = tr::lng_exd_md3_intro_text(),
+			.confirmed = [](Fn<void()> close) { close(); },
+			.cancelled = [](Fn<void()> close) {
+				close();
+				if (Enabled()) {
+					Config::Instance().setBool(u"md3"_q, false);
+					Core::Restart();
+				}
+			},
+			.confirmText = tr::lng_exd_md3_intro_keep(),
+			.cancelText = tr::lng_exd_md3_intro_revert(),
+			.title = tr::lng_exd_md3_intro_title(),
+			.strictCancel = true,
+		});
+		const auto &button = st::defaultBoxButton;
+		const auto text = [&](const QString &value) {
+			return button.style.font->width(value) - std::min(button.width, 0);
+		};
+		const auto padding = st::defaultBox.buttonPadding;
+		const auto buttons = text(tr::lng_exd_md3_intro_keep(tr::now))
+			+ text(tr::lng_exd_md3_intro_revert(tr::now))
+			+ padding.left()
+			+ padding.right()
+			+ st::defaultBox.buttonPadding.left() * 2
+			+ style::ConvertScale(24);
+		box->setWidth(std::max(st::boxWidth, buttons));
 	}));
 	return true;
 }
