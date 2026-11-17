@@ -3740,7 +3740,7 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 			u"plugins_docs"_q,
 			tr::lng_extera_plugins_docs(),
 			QString(),
-			u"https://plugins.exteragram.app/docs"_q,
+			u"https://exdesktop.xyz/docs/"_q,
 			{ &st::menuIconFaq });
 		for (const auto &source : Extera::PluginTrust::Sources()) {
 			const auto bare = source.id;

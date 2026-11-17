@@ -647,6 +647,7 @@ void SectionWidget::showFinished() {
 	_showAnimation.reset();
 	_exdPendingShow = nullptr;
 	_exdCover = nullptr;
+	_exdShown.fire({});
 	if (isHidden()) return;
 
 	showChildren();

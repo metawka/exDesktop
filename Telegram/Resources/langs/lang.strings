@@ -9602,6 +9602,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_exd_guard_rule_ip" = "IP address detection";
 "lng_exd_guard_rule_similar" = "Similarity to known malicious code";
 "lng_exd_guard_rule_ai" = "Threat confirmed by the AI arbiter";
+"lng_exd_guard_rule_dropper" = "Downloads and runs third-party code";
+"lng_exd_guard_rule_decoded" = "Code was encrypted and checked after decoding";
+"lng_exd_guard_rule_ai_text" = "Text addressed to the AI check";
+"lng_exd_guard_rule_unverified" = "Loads code from the network that cannot be checked";
+"lng_exd_guard_rule_binary" = "Embedded executable file";
 "lng_exd_guard_rule_malware" = "Malicious fragments found: {amount}";
 "lng_exd_support_other" = "\"Other\"";
 "lng_exd_donate_card" = "Bank Card (Russia)";

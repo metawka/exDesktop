@@ -3568,7 +3568,9 @@ object_ptr<Ui::RpWidget> SetupChannelMembersAndManage(
 	auto result = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		parent,
 		object_ptr<Ui::VerticalLayout>(parent));
-	result->entity()->add(CreateSkipWidget(result));
+	if (!style::Md3Grouped()) {
+		result->entity()->add(CreateSkipWidget(result));
+	}
 
 	auto membersShown = rpl::combine(
 		MembersCountValue(channel),
@@ -3585,30 +3587,16 @@ object_ptr<Ui::RpWidget> SetupChannelMembersAndManage(
 			Info::Section::Type::Members));
 	};
 
-	const auto membersWrap = result->entity()->add(
-		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
-			result->entity(),
-			object_ptr<Ui::VerticalLayout>(result->entity())));
-	membersWrap->setDuration(
-		st::infoSlideDuration
-	)->toggleOn(rpl::duplicate(membersShown));
-
-	const auto members = membersWrap->entity();
-	auto membersButton = (Ui::SettingsButton*)nullptr;
-	{
-		auto button = AddActionButton(
-			members,
-			std::move(membersText),
-			rpl::single(true),
-			std::move(membersCallback),
-			nullptr)->entity();
-		membersButton = button;
-
-		SetupAddChannelMember(controller, button, channel);
-	}
-
+	const auto membersWrap = AddActionButton(
+		result->entity(),
+		std::move(membersText),
+		rpl::duplicate(membersShown),
+		std::move(membersCallback),
+		nullptr);
+	const auto membersButton = membersWrap->entity();
+	SetupAddChannelMember(controller, membersButton, channel);
 	object_ptr<FloatingIcon>(
-		members,
+		membersWrap,
 		st::infoIconMembers,
 		st::infoChannelMembersIconPosition);
 
@@ -3630,21 +3618,13 @@ object_ptr<Ui::RpWidget> SetupChannelMembersAndManage(
 			ParticipantsBoxController::Role::Admins);
 	};
 
-	const auto adminsWrap = result->entity()->add(
-		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
-			result->entity(),
-			object_ptr<Ui::VerticalLayout>(result->entity())));
-	adminsWrap->setDuration(
-		st::infoSlideDuration
-	)->toggleOn(rpl::duplicate(adminsShown));
-
-	const auto admins = adminsWrap->entity();
-	const auto adminsButton = AddActionButton(
-		admins,
+	const auto adminsWrap = AddActionButton(
+		result->entity(),
 		std::move(adminsText),
-		rpl::single(true),
+		rpl::duplicate(adminsShown),
 		std::move(adminsCallback),
-		nullptr)->entity();
+		nullptr);
+	const auto adminsButton = adminsWrap->entity();
 	rpl::merge(
 		membersWrap->heightValue() | rpl::to_empty,
 		adminsWrap->heightValue() | rpl::to_empty
@@ -3652,9 +3632,8 @@ object_ptr<Ui::RpWidget> SetupChannelMembersAndManage(
 		membersButton->update();
 		adminsButton->update();
 	}, adminsButton->lifetime());
-
 	object_ptr<FloatingIcon>(
-		admins,
+		adminsWrap,
 		st::menuIconAdmin,
 		st::infoChannelAdminsIconPosition);
 
@@ -3755,7 +3734,9 @@ object_ptr<Ui::RpWidget> SetupChannelMembersAndManage(
 			std::move(adminsShown)
 		) | rpl::map(rpl::mappers::_1 || rpl::mappers::_2));
 
-	result->entity()->add(CreateSkipWidget(result));
+	if (!style::Md3Grouped()) {
+		result->entity()->add(CreateSkipWidget(result));
+	}
 
 	return result;
 }

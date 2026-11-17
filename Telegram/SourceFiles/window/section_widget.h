@@ -138,6 +138,9 @@ public:
 		const SectionSlideParams &params);
 	void showFast();
 	[[nodiscard]] bool animatingShow() const;
+	[[nodiscard]] rpl::producer<> exdShownEvents() const {
+		return _exdShown.events();
+	}
 
 	// This can be used to grab with or without top bar shadow.
 	// This will be protected when animation preparation will be done inside.
@@ -345,6 +348,7 @@ private:
 	std::unique_ptr<ExdPendingShow> _exdPendingShow;
 	base::unique_qptr<Ui::RpWidget> _exdCover;
 	int _exdPendingCounter = 0;
+	rpl::event_stream<> _exdShown;
 
 	int _topDelta = 0;
 

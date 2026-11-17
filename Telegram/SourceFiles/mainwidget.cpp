@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mainwidget.h"
 
 #include "extera/exd_md3.h"
+#include "base/call_delayed.h"
 
 #include "api/api_updates.h"
 #include "api/api_views.h"
@@ -2024,7 +2025,71 @@ Window::SectionSlideParams MainWidget::prepareMainSectionAnimation(
 }
 
 Window::SectionSlideParams MainWidget::prepareHistoryAnimation(PeerId historyPeerId) {
-	return prepareShowAnimation(historyPeerId != 0, false);
+	auto result = prepareShowAnimation(historyPeerId != 0, false);
+	if (!historyPeerId
+		&& !isOneColumn()
+		&& _thirdSection
+		&& !_thirdSection->isHidden()
+		&& !result.oldContentCache.isNull()) {
+		const auto ratio = style::DevicePixelRatio();
+		const auto main = result.oldContentCache;
+		const auto mainWidth = main.width() / ratio;
+		const auto mainHeight = main.height() / ratio;
+		const auto third = Ui::GrabWidget(_thirdSection.data());
+		const auto thirdWidth = third.width() / ratio;
+		auto composed = QPixmap(
+			QSize(mainWidth + thirdWidth, mainHeight) * ratio);
+		composed.setDevicePixelRatio(ratio);
+		composed.fill(st::windowBg->c);
+		{
+			auto p = QPainter(&composed);
+			p.drawPixmap(0, 0, main);
+			p.drawPixmap(mainWidth, -getMainSectionTop(), third);
+		}
+		result.oldContentCache = std::move(composed);
+	}
+	return result;
+}
+
+void MainWidget::exdHoldThirdSection() {
+	if (!_thirdSection) {
+		return;
+	}
+	_exdThirdFade.stop();
+	_exdThirdCover = base::make_unique_q<Ui::RpWidget>(this);
+	const auto cover = _exdThirdCover.get();
+	cover->setGeometry(_thirdSection->geometry());
+	cover->paintRequest(
+	) | rpl::on_next([=] {
+		auto p = QPainter(cover);
+		p.setOpacity(_exdThirdFade.value(1.));
+		p.fillRect(cover->rect(), st::windowBg);
+	}, cover->lifetime());
+	cover->show();
+	cover->raise();
+	_mainSection->exdShownEvents(
+	) | rpl::take(1) | rpl::on_next([=] {
+		exdRevealThirdSection();
+	}, cover->lifetime());
+	base::call_delayed(crl::time(1200), cover, [=] {
+		exdRevealThirdSection();
+	});
+}
+
+void MainWidget::exdRevealThirdSection() {
+	const auto cover = _exdThirdCover.get();
+	if (!cover || cover->testAttribute(Qt::WA_TransparentForMouseEvents)) {
+		return;
+	}
+	cover->setAttribute(Qt::WA_TransparentForMouseEvents);
+	_exdThirdFade.start([=] {
+		if (const auto cover = _exdThirdCover.get()) {
+			cover->update();
+			if (!_exdThirdFade.animating()) {
+				crl::on_main(this, [=] { _exdThirdCover = nullptr; });
+			}
+		}
+	}, 1., 0., st::slideDuration, anim::easeOutCirc);
 }
 
 void MainWidget::showNewSection(
@@ -2140,6 +2205,11 @@ void MainWidget::showNewSection(
 			orderWidgets();
 		}
 		updateControlsGeometry();
+		if (Extera::Md3::Expressive()
+			&& _mainSection
+			&& _mainSection->animatingShow()) {
+			exdHoldThirdSection();
+		}
 	} else {
 		_mainSection = std::move(newMainSection);
 		_history->finishAnimating();
@@ -2794,6 +2864,11 @@ void MainWidget::updateControlsGeometry() {
 				thirdSectionTop,
 				thirdSectionWidth,
 				height() - thirdSectionTop);
+			if (_exdThirdCover) {
+				_exdThirdCover->setGeometry(_thirdSection->geometry());
+			}
+		} else {
+			_exdThirdCover = nullptr;
 		}
 		const auto shadowTop = _controller->window().verticalShadowTop();
 		const auto shadowHeight = height() - shadowTop;

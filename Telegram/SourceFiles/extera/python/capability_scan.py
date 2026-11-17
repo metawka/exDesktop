@@ -366,16 +366,39 @@ def _exec_of_decoded(source: str) -> List[str]:
                     tainted[target.id] = kind
                     changed = True
     result: List[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not isinstance(node.func, ast.Name) \
-                or node.func.id not in ("exec", "eval", "compile"):
-            continue
-        for arg in node.args[:1]:
-            kind = _first_kind(arg, functions, tainted)
-            if kind and ("exec+" + kind) not in result:
-                result.append("exec+" + kind)
+
+    def check(scope, names):
+        for node in ast.walk(scope):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Name) \
+                    or node.func.id not in ("exec", "eval", "compile"):
+                continue
+            for arg in node.args[:1]:
+                kind = _first_kind(arg, functions, names)
+                if kind and ("exec+" + kind) not in result:
+                    result.append("exec+" + kind)
+
+    check(tree, tainted)
+    for scope in defs:
+        local = dict(tainted)
+        inner = [node for node in ast.walk(scope)
+                 if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None]
+        for _ in range(4):
+            grown = False
+            for node in inner:
+                kind = _first_kind(node.value, functions, local)
+                if not kind:
+                    continue
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if isinstance(target, ast.Name) and target.id not in local:
+                        local[target.id] = kind
+                        grown = True
+            if not grown:
+                break
+        if len(local) != len(tainted):
+            check(scope, local)
     if "marshal.loads" in source and "types.FunctionType" in source:
         result.append("marshal code")
     return result

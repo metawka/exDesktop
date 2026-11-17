@@ -1637,6 +1637,17 @@ def _source(args):
     return data.decode("utf-8", "replace")
 
 
+def _guard_preview(args):
+    import plugin_guard
+    path = args.get("path")
+    if not path and args.get("id") in _records:
+        path = _records[args["id"]].path
+    try:
+        return plugin_guard.preview(path)
+    except Exception:
+        return _source({"path": path})
+
+
 def _guard_scan(args):
     import plugin_guard
     path = args.get("path")
@@ -1731,6 +1742,7 @@ _METHODS = {
     "is_trusted": _is_trusted,
     "unknown_sources": _set_unknown_sources,
     "source": _source,
+    "guard_preview": _guard_preview,
     "capability_lines": _capability_lines,
     "list": lambda args: [r.info() for r in _records.values()],
     "send_hook": _send_hook,

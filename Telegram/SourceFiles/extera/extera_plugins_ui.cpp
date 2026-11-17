@@ -3191,9 +3191,14 @@ void PaintPuzzle(QPainter &p, QRectF rect, QColor color) {
 void ShowSourceBox(
 		not_null<Window::SessionController*> controller,
 		const QString &path) {
-	const auto source = Call(u"source"_q, QJsonObject{
+	auto source = Call(u"guard_preview"_q, QJsonObject{
 		{ u"path"_q, path },
 	}).toString();
+	if (source.isEmpty()) {
+		source = Call(u"source"_q, QJsonObject{
+			{ u"path"_q, path },
+		}).toString();
+	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(rpl::single(QFileInfo(path).fileName()));
 		box->setWidth(st::boxWideWidth * 3 / 2);
