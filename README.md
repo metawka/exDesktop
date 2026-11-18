@@ -150,6 +150,12 @@ Linux and macOS installation from the terminal (the installer detects the system
 curl -fsSL https://raw.githubusercontent.com/metawka/exDesktop/main/install.sh | sh
 ```
 
+<div>
+  <a href="https://moonpkg.github.io/cli/app/?type=github&repo=HebnixRL/Hebnix-Public">
+    <img src="https://github.com/moonpkg/cli/blob/main/docs/assets/install-btn.png?raw=true" width="256" alt="Install with moon" />
+  </a>
+<div>
+
 ## Building
 
 <details>
