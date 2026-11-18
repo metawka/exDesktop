@@ -15,8 +15,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/metawka/exDesktop/releases/latest"><img src="https://img.shields.io/github/v/release/metawka/exDesktop?label=Версия&color=ee6b54" alt="Версия"></a>
-  <a href="https://github.com/metawka/exDesktop/releases"><img src="https://img.shields.io/github/downloads/metawka/exDesktop/total?label=Загрузки&color=ee6b54" alt="Загрузки"></a>
+  <a href="https://github.com/metawka/exDesktop/releases/latest"><img src="https://img.shields.io/github/v/release/metawka/exDesktop?label=%D0%92%D0%B5%D1%80%D1%81%D0%B8%D1%8F&color=ee6b54" alt="Версия"></a>
+  <a href="https://github.com/metawka/exDesktop/releases"><img src="https://img.shields.io/github/downloads/metawka/exDesktop/total?label=%D0%97%D0%B0%D0%B3%D1%80%D1%83%D0%B7%D0%BA%D0%B8&color=ee6b54" alt="Загрузки"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/Лицензия-GPL--3.0-ee6b54" alt="Лицензия"></a>
   <br>
   <a href="https://t.me/exDesktop"><img src="https://img.shields.io/badge/Канал-@exDesktop-2aabee?logo=telegram&logoColor=white" alt="Канал"></a>
