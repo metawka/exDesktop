@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/metawka/exDesktop/stargazers"><img src="docs/banner.png" alt="Star exDesktop on GitHub" width="100%"></a>
+  <a href="https://github.com/metawka/exDesktop/stargazers"><img src="docs/banner_ru.png" alt="Поддержать звёздочкой на GitHub" width="100%"></a>
 </p>
 
 <p align="center">
@@ -9,153 +9,150 @@
 <h1 align="center">exDesktop</h1>
 
 <p align="center">
-  Unofficial Telegram client for Windows, Linux and macOS, built from the official
-  <a href="https://github.com/telegramdesktop/tdesktop">Telegram Desktop</a> sources.<br>
-  Features from exteraGram and other community clients, adapted for Desktop.
+  Модифицированный кросс-платформенный клиент для Windows, Linux и macOS на основе исходного кода
+  <a href="https://github.com/telegramdesktop/tdesktop">Telegram Desktop</a>.<br>
+  Material Design Expressive, глубокая кастомизация, функции приватности, настройки визуала, режим стримера, функционал exteraGram, AyuGram и других клиентов сообщества, адаптированный под Desktop.
 </p>
 
 <p align="center">
-  <a href="https://github.com/metawka/exDesktop/releases/latest"><img src="https://img.shields.io/github/v/release/metawka/exDesktop?label=Release&color=ee6b54" alt="Release"></a>
-  <a href="https://github.com/metawka/exDesktop/releases"><img src="https://img.shields.io/github/downloads/metawka/exDesktop/total?label=Downloads&color=ee6b54" alt="Downloads"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-ee6b54" alt="License"></a>
+  <a href="https://github.com/metawka/exDesktop/releases/latest"><img src="https://img.shields.io/github/v/release/metawka/exDesktop?label=Версия&color=ee6b54" alt="Версия"></a>
+  <a href="https://github.com/metawka/exDesktop/releases"><img src="https://img.shields.io/github/downloads/metawka/exDesktop/total?label=Загрузки&color=ee6b54" alt="Загрузки"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/Лицензия-GPL--3.0-ee6b54" alt="Лицензия"></a>
   <br>
-  <a href="https://t.me/exDesktop"><img src="https://img.shields.io/badge/Channel-@exDesktop-2aabee?logo=telegram&logoColor=white" alt="Channel"></a>
-  <a href="https://t.me/exDesktopChat"><img src="https://img.shields.io/badge/Chat-@exDesktopChat-2aabee?logo=telegram&logoColor=white" alt="Chat"></a>
-  <a href="https://exteradesktop.xyz"><img src="https://img.shields.io/badge/Website-exteradesktop.xyz-2aabee" alt="Website"></a>
+  <a href="https://t.me/exDesktop"><img src="https://img.shields.io/badge/Канал-@exDesktop-2aabee?logo=telegram&logoColor=white" alt="Канал"></a>
+  <a href="https://t.me/exDesktopChat"><img src="https://img.shields.io/badge/Чат-@exDesktopChat-2aabee?logo=telegram&logoColor=white" alt="Чат"></a>
+  <a href="https://exdesktop.xyz"><img src="https://img.shields.io/badge/Сайт-exdesktop.xyz-2aabee" alt="Сайт"></a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/English-selected-555?style=for-the-badge" alt="English">
-  <a href="README.ru.md"><img src="https://img.shields.io/badge/Русский-open-ee6b54?style=for-the-badge" alt="Русский"></a>
+  <img src="https://img.shields.io/badge/Русский-выбран-555?style=for-the-badge" alt="Русский">
+  <a href="README.en.md"><img src="https://img.shields.io/badge/English-open-ee6b54?style=for-the-badge" alt="English"></a>
 </p>
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/settings.webp" alt="Settings"></td>
-    <td width="50%"><img src="docs/screenshots/appearance.webp" alt="Appearance"></td>
+    <td width="50%"><img src="docs/screenshots/settings.webp" alt="Настройки"></td>
+    <td width="50%"><img src="docs/screenshots/appearance.webp" alt="Оформление"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/messages.webp" alt="Messages"></td>
+    <td width="50%"><img src="docs/screenshots/messages.webp" alt="Сообщения"></td>
     <td width="50%"><img src="docs/screenshots/premium.webp" alt="Telegram Premium"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/privacy.webp" alt="Privacy"></td>
-    <td width="50%"><img src="docs/screenshots/saving.webp" alt="Saving messages"></td>
+    <td width="50%"><img src="docs/screenshots/privacy.webp" alt="Конфиденциальность"></td>
+    <td width="50%"><img src="docs/screenshots/saving.webp" alt="Сохранение сообщений"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/network.webp" alt="Network"></td>
-    <td width="50%"><img src="docs/screenshots/plugins.webp" alt="Plugins"></td>
+    <td width="50%"><img src="docs/screenshots/network.webp" alt="Сеть"></td>
+    <td width="50%"><img src="docs/screenshots/plugins.webp" alt="Плагины"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/analysis.webp" alt="Plugin analysis"></td>
-    <td width="50%"><img src="docs/screenshots/support.webp" alt="Support the project"></td>
+    <td width="50%"><img src="docs/screenshots/analysis.webp" alt="Анализ плагина"></td>
+    <td width="50%"><img src="docs/screenshots/support.webp" alt="Поддержка проекта"></td>
   </tr>
 </table>
 
-## Features
+
+## Возможности и функционал клиента
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>Appearance</h3>
+      <h3>Визуал</h3>
       <ul>
-        <li>Material Design 3 elements</li>
-        <li>Custom app icon settings</li>
-        <li>UI elements and avatar settings</li>
-        <li>Sticker size adjustments</li>
-        <li>Hide the "All Chats" tab</li>
-        <li>Support for system fonts and emoji</li>
+        <li>Material Design Expressive</li>
+        <li>Smooth Scrolling</li>
+        <li>Кастомные иконки интерфейса</li>
+        <li>Глубокая настройка элементов интерфейса</li>
+        <li>Скрытие отображаемых элементов Telegram Desktop</li>
       </ul>
     </td>
     <td width="50%" valign="top">
-      <h3>Messages</h3>
+      <h3>Сообщения</h3>
       <ul>
-        <li>Quick actions bar</li>
-        <li>Message details</li>
-        <li>Built-in QuoteReply</li>
-        <li>Scheduled posting for channel editors</li>
-        <li>Forwarding messages from other accounts</li>
-        <li>Double click actions for left and right mouse buttons</li>
-        <li>Message translation preserving formatting</li>
-      </ul>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>Input and Media</h3>
-      <ul>
-        <li>Calculations in the input field</li>
-        <li>Character counter</li>
-        <li>Favorite emoji</li>
-        <li>Emoji pack ordering</li>
-        <li>Local premium emoji</li>
-        <li>Create video notes from videos</li>
-      </ul>
-    </td>
-    <td width="50%" valign="top">
-      <h3>Privacy</h3>
-      <ul>
-        <li>Hidden phone number</li>
-        <li>Show user IDs</li>
-        <li>Show registration date</li>
-        <li>Streamer mode</li>
-        <li>Show hidden group members</li>
-        <li>Hide archive</li>
-        <li>Ghost mode</li>
-        <li>Saved deleted messages and edit history</li>
+        <li>Панель быстрых действий</li>
+        <li>Настройка отправки сообщений</li>
+        <li>Встроенный QuoteReply</li>
+        <li>Отложенная отправка на максимальный срок для редакторов каналов</li>
+        <li>Пересылка сообщений с других аккаунтов</li>
+        <li>Настройка визуала сообщений</li>
+        <li>Перевод сообщений с сохранением форматирования</li>
       </ul>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <h3>Network and Notifications</h3>
+      <h3>Ввод и медиа</h3>
       <ul>
-        <li>Built-in tg-ws-proxy on Windows</li>
-        <li>Faster downloads and uploads</li>
-        <li>Notification visual settings</li>
-        <li>Custom notification sound</li>
-        <li>Removed account limit</li>
-        <li>Local Telegram Premium</li>
-        <li>Default client for tg:// links</li>
-        <li>Automatic updates</li>
+        <li>Вычисления в поле ввода</li>
+        <li>Счётчик символов</li>
+        <li>Избранные эмодзи</li>
+        <li>Локальные премиум-эмодзи и функционал Telegram Premium</li>
+        <li>Создание кружков из видео</li>
       </ul>
     </td>
     <td width="50%" valign="top">
-      <h3>Plugins and AI</h3>
+      <h3>Приватность</h3>
       <ul>
-        <li>Python plugin engine [in development]</li>
-        <li>Plugin settings</li>
-        <li>Plugin export</li>
-        <li>Install plugins from file</li>
-        <li>Plugin security check</li>
-        <li>AI Chat [beta]</li>
+        <li>Функционал AyuGram: режим призрака, сохранение удалённых сообщений и истории изменений</li>
+        <li>Снятие лимита по количеству аккаунтов</li>
+        <li>Снятие ограничений Telegram</li>
+        <li>Скрытие номера телефона</li>
+        <li>Показ ID пользователей</li>
+        <li>Показ даты регистрации</li>
+        <li>Глубоко настраиваемый Streamer Mode</li>
+        <li>Показ скрытых участников в группах</li>
+      </ul>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Сеть и уведомления</h3>
+      <ul>
+        <li>Встроенный tg-ws-proxy в Windows</li>
+        <li>Ускорение загрузки и выгрузки</li>
+        <li>Настройка визуала уведомлений</li>
+        <li>Выбор кастомного звука уведомлений</li>
+        <li>Локальный Telegram Premium</li>
+        <li>Автоматические обновления</li>
+      </ul>
+    </td>
+    <td width="50%" valign="top">
+      <h3>Плагины и ИИ</h3>
+      <ul>
+        <li>Совместимый движок плагинов форматов .plugin / .elyx / .eaf (в доработке)</li>
+        <li>Встроенный помощник для ИИ переноса плагинов</li>
+        <li>Локальная песочница для защиты от вредоносных плагинов</li>
+        <li>Глобальная настройка доступов плагинов</li>
+        <li>Мощная векторная модель PluginGuard для проверки безопасности плагинов</li>
+        <li>Встроенный блокировщик установки вредоносных плагинов</li>
+        <li>AI Chat [бета]</li>
       </ul>
     </td>
   </tr>
 </table>
 
-## Downloads
+## Установить exDesktop
 
-| Platform | File |
+| Система | Файл |
 |:--|:--|
-| Windows | `exDesktop-setup-x64.*.exe` installer or `exDesktop-portable-x64.*.zip` portable version |
-| Linux | `exDesktop-linux-x64.*.tar.gz`, run `exDesktop` from the archive |
-| macOS | `exDesktop-macos-arm64.*.dmg` or `.zip` for Apple Silicon |
+| Windows | установщик `exDesktop-setup-x64.*.exe` или портативная версия `exDesktop-portable-x64.*.zip` |
+| Linux (альтернативный) | `exDesktop-linux-x64.*.tar.gz`, запуск файла `exDesktop` из архива |
+| macOS (альтернативный) | `exDesktop-macos-arm64.*.dmg` или `.zip` для Apple Silicon |
 
-All files are available on the [releases page](https://github.com/metawka/exDesktop/releases/latest). exDesktop installs beside Telegram Desktop and keeps its data separate.
-
-Linux and macOS installation from the terminal (the installer detects the system and offers the application menu entry, TG WS Proxy dependencies and AyuGram features):
-
+## Установка на Linux / macOS
 ```bash
 curl -fsSL https://raw.githubusercontent.com/metawka/exDesktop/main/install.sh | sh
 ```
+Все файлы доступны на [странице релизов](https://github.com/metawka/exDesktop/releases/latest).
 
-## Building
+
+## Сборка из исходного кода
 
 <details>
-<summary><b>API credentials</b></summary>
+<summary><b>Данные API</b></summary>
 
-Get your own API ID and hash on [Telegram's API credentials page](https://core.telegram.org/api/obtaining_api_id). Pass them to CMake or the configure script when generating project files:
+Если вы хотите собрать клиент из исходников вручную, собственные API ID и hash можно получить на [странице данных API Telegram](https://core.telegram.org/api/obtaining_api_id). Использование в CMake или скрипте configure при создании файлов проекта:
 
 ```bash
 -D TDESKTOP_API_ID=YOUR_API_ID -D TDESKTOP_API_HASH=YOUR_API_HASH
@@ -166,14 +163,14 @@ Get your own API ID and hash on [Telegram's API credentials page](https://core.t
 <details>
 <summary><b>Linux</b></summary>
 
-**Dependencies**
+**Зависимости**
 
-- CMake 3.16 or newer and a C++20 compiler (GCC 12 or Clang 15 and newer)
+- CMake 3.16 или новее и компилятор C++20 (GCC 12 или Clang 15 и новее)
 - Qt 6: Core, Gui, Widgets, Network, OpenGL, DBus, Wayland, Svg, ImageFormats
-- Python 3.11 to 3.14 development headers (`python3-dev` / `dev-lang/python`)
-- Telegram Desktop libraries: `tg_owt`, `ffmpeg`, `openal`, `opus`, `rnnoise`, `libjpeg-turbo`, `xxhash`, `minizip`, `ada`, `cld3`, `wallet-engine-telegram`
+- Заголовки Python от 3.11 до 3.14 для разработки (`python3-dev` / `dev-lang/python`)
+- Библиотеки Telegram Desktop: `tg_owt`, `ffmpeg`, `openal`, `opus`, `rnnoise`, `libjpeg-turbo`, `xxhash`, `minizip`, `ada`, `cld3`, `wallet-engine-telegram`
 
-**Build with CMake**
+**Сборка через CMake**
 
 ```bash
 cmake -B build -G Ninja \
@@ -192,9 +189,9 @@ cmake --build build --target Telegram
 emerge net-im/exdesktop
 ```
 
-**Python plugin runtime**
+**Среда Python для плагинов**
 
-Copy the runtime files to `/usr/share/exDesktop/python/extera/`, or keep them next to the binary in `python/extera/`:
+Файлы среды копируются в `/usr/share/exDesktop/python/extera/` или лежат рядом с программой в `python/extera/`:
 
 ```bash
 sudo mkdir -p /usr/share/exDesktop/python/extera
@@ -206,39 +203,37 @@ sudo cp -r Telegram/SourceFiles/extera/python/* /usr/share/exDesktop/python/exte
 <details>
 <summary><b>Windows</b></summary>
 
-1. Follow the [Telegram Desktop Windows build guide](https://github.com/telegramdesktop/tdesktop/blob/dev/docs/building-win.md).
-2. Put the embedded Python 3.11 runtime in `Libraries/win64/python311`, including the headers, `python311.lib` and the `embed` folder.
-3. Generate the project files with your API ID and hash:
+1. Подготовка окружения по [инструкции сборки Telegram Desktop для Windows](https://github.com/telegramdesktop/tdesktop/blob/dev/docs/building-win.md).
+2. Встраиваемая среда Python 3.11 размещается в `Libraries/win64/python311` вместе с заголовками, `python311.lib` и папкой `embed`.
+3. Создание файлов проекта с вашими API ID и hash:
 
 ```cmd
 python configure.py x64 -D TDESKTOP_API_ID=YOUR_API_ID -D TDESKTOP_API_HASH=YOUR_API_HASH
 ```
 
-4. Build the `Telegram` target:
+4. Сборка цели `Telegram`:
 
 ```cmd
 cmake --build out --config Release --target Telegram
 ```
 
-The `python` folder next to `Telegram.exe` is required for plugins.
+Для работы плагинов нужна папка `python` рядом с `Telegram.exe`.
 
 </details>
 
-## Localization
 
-Most strings follow Telegram Desktop translations. exDesktop strings are available in English and Russian.
+## Благодарности
 
-## Credits
-
-| Project | Use in exDesktop |
+|  |  |
 |:--|:--|
-| [Telegram Desktop](https://github.com/telegramdesktop/tdesktop) | Client sources |
-| [exteraGram](https://github.com/exteraSquad/exteraGram) | Features and plugin format |
-| [AyuGram Desktop](https://github.com/AyuGram/AyuGramDesktop) | Desktop implementation references |
-| [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy) | Built-in WebSocket proxy, MIT License |
-| [Kangel Plugins Manager](https://git.kangel.xyz/KangelPlugins/PluginManager) | Plugin security check approach and the PluginGuard vector model |
+| [Telegram Desktop](https://github.com/telegramdesktop/tdesktop) | Исходный код клиента |
+| [exteraGram](https://github.com/exteraSquad/exteraGram) | Функции и формат плагинов |
+| [AyuGram Desktop](https://github.com/AyuGram/AyuGramDesktop) | Примеры реализации для компьютера |
+| [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy) | Встроенный WebSocket-прокси, лицензия MIT |
+| [Kangel Plugins Manager](https://git.kangel.xyz/KangelPlugins/PluginManager) | Принцип проверки плагинов и векторная модель PluginGuard |
+
 <details>
-<summary><b>Third-party libraries and components</b></summary>
+<summary><b>Сторонние библиотеки и компоненты</b></summary>
 
 - [Telegram Desktop](https://github.com/telegramdesktop/tdesktop): client sources, GPL-3.0 with an OpenSSL linking exception
 - desktop-app libraries: [lib_base](https://github.com/desktop-app/lib_base), [lib_rpl](https://github.com/desktop-app/lib_rpl), [lib_crl](https://github.com/desktop-app/lib_crl), [lib_storage](https://github.com/desktop-app/lib_storage), [lib_tl](https://github.com/desktop-app/lib_tl), [lib_lottie](https://github.com/desktop-app/lib_lottie), [lib_spellcheck](https://github.com/desktop-app/lib_spellcheck), [lib_qr](https://github.com/desktop-app/lib_qr), [lib_webrtc](https://github.com/desktop-app/lib_webrtc), [lib_webview](https://github.com/desktop-app/lib_webview), [lib_translate](https://github.com/desktop-app/lib_translate), [cmake_helpers](https://github.com/desktop-app/cmake_helpers): GPL-3.0 with an OpenSSL linking exception
@@ -303,6 +298,4 @@ Most strings follow Telegram Desktop translations. exDesktop strings are availab
 
 </details>
 
-## License
-
-exDesktop is distributed under the [GNU General Public License v3.0](LICENSE).
+## [GNU General Public License v3.0](LICENSE)
