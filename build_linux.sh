@@ -58,15 +58,34 @@ run_test() {
 run_configure() {
     local BUILD_DIR="${BUILD_DIR:-out}"
     local CONFIG="${CONFIG:-Release}"
-    echo "==> Initializing submodules (lib_ui, cmake)..."
-    git submodule update --init Telegram/lib_ui cmake
+    echo "==> Initializing submodules..."
+    git submodule update --init --recursive Telegram/lib_ui cmake Telegram/ThirdParty/widget-sandbox
     
+    local EXTRA_ARGS=()
+    if [ -f "/usr/lib64/libwallet_engine-telegram.so" ]; then
+        EXTRA_ARGS+=(
+            -DDESKTOP_APP_WALLET_ENGINE_LIBRARY="/usr/lib64/libwallet_engine-telegram.so"
+            -DDESKTOP_APP_WALLET_ENGINE_INCLUDE_DIR="/usr/include/wallet_engine-telegram"
+        )
+    fi
+    if [ -f "/usr/include/ada.h" ] || pkg-config --exists ada 2>/dev/null; then
+        EXTRA_ARGS+=(-DDESKTOP_APP_USE_PACKAGED=ON)
+    fi
+
+    if command -v clang >/dev/null 2>&1 && command -v clang++ >/dev/null 2>&1; then
+        EXTRA_ARGS+=(
+            -DCMAKE_C_COMPILER=clang
+            -DCMAKE_CXX_COMPILER=clang++
+        )
+    fi
+
     echo "==> Configuring CMake in ${BUILD_DIR} (${CONFIG})..."
     cmake -B "${BUILD_DIR}" -G Ninja \
         -DCMAKE_BUILD_TYPE="${CONFIG}" \
         "${API_ARGS[@]}" \
         -DDESKTOP_APP_DISABLE_X11_INTEGRATION=OFF \
         -DDESKTOP_APP_DISABLE_WAYLAND_INTEGRATION=OFF \
+        "${EXTRA_ARGS[@]}" \
         "${@:2}"
 }
 

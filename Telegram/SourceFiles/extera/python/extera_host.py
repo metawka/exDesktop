@@ -1282,6 +1282,20 @@ def _virtual_incoming(account, update):
                  [values, int(update.get("dialog_id") or 0), False, False], account=account)
 
 
+class _AttrDict(dict):
+    def __getattr__(self, item):
+        if item.startswith("__") and item.endswith("__"):
+            raise AttributeError(item)
+        val = self.get(item)
+        if isinstance(val, dict) and not isinstance(val, _AttrDict):
+            val = _AttrDict(val)
+            self[item] = val
+        return val
+
+    def __setattr__(self, item, value):
+        self[item] = value
+
+
 def _event(args):
     import client_utils
     kind = args.get("type")
@@ -1289,7 +1303,8 @@ def _event(args):
     base = _base()
     if kind == "update":
         name = args.get("name", "")
-        update = args.get("update") or {}
+        raw_update = args.get("update") or {}
+        update = _AttrDict(raw_update) if isinstance(raw_update, dict) else raw_update
         if name == "updateNewMessage" and isinstance(update, dict):
             _virtual_incoming(account, update)
             try:

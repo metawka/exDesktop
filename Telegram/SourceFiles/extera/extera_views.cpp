@@ -137,6 +137,45 @@ protected:
 	return result;
 }
 
+void PaintOps(QPainter &p, const QJsonArray &ops);
+
+class CanvasWidget : public QWidget {
+public:
+	CanvasWidget(QWidget *parent, const QJsonArray &ops)
+	: QWidget(parent)
+	, _ops(ops) {
+		setAttribute(Qt::WA_OpaquePaintEvent, false);
+		setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	}
+
+	void setOps(const QJsonArray &ops) {
+		_ops = ops;
+		update();
+	}
+
+	QSize sizeHint() const override {
+		return QSize(SheetWidth(), 74);
+	}
+
+	QSize minimumSizeHint() const override {
+		return QSize(100, 40);
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		QPainter p(this);
+		p.setRenderHint(QPainter::Antialiasing);
+		p.setRenderHint(QPainter::TextAntialiasing);
+		p.setRenderHint(QPainter::SmoothPixmapTransform);
+		if (!_ops.isEmpty()) {
+			PaintOps(p, _ops);
+		}
+	}
+
+private:
+	QJsonArray _ops;
+};
+
 void ApplySize(QWidget *widget, const QJsonObject &params) {
 	const auto w = params.contains(u"w"_q) ? params.value(u"w"_q).toInt() : -2;
 	const auto h = params.contains(u"h"_q) ? params.value(u"h"_q).toInt() : -2;
@@ -168,12 +207,18 @@ void ApplyBackground(QWidget *widget, const QJsonObject &data) {
 	if (data.contains(u"radius"_q) && data.value(u"radius"_q).toDouble() > 0.) {
 		parts << u"border-radius: %1px"_q.arg(
 			int(data.value(u"radius"_q).toDouble()));
+	} else if (data.contains(u"color"_q)) {
+		parts << u"border-radius: 8px"_q;
 	}
 	const auto stroke = data.value(u"stroke"_q).toArray();
 	if (stroke.size() == 2) {
 		parts << u"border: %1px solid %2"_q
 			.arg(int(stroke[0].toDouble()))
 			.arg(FromArgb(stroke[1].toInteger()).name(QColor::HexArgb));
+	}
+	const auto existing = widget->styleSheet();
+	if (!existing.isEmpty()) {
+		parts.prepend(existing);
 	}
 	widget->setStyleSheet(parts.join(u"; "_q));
 }
@@ -271,6 +316,13 @@ void ApplyCommon(QWidget *widget, const QJsonObject &node) {
 	const auto type = node.value(u"type"_q).toString();
 	LOG(("PluginViews: build type=%1 id=%2 children=%3").arg(
 		type).arg(id).arg(node.value(u"children"_q).toArray().size()));
+	if (type == u"canvas_view"_q || node.contains(u"ops"_q)) {
+		auto widget = new CanvasWidget(parent, node.value(u"ops"_q).toArray());
+		ApplySize(widget, QJsonObject());
+		ApplyCommon(widget, node);
+		Widgets[id] = widget;
+		return widget;
+	}
 	if (type == u"scrollview"_q) {
 		auto area = new Ui::ScrollArea(parent);
 		const auto inner = BuildNode(
@@ -291,12 +343,30 @@ void ApplyCommon(QWidget *widget, const QJsonObject &node) {
 			auto edit = new QLineEdit(parent);
 			edit->setText(node.value(u"text"_q).toString());
 			edit->setPlaceholderText(node.value(u"hint"_q).toString());
-		QObject::connect(edit, &QLineEdit::textChanged, [=](const QString &text) {
-			Extera::Plugins::Call(u"text_changed"_q, QJsonObject{
-				{ u"id"_q, double(id) },
-				{ u"text"_q, text },
+			const auto bgOver = st::windowBgOver->c.name(QColor::HexRgb);
+			const auto fg = st::windowFg->c.name(QColor::HexRgb);
+			const auto subFg = st::windowSubTextFg->c.name(QColor::HexRgb);
+			const auto active = st::windowActiveTextFg->c.name(QColor::HexRgb);
+			edit->setStyleSheet(QString(
+				"QLineEdit {"
+				"  background-color: %1;"
+				"  color: %2;"
+				"  border: 1px solid %3;"
+				"  border-radius: 8px;"
+				"  padding: 8px 12px;"
+				"  font-size: 14px;"
+				"  selection-background-color: %4;"
+				"}"
+				"QLineEdit:focus {"
+				"  border: 1.5px solid %4;"
+				"}"
+			).arg(bgOver, fg, subFg, active));
+			QObject::connect(edit, &QLineEdit::textChanged, [=](const QString &text) {
+				Extera::Plugins::Call(u"text_changed"_q, QJsonObject{
+					{ u"id"_q, double(id) },
+					{ u"text"_q, text },
+				});
 			});
-		});
 			ApplySize(edit, QJsonObject());
 			ApplyBackground(edit, node.value(u"bg"_q).toObject());
 			Widgets[id] = edit;
@@ -318,10 +388,16 @@ void ApplyCommon(QWidget *widget, const QJsonObject &node) {
 		if (color.isDouble()) {
 			label->setStyleSheet(u"color: %1"_q
 				.arg(FromArgb(color.toInteger()).name(QColor::HexArgb)));
+		} else {
+			label->setStyleSheet(u"color: %1"_q
+				.arg(st::windowFg->c.name(QColor::HexArgb)));
 		}
 		const auto gravity = node.value(u"gravity"_q);
 		if (gravity.isDouble()) {
 			label->setAlignment(AlignmentFromGravity(gravity.toInt()));
+		}
+		if (node.value(u"clickable"_q).toBool()) {
+			label->setCursor(Qt::PointingHandCursor);
 		}
 		label->handler = [=] {
 			Extera::Plugins::Call(u"view_click"_q, QJsonObject{
@@ -329,6 +405,15 @@ void ApplyCommon(QWidget *widget, const QJsonObject &node) {
 			});
 		};
 		ApplySize(label, QJsonObject());
+		ApplyBackground(label, node.value(u"bg"_q).toObject());
+		const auto padding = node.value(u"padding"_q).toArray();
+		if (padding.size() == 4) {
+			label->setContentsMargins(
+				padding[0].toInt(), padding[1].toInt(),
+				padding[2].toInt(), padding[3].toInt());
+		} else if (!node.value(u"bg"_q).toObject().isEmpty()) {
+			label->setContentsMargins(14, 10, 14, 10);
+		}
 		Widgets[id] = label;
 		return label;
 	}
@@ -579,6 +664,14 @@ void ApplyUpdate(const QJsonObject &payload) {
 		widget->move(widget->x() + int(payload.value(u"value"_q).toDouble()), widget->y());
 	} else if (op == u"translation_y"_q) {
 		widget->move(widget->x(), widget->y() + int(payload.value(u"value"_q).toDouble()));
+	} else if (op == u"geometry"_q) {
+		const auto x = int(payload.value(u"x"_q).toDouble());
+		const auto y = int(payload.value(u"y"_q).toDouble());
+		const auto w = int(payload.value(u"w"_q).toDouble());
+		const auto h = int(payload.value(u"h"_q).toDouble());
+		if (w > 0 && h > 0) {
+			widget->setGeometry(x, y, w, h);
+		}
 	} else if (op == u"child_gravity"_q) {
 		if (auto layout = widget->layout()) {
 			const auto alignment = AlignmentFromGravity(
@@ -695,6 +788,36 @@ void EnsureMetrics() {
 void PaintOps(QPainter &p, const QJsonArray &ops) {
 	for (const auto &value : ops) {
 		const auto op = value.toObject();
+		const auto name = op.value(u"op"_q).toString();
+		if (name == u"save"_q) {
+			p.save();
+			continue;
+		} else if (name == u"restore"_q) {
+			p.restore();
+			continue;
+		} else if (name == u"translate"_q) {
+			p.translate(
+				op.value(u"dx"_q).toDouble(),
+				op.value(u"dy"_q).toDouble());
+			continue;
+		} else if (name == u"scale"_q) {
+			p.scale(
+				op.value(u"sx"_q).toDouble(),
+				op.value(u"sy"_q).toDouble());
+			continue;
+		} else if (name == u"rotate"_q) {
+			p.rotate(op.value(u"deg"_q).toDouble());
+			continue;
+		} else if (name == u"clip"_q) {
+			const auto rect = op.value(u"rect"_q).toArray();
+			p.setClipRect(
+				QRectF(
+					rect[0].toDouble(), rect[1].toDouble(),
+					rect[2].toDouble() - rect[0].toDouble(),
+					rect[3].toDouble() - rect[1].toDouble()),
+				Qt::IntersectClip);
+			continue;
+		}
 		const auto paint = op.value(u"paint"_q).toObject();
 		const auto color = FromArgb(paint.value(u"color"_q).toInteger(0xFF000000));
 		const auto style = paint.value(u"style"_q).toInt(0);
@@ -707,7 +830,6 @@ void PaintOps(QPainter &p, const QJsonArray &ops) {
 			p.setPen(Qt::NoPen);
 			p.setBrush(color);
 		}
-		const auto name = op.value(u"op"_q).toString();
 		if (name == u"rrect"_q) {
 			const auto rect = op.value(u"rect"_q).toArray();
 			p.drawRoundedRect(

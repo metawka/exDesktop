@@ -1,5 +1,7 @@
 #include <Python.h>
+#undef NDEBUG
 #include <cassert>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -9,6 +11,7 @@
 namespace fs = std::filesystem;
 
 static std::string g_lastLog;
+static std::string g_allLogs;
 static std::string g_lastToast;
 static std::string g_lastCopied;
 
@@ -16,6 +19,8 @@ static PyObject *NativeLog(PyObject *self, PyObject *args) {
     const char *text = nullptr;
     if (PyArg_ParseTuple(args, "s", &text)) {
         g_lastLog = text;
+        g_allLogs += text;
+        g_allLogs += "\n";
         std::cout << "[NativeLog] " << text << std::endl;
     }
     Py_RETURN_NONE;
@@ -37,6 +42,28 @@ static PyObject *NativeCopy(PyObject *self, PyObject *args) {
         std::cout << "[NativeCopy] " << text << std::endl;
     }
     Py_RETURN_NONE;
+}
+
+static PyObject *NativeViewsRenderCanvas(PyObject *self, PyObject *args) {
+    Py_RETURN_NONE;
+}
+
+static PyObject *NativeMeasureText(PyObject *self, PyObject *args) {
+    const char *text = nullptr;
+    int size = 14;
+    int bold = 0;
+    if (PyArg_ParseTuple(args, "sip", &text, &size, &bold)) {
+        return PyFloat_FromDouble(double(strlen(text) * size * 0.55));
+    }
+    return PyFloat_FromDouble(100.0);
+}
+
+static PyObject *NativeUiMetrics(PyObject *self, PyObject *args) {
+    return PyUnicode_FromString("{\"dp\": 2.0, \"width\": 1080, \"height\": 1920}");
+}
+
+static PyObject *NativeThemeColor(PyObject *self, PyObject *args) {
+    return PyLong_FromLongLong(0);
 }
 
 static PyObject *NativeSendMessage(PyObject *self, PyObject *args) {
@@ -68,6 +95,10 @@ static PyMethodDef NativeMethods[] = {
     { "send_message", NativeSendMessage, METH_VARARGS, nullptr },
     { "settings_changed", NativeSettingsChanged, METH_VARARGS, nullptr },
     { "current_peer", NativeCurrentPeer, METH_VARARGS, nullptr },
+    { "views_render_canvas", NativeViewsRenderCanvas, METH_VARARGS, nullptr },
+    { "measure_text", NativeMeasureText, METH_VARARGS, nullptr },
+    { "ui_metrics", NativeUiMetrics, METH_NOARGS, nullptr },
+    { "theme_color", NativeThemeColor, METH_VARARGS, nullptr },
     { nullptr, nullptr, 0, nullptr },
 };
 
@@ -124,6 +155,107 @@ class TestPlugin(BasePlugin):
 )PY";
     }
 
+    // Create geometry and drawing test plugin
+    fs::path geoPluginPath = tempBase / "plugins" / "geometry_test.plugin";
+    {
+        std::ofstream out(geoPluginPath);
+        out << R"PY(
+__id__ = "geometry_test"
+__name__ = "Geometry & Drawing Hooks Test Plugin"
+__description__ = "Tests onDraw, dispatchDraw, onMeasure, onLayout hooks via Android geometry translation on Desktop"
+__author__ = "exDesktop"
+__version__ = "1.0.0"
+
+import _extera
+from base_plugin import BasePlugin, MethodHook
+from android_views import (
+    View, ViewGroup, ChatMessageCell, FrameLayout, TextView,
+    MeasureSpec, GeometryTranslator, Paint, Canvas, Bitmap
+)
+from de.robv.android.xposed import XposedBridge, XC_MethodHook
+
+class GeometryTestPlugin(BasePlugin):
+    def on_plugin_load(self):
+        _extera.log("GeometryTestPlugin loaded!")
+
+        # 1. Hook onMeasure on View
+        class MeasureHook(MethodHook):
+            def before_hooked_method(self, param):
+                param.args[0] = MeasureSpec.makeMeasureSpec(300, MeasureSpec.EXACTLY)
+            def after_hooked_method(self, param):
+                param.thisObject.setMeasuredDimension(420, 150)
+        self.hook_method(View, "onMeasure", MeasureHook())
+
+        # 2. Hook onLayout on View
+        class LayoutHook(MethodHook):
+            def before_hooked_method(self, param):
+                pass
+            def after_hooked_method(self, param):
+                _extera.log(f"HOOK_LAYOUT_VERIFIED: {param.thisObject.getWidth()}x{param.thisObject.getHeight()}")
+        self.hook_method(View, "onLayout", LayoutHook())
+
+        # 3. Hook onDraw on ChatMessageCell via XposedBridge
+        class DrawHook(XC_MethodHook):
+            def beforeHookedMethod(self, param):
+                canvas = param.args[0]
+                paint = Paint()
+                paint.setColor(0xFFFF5500)
+                canvas.drawRect(0, 0, 80, 40, paint)
+                _extera.log("HOOK_DRAW_CUSTOM_BADGE")
+
+        cell_cls = ChatMessageCell
+        m_draw = cell_cls.getMethod("onDraw")
+        XposedBridge.hookMethod(m_draw, DrawHook())
+
+        # 4. Hook dispatchDraw on ViewGroup
+        class DispatchDrawHook(MethodHook):
+            def before_hooked_method(self, param):
+                canvas = param.args[0]
+                canvas.drawColor(0xFF112233)
+                _extera.log("HOOK_DISPATCH_DRAW_BG")
+            def after_hooked_method(self, param):
+                canvas = param.args[0]
+                canvas.drawCircle(50, 50, 25, Paint())
+                _extera.log("HOOK_DISPATCH_DRAW_FG")
+        self.hook_method(ViewGroup, "dispatchDraw", DispatchDrawHook())
+
+        # Run verification checks
+        v = View()
+        v.measure(MeasureSpec.makeMeasureSpec(100, MeasureSpec.AT_MOST),
+                  MeasureSpec.makeMeasureSpec(100, MeasureSpec.AT_MOST))
+        assert v.getMeasuredWidth() == 420, f"Expected 420, got {v.getMeasuredWidth()}"
+        assert v.getMeasuredHeight() == 150, f"Expected 150, got {v.getMeasuredHeight()}"
+        _extera.log("ALL_HOOKS_ONMEASURE_OK")
+
+        v.layout(10, 20, 430, 170)
+        assert v.getWidth() == 420
+        assert v.getHeight() == 150
+        _extera.log("ALL_HOOKS_ONLAYOUT_OK")
+
+        cell = ChatMessageCell()
+        cell.layout(0, 0, 300, 100)
+        bmp = Bitmap(300, 100)
+        canvas = Canvas(bmp)
+        cell.draw(canvas)
+        ops = [op["op"] for op in bmp.ops]
+        assert "rect" in ops
+        _extera.log("ALL_HOOKS_ONDRAW_OK")
+
+        group = FrameLayout()
+        child = TextView(text="Child")
+        group.addView(child)
+        group.measure(MeasureSpec.makeMeasureSpec(200, MeasureSpec.EXACTLY),
+                      MeasureSpec.makeMeasureSpec(100, MeasureSpec.EXACTLY))
+        group.layout(0, 0, 200, 100)
+        bmp_group = Bitmap(200, 100)
+        group.draw(Canvas(bmp_group))
+        group_ops = [op["op"] for op in bmp_group.ops]
+        assert "circle" in group_ops
+        _extera.log("ALL_HOOKS_DISPATCH_DRAW_OK")
+        _extera.log("ALL_GEOMETRY_DRAWING_HOOKS_VERIFIED_SUCCESSFULLY")
+)PY";
+    }
+
     std::cout << "[TEST] 1. Registering native inittab..." << std::endl;
     if (PyImport_AppendInittab("_extera", InitNativeModule) == -1) {
         std::cerr << "Failed to register _extera inittab" << std::endl;
@@ -175,7 +307,7 @@ class TestPlugin(BasePlugin):
     };
 
     std::cout << "[TEST] 5. Calling dispatch('init')..." << std::endl;
-    std::string initPayload = "{\"plugins\": \"" + (tempBase / "plugins").string() + "\", \"settings\": \"" + (tempBase / "settings").string() + "\", \"safe_mode\": false}";
+    std::string initPayload = "{\"plugins\": \"" + (tempBase / "plugins").string() + "\", \"settings\": \"" + (tempBase / "settings").string() + "\", \"safe_mode\": false, \"unknown_sources\": true}";
     std::string initRes = callDispatch("init", initPayload);
     std::cout << "init response: " << initRes << std::endl;
     assert(initRes.find("\"ok\": true") != std::string::npos);
@@ -185,6 +317,9 @@ class TestPlugin(BasePlugin):
     std::cout << "list response: " << listRes << std::endl;
     assert(listRes.find("sample_test") != std::string::npos);
     assert(listRes.find("Sample Test Plugin") != std::string::npos);
+    assert(listRes.find("geometry_test") != std::string::npos);
+    assert(listRes.find("Geometry & Drawing Hooks Test Plugin") != std::string::npos);
+    assert(g_allLogs.find("ALL_GEOMETRY_DRAWING_HOOKS_VERIFIED_SUCCESSFULLY") != std::string::npos);
 
     std::cout << "[TEST] 7. Testing send_hook with message modification..." << std::endl;
     std::string sendHookPayload = "{\"history\": 1, \"text\": \"/shout hello linux\", \"reply_to\": 0}";

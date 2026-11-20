@@ -220,6 +220,19 @@ class MessagesController(_Instance):
     def getChat(self, chat_id):
         return get_chat(chat_id)
 
+    def getChatFull(self, chat_id, *args):
+        chat = self.getChat(chat_id)
+        if chat is not None:
+            return getattr(chat, "full_chat", chat)
+        import _compat
+        return _compat.Stub("ChatFull")
+
+    def blockPeer(self, peer_id, *args):
+        return None
+
+    def deleteDialog(self, dialog_id, *args):
+        return None
+
     def putUser(self, *args, **kwargs):
         return True
 
@@ -491,16 +504,38 @@ class ChatActivity(_Instance):
     def getContext(self):
         return _compat.Stub("Context")
 
+    def updateTopPanel(self, *args, **kwargs):
+        return None
+
+    def createView(self, *args, **kwargs):
+        return None
+
+    def onResume(self, *args, **kwargs):
+        return None
+
 
 class ProfileActivity(ChatActivity):
     _java_name = "org.telegram.ui.ProfileActivity"
     getClass = _class_getter("org.telegram.ui.ProfileActivity")
+
+    def __init__(self, dialog_id=0):
+        super().__init__(dialog_id)
+        self.chatInfo = None
 
     def getUserId(self):
         return self._dialog_id if self._dialog_id > 0 else 0
 
     def getChatId(self):
         return -self._dialog_id if self._dialog_id < 0 else 0
+
+    def getBotVerificationDrawable(self, *args):
+        return None
+
+    def updateRowsIds(self, *args):
+        return None
+
+    def updateListAnimated(self, *args):
+        return None
 
 
 class DialogsActivity(ChatActivity):

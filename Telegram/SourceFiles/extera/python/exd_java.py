@@ -101,6 +101,12 @@ class JavaClassInfo:
     def getMethods(self):
         return shim_methods(self._class)
 
+    def getMethod(self, name="", *args):
+        return shim_method(self._class, name) or _missing("%s.%s" % (self._name, name))
+
+    def getDeclaredMethod(self, name="", *args):
+        return shim_method(self._class, name) or _missing("%s.%s" % (self._name, name))
+
     def getFields(self):
         return shim_fields(self._class)
 
@@ -1960,6 +1966,14 @@ class LocaleController(JavaObject):
     def getCurrentLanguageName():
         return language()
 
+    @staticmethod
+    def stringForMessageListDate(date, *args):
+        import time
+        try:
+            return time.strftime("%d.%m.%Y", time.localtime(int(date)))
+        except Exception:
+            return str(date)
+
 
 def _log(message):
     try:
@@ -2214,6 +2228,9 @@ class MessageObject(JavaObject):
 
     def getMessageText(self):
         return self.messageText
+
+    def measureInlineBotButtons(self, *args, **kwargs):
+        return None
 
     def isMediaEmpty(self):
         return not self._media_data or self._kind() in ("webpage",)
@@ -2645,6 +2662,13 @@ def shim_method(cls, name):
     if name.startswith("_") or _reflection_default(cls, name):
         return None
     func, kind = _raw_kind(cls, name)
+    if func is None and (hasattr(cls, "_java_name") or issubclass(cls, JavaObject) or getattr(cls, "_exd_allow_dynamic", False)):
+        def _dynamic_method(self, *args, **kwargs):
+            return None
+        _dynamic_method.__name__ = name
+        _dynamic_method.__qualname__ = f"{cls.__name__}.{name}"
+        setattr(cls, name, _dynamic_method)
+        func = _dynamic_method
     if func is None or not callable(func) or isinstance(func, type) or getattr(func, "_exd_default", False):
         return None
     return ShimMethod(cls, name)
@@ -2852,6 +2876,8 @@ def lookup(name):
     name = str(name)
     cls = _CLASSES.get(name)
     if cls is not None:
+        if isinstance(cls, type):
+            _ensure_reflection(cls, name)
         return cls
     try:
         import _compat

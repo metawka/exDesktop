@@ -261,6 +261,7 @@ class _Center(JavaObject):
 
     def __init__(self, account):
         self.account = account
+        self.currentAccount = account
 
     def addObserver(self, delegate, notification_id):
         host = _host()
@@ -301,6 +302,11 @@ class NotificationCenter(JavaObject, metaclass=_NotificationMeta):
     _java_name = "org.telegram.messenger.NotificationCenter"
     NotificationCenterDelegate = NotificationCenterDelegate
     _centers = {}
+    currentAccount = 0
+
+    @staticmethod
+    def postNotificationName(notification_id, *args):
+        return post(int(notification_id), 0, *args)
 
     @staticmethod
     def getInstance(account=0):
@@ -1026,6 +1032,14 @@ class SendMessagesHelper(JavaObject):
         return SendMessagesHelper.getInstance(0).sendMessage(params, *args)
 
     @staticmethod
+    def sendCallback(*args, **kwargs):
+        return None
+
+    @staticmethod
+    def isSendingCallback(*args, **kwargs):
+        return False
+
+    @staticmethod
     def prepareSendingDocument(*args):
         import client_utils
         path = next((a for a in args if isinstance(a, str) and os.path.exists(a)), None)
@@ -1252,6 +1266,12 @@ class PythonPluginsEngine(JavaObject):
         return bool(record is not None and record.instance is not None)
 
 
+try:
+    from exd_xposed import XposedBridge, XC_MethodHook, XC_MethodReplacement
+except ImportError:
+    pass
+
+
 # Install
 
 def install(shims):
@@ -1268,10 +1288,31 @@ def install(shims):
         "android.content": {"Context": context, "ClipData": ClipData, "ClipboardManager": ClipboardManager,
                             "DialogInterface": DialogInterface},
         "android.text": {"InputType": InputType},
-        "android.view": {"ViewGroup": group},
+        "android.view": {"ViewGroup": group, "View": android_views.View,
+                         "MeasureSpec": android_views.MeasureSpec},
+        "android.widget": {"FrameLayout": android_views.FrameLayout,
+                           "LinearLayout": android_views.LinearLayout,
+                           "TextView": android_views.TextView,
+                           "ImageView": android_views.ImageView,
+                           "EditText": android_views.EditText,
+                           "ScrollView": android_views.ScrollView},
         "android.graphics": {"BitmapFactory": BitmapFactory, "PorterDuff": PorterDuff,
                              "PorterDuffColorFilter": PorterDuffColorFilter,
-                             "PorterDuffXfermode": PorterDuffXfermode},
+                             "PorterDuffXfermode": PorterDuffXfermode,
+                             "Canvas": android_views.Canvas, "Paint": android_views.Paint,
+                             "Rect": android_views.Rect, "RectF": android_views.RectF,
+                             "Bitmap": android_views.Bitmap},
+        "org.telegram.ui.Cells": {"ChatMessageCell": android_views.ChatMessageCell,
+                                  "BaseCell": android_views.BaseCell,
+                                  "DialogCell": android_views.DialogCell,
+                                  "TitleCell": android_views.TitleCell,
+                                  "TextInfoPrivacyCell": android_views.TextInfoPrivacyCell},
+        "org.telegram.ui.Components": {"ChatActivityEnterView": android_views.ChatActivityEnterView,
+                                       "FolderBottomSheet": android_views.FolderBottomSheet,
+                                       "FolderBottomSheet$TitleCell": android_views.TitleCell,
+                                       "ChatAvatarContainer": android_views.ChatAvatarContainer,
+                                       "AnimatedEmojiDrawable": android_views.AnimatedEmojiDrawable,
+                                       "AnimatedEmojiDrawable$SwapAnimatedEmojiDrawable": android_views.SwapAnimatedEmojiDrawable},
         "java.io": {"FileOutputStream": FileOutputStream, "FileInputStream": FileInputStream,
                     "ByteArrayOutputStream": ByteArrayOutputStream, "ByteArrayInputStream": ByteArrayInputStream},
         "org.telegram.messenger": {"R": R, "NotificationCenter": NotificationCenter, "FileLoader": FileLoader,

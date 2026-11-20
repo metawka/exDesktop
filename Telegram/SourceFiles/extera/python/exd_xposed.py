@@ -651,8 +651,24 @@ class PyMethodReplacement(XC_MethodReplacement):
 def _owner_plugin():
     host = _host()
     pid = host.current_plugin_id()
-    record = host._records.get(pid or "")
-    return getattr(record, "instance", None)
+    if pid:
+        record = host._records.get(pid)
+        if record and getattr(record, "instance", None):
+            return record.instance
+    records = list(getattr(host, "_records", {}).values())
+    if len(records) == 1:
+        inst = getattr(records[0], "instance", None)
+        if inst is not None:
+            return inst
+    for record in records:
+        inst = getattr(record, "instance", None)
+        if inst is not None:
+            return inst
+    try:
+        import base_plugin
+        return getattr(base_plugin.BasePlugin, "_last_instance", None)
+    except Exception:
+        return None
 
 
 def _bridge_hook(member, callback):
