@@ -1954,6 +1954,58 @@ QVector<MTPMessage> History::exteraMergeDeleted(
 	return result;
 }
 
+void History::exdMergeDeletedIds(
+		std::vector<MsgId> &ids,
+		MsgRange range,
+		int &fullCount) {
+	if (!Extera::SaveDeleted() || range.from > range.till) {
+		return;
+	}
+	const auto &stored = owner().exteraDeletedFor(peer->id);
+	if (stored.empty()) {
+		return;
+	}
+	auto added = 0;
+	auto found = std::vector<std::pair<MsgId, QByteArray>>();
+	for (auto i = stored.lower_bound(range.from); i != end(stored); ++i) {
+		if (i->first > range.till) {
+			break;
+		} else if (!ranges::contains(ids, i->first)) {
+			found.emplace_back(i->first, i->second);
+		}
+	}
+	for (const auto &[id, bytes] : found) {
+		auto item = owner().message(peer, id);
+		if (!item) {
+			if (bytes.size() % sizeof(mtpPrime)) {
+				continue;
+			}
+			auto buffer = mtpBuffer(bytes.size() / sizeof(mtpPrime));
+			memcpy(buffer.data(), bytes.constData(), bytes.size());
+			auto from = buffer.constData();
+			auto message = MTPMessage();
+			if (!message.read(from, from + buffer.size())
+				|| PeerFromMessage(message) != peer->id) {
+				continue;
+			}
+			item = owner().addNewMessage(
+				message,
+				MessageFlags(),
+				NewMessageType::Existing);
+		}
+		if (!item || item->history() != this) {
+			continue;
+		}
+		owner().exteraMarkDeleted(item->fullId());
+		ids.push_back(id);
+		++added;
+	}
+	if (added) {
+		ranges::sort(ids, std::greater<>());
+		fullCount += added;
+	}
+}
+
 void History::addOlderSlice(const QVector<MTPMessage> &original) {
 	auto slice = original;
 	if (!original.isEmpty() && Extera::SaveDeleted()) {
@@ -3618,6 +3670,7 @@ void History::applyDialog(
 		data.vread_inbox_max_id().v,
 		data.vread_outbox_max_id().v);
 	applyDialogTopMessage(data.vtop_message().v);
+	exdApplyGhostRead(data.vtop_message().v);
 	setUnreadMark(data.is_unread_mark());
 	unreadMentions().setCount(data.vunread_mentions_count().v);
 	unreadReactions().setCount(data.vunread_reactions_count().v);
@@ -3767,6 +3820,22 @@ void History::applyDialogFields(
 		setInboxReadTill(maxInboxRead);
 	}
 	setOutboxReadTill(maxOutboxRead);
+}
+
+void History::exdApplyGhostRead(MsgId topMessageId) {
+	const auto till = owner().exdGhostReadTill(peer->id);
+	if (!till
+		|| skipUnreadUpdate()
+		|| (till + 1 <= _inboxReadBefore.value_or(0))) {
+		return;
+	}
+	if (topMessageId && till >= topMessageId) {
+		setUnreadCount(0);
+	} else if (const auto still = countStillUnreadLocal(till)) {
+		setUnreadCount(*still);
+	}
+	setInboxReadTill(till);
+	updateChatListEntry();
 }
 
 void History::applyDialogTopMessage(MsgId topMessageId) {

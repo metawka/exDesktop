@@ -11,6 +11,7 @@
 #include "ui/image/image.h"
 #include "ui/layers/generic_box.h"
 #include "ui/painter.h"
+#include "ui/style/style_core.h"
 #include "window/window_session_controller.h"
 #include "core/application.h"
 #include "core/core_settings.h"
@@ -25,6 +26,9 @@
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 #include "styles/style_layers.h"
+#include "extera/extera_plugins.h"
+#include "ui/widgets/popup_menu.h"
+#include "styles/style_widgets.h"
 
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
@@ -126,6 +130,41 @@ enum class Button {
 		anim::interpolate(a.blue(), b.blue(), progress));
 }
 
+struct ExdColors {
+	bool md3 = false;
+	QColor bg;
+	QColor fg;
+	QColor sub;
+	QColor accent;
+	QColor onAccent;
+	QColor card;
+	QColor raised;
+	QColor tonal;
+};
+
+[[nodiscard]] ExdColors ExdPalette() {
+	auto result = ExdColors();
+	result.md3 = style::Md3Enabled();
+	if (!result.md3) {
+		return result;
+	}
+	const auto mix = [](QColor a, QColor b, float64 k) {
+		return QColor(
+			anim::interpolate(a.red(), b.red(), k),
+			anim::interpolate(a.green(), b.green(), k),
+			anim::interpolate(a.blue(), b.blue(), k));
+	};
+	result.bg = st::windowBg->c;
+	result.fg = st::windowFg->c;
+	result.sub = st::windowSubTextFg->c;
+	result.accent = st::windowBgActive->c;
+	result.onAccent = st::windowBg->c;
+	result.card = mix(result.bg, result.fg, 0.055);
+	result.raised = mix(result.bg, result.fg, 0.08);
+	result.tonal = mix(result.bg, result.accent, 0.22);
+	return result;
+}
+
 [[nodiscard]] QColor Darken(QColor color, float64 amount) {
 	return QColor(
 		int(color.red() * amount),
@@ -147,9 +186,11 @@ protected:
 	void mouseReleaseEvent(QMouseEvent *e) override;
 	void wheelEvent(QWheelEvent *e) override;
 	void leaveEventHook(QEvent *e) override;
+	void contextMenuEvent(QContextMenuEvent *e) override;
 
 private:
 	void loadTrack();
+	base::unique_qptr<Ui::PopupMenu> _pluginMenu;
 	void checkCover();
 	void applyCover(QImage image);
 	void requestLyrics();
@@ -165,6 +206,7 @@ private:
 	void updateCurrentLine();
 	void seekTo(float64 progress);
 	void paintControls(QPainter &p);
+	void paintControlsMd3(QPainter &p);
 	void paintLyrics(QPainter &p);
 	[[nodiscard]] Button buttonAt(QPoint point, int *line = nullptr) const;
 	[[nodiscard]] crl::time position() const;
@@ -173,6 +215,7 @@ private:
 	[[nodiscard]] QRect sliderRect() const;
 	[[nodiscard]] QPoint buttonCenter(Button button) const;
 	[[nodiscard]] QRect lyricsRect() const;
+	[[nodiscard]] QRect lyricsCardRect() const;
 
 	const not_null<Window::SessionController*> _controller;
 	const int _height = 0;
@@ -223,8 +266,13 @@ View::View(
 , _titleFont(S(20), style::FontFlag::Bold, 0)
 , _subtitleFont(S(15), style::FontFlags(), 0)
 , _timeFont(S(12), style::FontFlags(), 0)
-, _lineFont(S(17), style::FontFlag::Bold, 0)
-, _currentFont(S(19), style::FontFlag::Bold, 0)
+, _lineFont(
+	S(17),
+	style::Md3Enabled()
+		? style::FontFlags()
+		: style::FontFlags(style::FontFlag::Bold),
+	0)
+, _currentFont(S(style::Md3Enabled() ? 21 : 19), style::FontFlag::Bold, 0)
 , _top(QColor(40, 40, 48))
 , _bottom(QColor(18, 18, 22))
 , _wasTop(_top)
@@ -576,6 +624,9 @@ QRect View::coverRect() const {
 
 QRect View::sliderRect() const {
 	const auto cover = coverRect();
+	if (style::Md3Enabled()) {
+		return QRect(cover.x(), S(389), cover.width(), S(10));
+	}
 	return QRect(cover.x(), S(392), cover.width(), S(4));
 }
 
@@ -595,7 +646,16 @@ QPoint View::buttonCenter(Button button) const {
 	}
 }
 
+QRect View::lyricsCardRect() const {
+	const auto left = coverRect().x() + coverRect().width() + S(40);
+	return QRect(left, S(36), width() - left - S(32), _height - S(64));
+}
+
 QRect View::lyricsRect() const {
+	if (style::Md3Enabled()) {
+		return lyricsCardRect().marginsRemoved(
+			QMargins(S(24), S(22), S(24), S(22)));
+	}
 	const auto left = coverRect().right() + S(48);
 	return QRect(left, S(24), width() - left - S(32), _height - S(48));
 }
@@ -606,15 +666,18 @@ void View::layoutLines() {
 		return;
 	}
 	_linesWidth = rect.width();
+	const auto md3 = style::Md3Enabled();
 	auto top = 0;
-	for (auto &line : _lines) {
+	for (auto i = 0; i != int(_lines.size()); ++i) {
+		auto &line = _lines[i];
 		const auto text = line.text.isEmpty() ? u"..."_q : line.text;
+		const auto &font = (!md3 || i == _current) ? _currentFont : _lineFont;
 		line.top = top;
-		line.height = QFontMetrics(_currentFont->f).boundingRect(
+		line.height = QFontMetrics(font->f).boundingRect(
 			QRect(0, 0, rect.width(), 10000),
 			Qt::TextWordWrap,
 			text).height();
-		top += line.height + S(14);
+		top += line.height + (md3 ? S(10) : S(14));
 	}
 	_linesHeight = top;
 }
@@ -637,6 +700,10 @@ void View::updateCurrentLine() {
 		return;
 	}
 	_current = current;
+	if (style::Md3Enabled()) {
+		_linesWidth = 0;
+		layoutLines();
+	}
 	const auto rect = lyricsRect();
 	const auto &line = _lines[std::max(current, 0)];
 	const auto target = std::clamp(
@@ -821,6 +888,7 @@ void View::paintEvent(QPaintEvent *e) {
 	auto hq = PainterHighQualityEnabler(p);
 
 	const auto progress = _colors.value(1.);
+	const auto colors = ExdPalette();
 	auto gradient = QLinearGradient(0, 0, width() / 3, height());
 	gradient.setColorAt(0., Mix(_wasTop, _top, progress));
 	gradient.setColorAt(1., Mix(_wasBottom, _bottom, progress));
@@ -828,8 +896,15 @@ void View::paintEvent(QPaintEvent *e) {
 	auto clip = QPainterPath();
 	clip.addRoundedRect(rect(), radius, radius);
 	p.setClipPath(clip);
-	p.fillRect(rect(), gradient);
-	if (!_backdrop.isNull()) {
+	if (colors.md3) {
+		p.fillRect(rect(), colors.bg);
+		auto card = QPainterPath();
+		card.addRoundedRect(lyricsCardRect(), S(20), S(20));
+		p.fillPath(card, colors.card);
+	} else {
+		p.fillRect(rect(), gradient);
+	}
+	if (!colors.md3 && !_backdrop.isNull()) {
 		p.setOpacity(0.32 * progress);
 		p.drawImage(rect(), _backdrop);
 		p.setOpacity(1.);
@@ -841,7 +916,10 @@ void View::paintEvent(QPaintEvent *e) {
 
 	const auto cover = coverRect();
 	auto path = QPainterPath();
-	path.addRoundedRect(cover, S(16), S(16));
+	path.addRoundedRect(
+		cover,
+		colors.md3 ? S(20) : S(16),
+		colors.md3 ? S(20) : S(16));
 	if (!_cover.isNull()) {
 		p.save();
 		p.setClipPath(path);
@@ -857,8 +935,8 @@ void View::paintEvent(QPaintEvent *e) {
 			_cover);
 		p.restore();
 	} else {
-		p.fillPath(path, QColor(255, 255, 255, 28));
-		p.setPen(QColor(255, 255, 255, 150));
+		p.fillPath(path, colors.md3 ? colors.raised : QColor(255, 255, 255, 28));
+		p.setPen(colors.md3 ? colors.sub : QColor(255, 255, 255, 150));
 		p.setFont(style::font(S(72), style::FontFlags(), 0)->f);
 		p.drawText(cover, Qt::AlignCenter, QString(QChar(0x266B)));
 	}
@@ -867,7 +945,180 @@ void View::paintEvent(QPaintEvent *e) {
 	paintLyrics(p);
 }
 
+void View::paintControlsMd3(QPainter &p) {
+	const auto colors = ExdPalette();
+	const auto cover = coverRect();
+	p.setPen(colors.fg);
+	p.setFont(_titleFont->f);
+	p.drawText(
+		QRect(cover.x(), S(326), cover.width(), _titleFont->height),
+		Qt::AlignLeft | Qt::AlignVCenter,
+		_titleFont->elided(_title, cover.width()));
+	p.setPen(colors.sub);
+	p.setFont(_subtitleFont->f);
+	p.drawText(
+		QRect(cover.x(), S(352), cover.width(), _subtitleFont->height),
+		Qt::AlignLeft | Qt::AlignVCenter,
+		_subtitleFont->elided(_performer, cover.width()));
+
+	const auto slider = sliderRect();
+	const auto total = length();
+	const auto now = position();
+	const auto value = (total > 0)
+		? std::clamp(float64(now) / total, 0., 1.)
+		: 0.;
+	const auto track = slider.height() / 2.;
+	const auto handleWidth = S(4);
+	const auto handleHeight = (_over == Button::Slider || _seeking)
+		? S(24)
+		: S(20);
+	const auto gap = S(5);
+	const auto handleX = slider.x()
+		+ int((slider.width() - handleWidth) * value);
+	p.setPen(Qt::NoPen);
+	const auto activeRight = handleX - gap;
+	if (activeRight > slider.x()) {
+		p.setBrush(colors.accent);
+		p.drawRoundedRect(
+			QRectF(slider.x(), slider.y(), activeRight - slider.x(), slider.height()),
+			track,
+			track);
+	}
+	const auto inactiveLeft = handleX + handleWidth + gap;
+	if (inactiveLeft < slider.x() + slider.width()) {
+		p.setBrush(colors.tonal);
+		p.drawRoundedRect(
+			QRectF(
+				inactiveLeft,
+				slider.y(),
+				slider.x() + slider.width() - inactiveLeft,
+				slider.height()),
+			track,
+			track);
+	}
+	p.setBrush(colors.accent);
+	p.drawRoundedRect(
+		QRectF(
+			handleX,
+			slider.y() + (slider.height() - handleHeight) / 2.,
+			handleWidth,
+			handleHeight),
+		handleWidth / 2.,
+		handleWidth / 2.);
+
+	p.setFont(_timeFont->f);
+	p.setPen(colors.sub);
+	const auto timesTop = slider.y() + slider.height() + S(10);
+	p.drawText(
+		QRect(slider.x(), timesTop, slider.width(), _timeFont->height),
+		Qt::AlignLeft,
+		FormatTime(now));
+	p.drawText(
+		QRect(slider.x(), timesTop, slider.width(), _timeFont->height),
+		Qt::AlignRight,
+		u"-"_q + FormatTime(total - now));
+
+	const auto paintSkip = [&](QPoint center, bool forward, bool over) {
+		p.setPen(Qt::NoPen);
+		p.setBrush(over ? colors.tonal : colors.raised);
+		p.drawEllipse(QPointF(center), S(26), S(26));
+		p.setBrush(colors.fg);
+		const auto h = S(7);
+		const auto w = S(9);
+		const auto dir = forward ? 1 : -1;
+		const auto start = center.x() - dir * (w / 2 + S(2));
+		auto triangle = QPolygonF();
+		triangle << QPointF(start, center.y() - h)
+			<< QPointF(start + dir * w, center.y())
+			<< QPointF(start, center.y() + h);
+		p.drawPolygon(triangle);
+		const auto barX = forward
+			? (start + w)
+			: (start - w - S(2));
+		p.drawRoundedRect(
+			QRectF(barX, center.y() - h, S(2), 2 * h),
+			S(1),
+			S(1));
+	};
+	paintSkip(
+		buttonCenter(Button::Previous),
+		false,
+		_over == Button::Previous);
+	paintSkip(buttonCenter(Button::Next), true, _over == Button::Next);
+
+	const auto &settings = Core::App().settings();
+	const auto shuffle = (settings.playerOrderMode()
+		== Media::OrderMode::Shuffle);
+	const auto repeat = settings.playerRepeatMode();
+	const auto paintIcon = [&](
+			Button button,
+			const style::icon &icon,
+			bool active) {
+		const auto center = buttonCenter(button);
+		const auto size = S(44);
+		const auto rect = QRect(
+			center.x() - size / 2,
+			center.y() - size / 2,
+			size,
+			size);
+		if (active || _over == button) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(active ? colors.tonal : colors.raised);
+			p.drawEllipse(rect);
+		}
+		icon.paintInCenter(
+			p,
+			rect,
+			active ? colors.accent : (_over == button) ? colors.fg : colors.sub);
+	};
+	paintIcon(Button::Shuffle, st::mediaPlayerShuffleIcon, shuffle);
+	paintIcon(
+		Button::Repeat,
+		(repeat == Media::RepeatMode::One)
+			? st::mediaPlayerRepeatOneIcon
+			: st::mediaPlayerRepeatButton.icon,
+		repeat != Media::RepeatMode::None);
+	paintIcon(Button::ShowMessage, st::menuIconShowInChat, false);
+	paintIcon(Button::CopyLyrics, st::menuIconCopy, false);
+
+	const auto play = buttonCenter(Button::Play);
+	const auto playRadius = S(32);
+	p.setPen(Qt::NoPen);
+	auto playBg = colors.accent;
+	if (_over == Button::Play) {
+		playBg = QColor(
+			anim::interpolate(playBg.red(), colors.fg.red(), 0.12),
+			anim::interpolate(playBg.green(), colors.fg.green(), 0.12),
+			anim::interpolate(playBg.blue(), colors.fg.blue(), 0.12));
+	}
+	p.setBrush(playBg);
+	p.drawEllipse(QPointF(play), playRadius, playRadius);
+	p.setBrush(colors.onAccent);
+	if (Media::Player::ShowPauseIcon(_state.state)) {
+		const auto h = S(10);
+		p.drawRoundedRect(
+			QRectF(play.x() - S(8), play.y() - h, S(5), 2 * h),
+			S(2),
+			S(2));
+		p.drawRoundedRect(
+			QRectF(play.x() + S(3), play.y() - h, S(5), 2 * h),
+			S(2),
+			S(2));
+	} else {
+		const auto h = S(11);
+		auto triangle = QPolygonF();
+		triangle << QPointF(play.x() - S(6), play.y() - h)
+			<< QPointF(play.x() + S(12), play.y())
+			<< QPointF(play.x() - S(6), play.y() + h);
+		p.drawPolygon(triangle);
+	}
+}
+
 void View::paintControls(QPainter &p) {
+	if (style::Md3Enabled()) {
+		paintControlsMd3(p);
+		return;
+	}
 	const auto cover = coverRect();
 	p.setPen(Qt::white);
 	p.setFont(_titleFont->f);
@@ -1002,8 +1253,9 @@ void View::paintControls(QPainter &p) {
 
 void View::paintLyrics(QPainter &p) {
 	const auto rect = lyricsRect();
+	const auto colors = ExdPalette();
 	if (_lyrics == Lyrics::Loading || _lyrics == Lyrics::None) {
-		p.setPen(QColor(255, 255, 255, 140));
+		p.setPen(colors.md3 ? colors.sub : QColor(255, 255, 255, 140));
 		p.setFont(_subtitleFont->f);
 		p.drawText(
 			rect,
@@ -1036,7 +1288,15 @@ void View::paintLyrics(QPainter &p) {
 			: passed
 			? 90
 			: 120;
-		p.setPen(QColor(255, 255, 255, int(alpha * edgeFade)));
+		if (colors.md3) {
+			auto color = (current || !synced) ? colors.fg : colors.sub;
+			color.setAlphaF(color.alphaF()
+				* (current ? 1. : passed ? 0.6 : 1.)
+				* edgeFade);
+			p.setPen(color);
+		} else {
+			p.setPen(QColor(255, 255, 255, int(alpha * edgeFade)));
+		}
 		p.setFont((current ? _currentFont : _lineFont)->f);
 		p.drawText(
 			QRect(rect.x(), top, rect.width(), line.height),
@@ -1048,10 +1308,32 @@ void View::paintLyrics(QPainter &p) {
 
 } // namespace
 
+void View::contextMenuEvent(QContextMenuEvent *e) {
+	const auto items = Extera::Plugins::PlayerMenuItems();
+	if (items.empty()) {
+		return;
+	}
+	_pluginMenu = base::make_unique_q<Ui::PopupMenu>(
+		this,
+		st::popupMenuWithIcons);
+	for (const auto &[id, text] : items) {
+		const auto itemId = id;
+		_pluginMenu->addAction(text, [=] {
+			Extera::Plugins::PlayerMenuClick(itemId);
+		});
+	}
+	_pluginMenu->popup(e->globalPos());
+}
+
 class PlayerBox final : public Ui::BoxContent {
 public:
 	PlayerBox(QWidget*, not_null<Window::SessionController*> controller)
 	: _controller(controller) {
+		Extera::Plugins::NotifyPlayerShown(true);
+	}
+
+	~PlayerBox() {
+		Extera::Plugins::NotifyPlayerShown(false);
 	}
 
 protected:

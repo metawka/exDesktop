@@ -37,6 +37,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h" // session->account().sessionChanges().
 #include "main/main_session_settings.h"
 #include "storage/storage_account.h"
+#include "extera/extera_plugins.h"
 
 namespace Media {
 namespace Player {
@@ -1246,6 +1247,10 @@ void Instance::resumeSongAfterVoice(bool force) {
 }
 
 bool Instance::next(AudioMsgId::Type type) {
+	if (type == AudioMsgId::Type::Song
+		&& Extera::Plugins::InterceptClientEvent(u"player_next"_q, nullptr)) {
+		return false;
+	}
 	if (const auto data = getData(type)) {
 		return moveInPlaylist(data, 1, false);
 	}
@@ -1253,6 +1258,10 @@ bool Instance::next(AudioMsgId::Type type) {
 }
 
 bool Instance::previous(AudioMsgId::Type type) {
+	if (type == AudioMsgId::Type::Song
+		&& Extera::Plugins::InterceptClientEvent(u"player_prev"_q, nullptr)) {
+		return false;
+	}
 	if (const auto data = getData(type)) {
 		return moveInPlaylist(data, -1, false);
 	}
@@ -1529,6 +1538,9 @@ void Instance::setupShortcuts() {
 }
 
 void Instance::stopAndClose() {
+	if (Extera::Plugins::InterceptClientEvent(u"player_stop"_q, nullptr)) {
+		return;
+	}
 	_listenTracker->finalize();
 	_closePlayerRequests.fire({});
 

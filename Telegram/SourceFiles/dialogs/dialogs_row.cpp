@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/dialogs_row.h"
+#include "extera/exd_md3.h"
 
 #include "ui/chat/chat_theme.h" // CountAverageColor.
 #include "ui/color_contrast.h"
@@ -339,9 +340,21 @@ void BasicRow::addRipple(
 		QSize size,
 		Fn<void()> updateCallback) {
 	if (!_ripple) {
+		const auto radius = Extera::Md3::RoundedSelection()
+			? st::dialogsRowActiveRadius
+			: 0;
 		addRippleWithMask(
 			origin,
-			Ui::RippleAnimation::RectMask(size),
+			(radius > 0
+				? Ui::RippleAnimation::MaskByDrawer(size, false, [&](
+						QPainter &p) {
+					p.drawRoundedRect(
+						QRect(QPoint(), size).marginsRemoved(
+							st::dialogsRowActiveMargins),
+						radius,
+						radius);
+				})
+				: Ui::RippleAnimation::RectMask(size)),
 			std::move(updateCallback));
 	} else {
 		_ripple->add(origin);

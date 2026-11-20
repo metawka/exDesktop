@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "window/notifications_manager.h"
 #include "settings/settings_common.h"
+#include "ui/widgets/buttons.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/continuous_sliders.h"
 #include "ui/widgets/labels.h"
@@ -95,9 +96,10 @@ void AddRingtonesVolumeSlider(
 	const auto slider = sliderWithLabel.slider;
 	const auto label = sliderWithLabel.label;
 
-	volumeWrap->entity()->add(
+	const auto sliderRow = volumeWrap->entity()->add(
 		std::move(sliderWithLabel.widget),
 		st::settingsBigScalePadding);
+	Ui::SetupGroupedRowBackground(sliderRow, st::settingsBigScalePadding);
 
 	const auto updateLabel = [=](int volume) {
 		label->setText(QString::number(volume) + '%');

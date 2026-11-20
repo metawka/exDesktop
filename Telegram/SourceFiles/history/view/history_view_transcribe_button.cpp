@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "styles/style_chat.h"
 #include "window/window_session_controller.h"
+#include "extera/extera_plugins.h"
 
 namespace HistoryView {
 namespace {
@@ -376,6 +377,9 @@ ClickHandlerPtr TranscribeButton::link() {
 	_link = std::make_shared<LambdaClickHandler>([=](ClickContext context) {
 		const auto item = session->data().message(id);
 		if (!item) {
+			return;
+		}
+		if (Extera::Plugins::InterceptClientEvent(u"transcribe"_q, item)) {
 			return;
 		}
 		if (session->premium()) {

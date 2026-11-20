@@ -96,14 +96,44 @@ def _scope(view_id):
     return extera_host.owner_scope(_owners.get(view_id))
 
 
+def _accepts(fn, count):
+    import inspect
+    try:
+        params = list(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError):
+        return True
+    if any(p.kind == p.VAR_POSITIONAL for p in params):
+        return True
+    required = [p for p in params if p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    return len(required) <= count <= len(params)
+
+
+def call_listener(listener, method, *args):
+    from android_utils import safe_call
+    if listener is None:
+        return None
+    fn = getattr(listener, method, None)
+    if not callable(fn):
+        fn = listener if callable(listener) else None
+    if fn is None:
+        return None
+    for count in range(len(args), -1, -1):
+        if _accepts(fn, count):
+            return safe_call(fn, *args[:count])
+    return safe_call(fn)
+
+
+def _fire_click(view):
+    call_listener(view._click, "onClick", view)
+
+
 def dispatch_click(view_id):
     with _lock:
         view = _views.get(view_id)
     if view is None:
         return False
-    from android_utils import safe_call
     with _scope(view_id):
-        safe_call(view._click)
+        _fire_click(view)
     return True
 
 
@@ -113,14 +143,55 @@ def dispatch_text_changed(view_id, text):
     if view is None:
         return False
     from android_utils import safe_call
+    previous = str(view._props.get("text") or "")
+    text = str(text)
+    view._props["text"] = text
     with _scope(view_id):
         for watcher in getattr(view, "_watchers", []):
-            safe_call(getattr(watcher, "afterTextChanged", None), str(text))
+            safe_call(getattr(watcher, "beforeTextChanged", None), previous, 0, len(previous), len(text))
+            safe_call(getattr(watcher, "onTextChanged", None), text, 0, len(previous), len(text))
+            safe_call(getattr(watcher, "afterTextChanged", None), text)
+    return True
+
+
+def dispatch_checked(view_id, checked):
+    with _lock:
+        view = _views.get(view_id)
+    if view is None:
+        return False
+    from android_utils import safe_call
+    view._props["checked"] = bool(checked)
+    listener = getattr(view, "_checked_listener", None)
+    with _scope(view_id):
+        safe_call(getattr(listener, "onCheckedChanged", listener), view, bool(checked))
+        _fire_click(view)
+    return True
+
+
+def dispatch_progress(view_id, progress, phase="change"):
+    with _lock:
+        view = _views.get(view_id)
+    if view is None:
+        return False
+    from android_utils import safe_call
+    view._props["progress"] = int(progress)
+    listener = getattr(view, "_seek_listener", None)
+    if listener is None:
+        return True
+    with _scope(view_id):
+        if phase == "start":
+            safe_call(getattr(listener, "onStartTrackingTouch", None), view)
+        elif phase == "stop":
+            safe_call(getattr(listener, "onStopTrackingTouch", None), view)
+        else:
+            safe_call(getattr(listener, "onProgressChanged", None), view, int(progress), True)
     return True
 
 
 def handle_sheet_closed(sheet_id):
-    _sheets.pop(sheet_id, None)
+    entry = _sheets.pop(sheet_id, None)
+    if entry and entry.get("dismiss") is not None:
+        call_listener(entry["dismiss"], "onDismiss", entry.get("owner"))
     with _lock:
         for view in list(_views.values()):
             if view._sheet == sheet_id:
@@ -1138,6 +1209,19 @@ class View(metaclass=_UiClassMeta):
         self._click = listener
         self._props["clickable"] = True
 
+    def setOnLongClickListener(self, listener):
+        self._long_click = listener
+
+    def performClick(self):
+        _fire_click(self)
+        return self._click is not None
+
+    def callOnClick(self):
+        return self.performClick()
+
+    def hasOnClickListeners(self):
+        return self._click is not None
+
     def animate(self):
         return ViewPropertyAnimator(self)
 
@@ -1383,8 +1467,8 @@ class ViewGroup(View):
 
 class LinearLayout(ViewGroup):
     _java_name = "android.widget.LinearLayout"
-    VERTICAL = 0
-    HORIZONTAL = 1
+    HORIZONTAL = 0
+    VERTICAL = 1
 
     class LayoutParams(LayoutParams):
         pass
@@ -1594,6 +1678,100 @@ class EditText(TextView):
     def addTextChangedListener(self, watcher):
         if watcher is not None:
             self._watchers.append(watcher)
+
+
+class Button(TextView):
+    def __init__(self, context=None, text=None):
+        TextView.__init__(self, context, text)
+        self._props["type"] = "button"
+
+
+class CompoundButton(Button):
+    def __init__(self, context=None, text=None):
+        Button.__init__(self, context, text)
+        self._props["type"] = "checkbox"
+        self._props["checked"] = False
+        self._checked_listener = None
+
+    class OnCheckedChangeListener:
+        def onCheckedChanged(self, button, checked):
+            pass
+
+    def setChecked(self, checked, *args):
+        self._set_prop("checked", bool(checked), {"op": "checked", "value": bool(checked)})
+
+    def isChecked(self):
+        return bool(self._props.get("checked"))
+
+    def toggle(self):
+        self.setChecked(not self.isChecked())
+
+    def setOnCheckedChangeListener(self, listener):
+        self._checked_listener = listener
+
+
+class CheckBox(CompoundButton):
+    pass
+
+
+class Switch(CompoundButton):
+    def __init__(self, context=None, text=None):
+        CompoundButton.__init__(self, context, text)
+        self._props["type"] = "switch"
+
+
+class SeekBar(View):
+    def __init__(self, context=None, *args):
+        View.__init__(self, context)
+        self._props.update({"type": "seekbar", "max": 100, "min": 0, "progress": 0})
+        self._seek_listener = None
+
+    class OnSeekBarChangeListener:
+        def onProgressChanged(self, seek_bar, progress, from_user):
+            pass
+
+        def onStartTrackingTouch(self, seek_bar):
+            pass
+
+        def onStopTrackingTouch(self, seek_bar):
+            pass
+
+    def setMax(self, value):
+        self._set_prop("max", int(value), {"op": "max", "value": int(value)})
+
+    def getMax(self):
+        return int(self._props.get("max") or 0)
+
+    def setMin(self, value):
+        self._set_prop("min", int(value), {"op": "min", "value": int(value)})
+
+    def getMin(self):
+        return int(self._props.get("min") or 0)
+
+    def setProgress(self, value, *args):
+        self._set_prop("progress", int(value), {"op": "progress", "value": int(value)})
+
+    def getProgress(self):
+        return int(self._props.get("progress") or 0)
+
+    def incrementProgressBy(self, diff):
+        self.setProgress(self.getProgress() + int(diff))
+
+    def setOnSeekBarChangeListener(self, listener):
+        self._seek_listener = listener
+
+
+class ProgressBar(SeekBar):
+    def __init__(self, context=None, *args):
+        SeekBar.__init__(self, context)
+        self._props["type"] = "progressbar"
+        self._props["indeterminate"] = False
+
+    def setIndeterminate(self, value):
+        self._set_prop("indeterminate", bool(value), {"op": "indeterminate", "value": bool(value)})
+
+    def isIndeterminate(self):
+        return bool(self._props.get("indeterminate"))
 
 
 class ImageView(View):
@@ -1851,6 +2029,17 @@ def _params(params):
 def _node(view, params=None):
     data = view._data()
     data["id"] = view._id
+    rows = getattr(view, "_exd_rows", None)
+    if callable(rows):
+        data["type"] = "linearlayout"
+        data["orientation"] = 1
+        data["children"] = []
+        for index, row in enumerate(rows()):
+            line = {"type": "linearlayout", "orientation": 0, "id": -(view._id * 1000 + index),
+                    "visible": True, "visibility": 0, "padding": None, "bg": None,
+                    "children": [_child(row[c]) for c in sorted(row)]}
+            data["children"].append({"view": line, "params": {"w": -1, "h": -2}})
+        return data
     data["children"] = [_child(e) for e in view._children]
     return data
 
@@ -1867,8 +2056,8 @@ class _SheetHandle:
     def setAllowNestedScroll(self, value):
         return self
 
-    def setOnDismissListener(self, listener):
-        _sheets[self._sheet_id] = {"dismiss": listener}
+    def setOnDismissListener(self, listener, owner=None):
+        _sheets[self._sheet_id] = {"dismiss": listener, "owner": owner if owner is not None else self}
         return self
 
     def dismiss(self):
@@ -1880,18 +2069,19 @@ class _SheetHandle:
                 pass
 
     def onDismiss(self):
-        entry = _sheets.pop(self._sheet_id, None)
-        if entry and entry.get("dismiss"):
-            from android_utils import safe_call
-            safe_call(entry["dismiss"])
+        handle_sheet_closed(self._sheet_id)
 
 
-def _show_sheet(root, style):
+def _show_sheet(root, style, title=""):
+    import exd_webview
+    web = exd_webview.find_webview(root)
+    if web is not None:
+        return web.open(title)
     with _lock:
         _ids[0] += 1
         sheet_id = _ids[0]
     tree = _node(root)
-    payload = {"id": sheet_id, "style": style, "root": tree}
+    payload = {"id": sheet_id, "style": style, "root": tree, "title": str(title or "")}
     _mark_live(root, sheet_id)
     native = _native("views_show_sheet")
     if native is None:
@@ -1910,40 +2100,202 @@ def _mark_live(view, sheet_id):
         _mark_live(entry["view"], sheet_id)
 
 
+class _SheetBuilder:
+    def __init__(self, context=None, *args):
+        self._context = context
+        self._view = None
+        self._title = None
+        self._items = None
+        self._icons = None
+        self._listener = None
+        self._dismiss = None
+
+    def setCustomView(self, view, *args):
+        self._view = view
+        return self
+
+    def setTitle(self, title, *args):
+        self._title = None if title is None else str(title)
+        return self
+
+    def setItems(self, items, icons=None, listener=None, *args):
+        if listener is None and icons is not None and not isinstance(icons, (list, tuple)) \
+                and not hasattr(icons, "__len__"):
+            icons, listener = None, icons
+        self._items = [str(x) for x in (items or [])]
+        self._icons = icons
+        self._listener = listener
+        return self
+
+    def setOnDismissListener(self, listener):
+        self._dismiss = listener
+        return self
+
+    def create(self):
+        sheet = BottomSheet(self._context, False)
+        if self._title:
+            sheet.setTitle(self._title)
+        if self._dismiss is not None:
+            sheet.setOnDismissListener(self._dismiss)
+        if self._items is not None and self._view is None:
+            sheet._choice = (self._items, self._listener)
+        elif self._items is not None:
+            layout = LinearLayout(self._context)
+            layout.setOrientation(LinearLayout.VERTICAL)
+            for index, text in enumerate(self._items):
+                row = TextView(self._context)
+                row.setText(text)
+                row.setPadding(24, 14, 24, 14)
+                listener = self._listener
+
+                def click(view, index=index, listener=listener):
+                    sheet.dismiss()
+                    call_listener(listener, "onClick", sheet, index)
+                row.setOnClickListener(click)
+                layout.addView(row)
+            if self._view is not None:
+                layout.addView(self._view)
+            sheet.setCustomView(layout)
+        elif self._view is not None:
+            sheet.setCustomView(self._view)
+        return sheet
+
+    def show(self):
+        sheet = self.create()
+        sheet.show()
+        return sheet
+
+    def __getattr__(self, item):
+        if item.startswith("_"):
+            raise AttributeError(item)
+        return lambda *args, **kwargs: self
+
+
 class BottomSheet(metaclass=_UiClassMeta):
+    _java_name = "org.telegram.ui.ActionBar.BottomSheet"
+    Builder = _SheetBuilder
+
+    def __init__(self, context=None, need_focus=False, *args):
+        self._context = context
+        self._custom = None
+        self._title = ""
+        self._handle = None
+        self._dismiss = None
+        self._options = {"cancelable": True, "swipe": True, "outside": True}
+        self._choice = None
+
+    def getContext(self):
+        return self._context
+
+    def setCustomView(self, view, *args):
+        self._custom = view
+
+    def getCustomView(self):
+        return self._custom
+
+    def setTitle(self, title, *args):
+        self._title = "" if title is None else str(title)
+
+    def getTitleView(self):
+        view = TextView(self._context)
+        view.setText(self._title)
+        return view
+
+    def show(self):
+        if self._handle is not None:
+            return
+        if self._choice is not None and self._custom is None:
+            self._show_choice()
+            return
+        root = self._custom
+        if root is None:
+            root = LinearLayout(self._context)
+        handle = _show_sheet(root, "sheet", self._title)
+        if handle is None:
+            return
+        self._handle = handle
+        if isinstance(handle, _SheetHandle):
+            handle.setOnDismissListener(self._closed, self)
+
+    def _show_choice(self):
+        import ui.alert as alert
+        items, listener = self._choice
+        builder = alert.AlertDialogBuilder(None)
+        if self._title:
+            builder.set_title(self._title)
+
+        def picked(dialog, which):
+            call_listener(listener, "onClick", self, which)
+        builder.set_items(list(items), picked)
+        builder.set_cancelable(bool(self._options.get("cancelable", True)))
+        builder.set_on_dismiss_listener(lambda *args: self._closed())
+        self._handle = builder
+        builder.show()
+
+    def _closed(self, *args):
+        self._handle = None
+        if self._dismiss is not None:
+            call_listener(self._dismiss, "onDismiss", self)
+
+    def isShowing(self):
+        return self._handle is not None
+
+    def dismiss(self, *args):
+        handle = self._handle
+        if handle is not None:
+            handle.dismiss() if hasattr(handle, "dismiss") else handle.close()
+
+    close = dismiss
+    dismissInternal = dismiss
+    dismissWithButtonClick = dismiss
+
+    def setOnDismissListener(self, listener):
+        self._dismiss = listener
+
+    def setOnHideListener(self, listener):
+        self._dismiss = listener
+
+    def setCancelable(self, value):
+        self._options["cancelable"] = bool(value)
+
+    def setCanceledOnTouchOutside(self, value):
+        self._options["outside"] = bool(value)
+
+    def setCanDismissWithSwipe(self, value):
+        self._options["swipe"] = bool(value)
+
+    def canDismissWithSwipe(self):
+        return self._options["swipe"]
+
+    def canDismissWithTouchOutside(self):
+        return self._options["outside"]
+
+    def setApplyTopPadding(self, value):
+        pass
+
+    def setApplyBottomPadding(self, value):
+        pass
+
+    def fixNavigationBar(self, *args):
+        pass
+
+    def setBackgroundColor(self, color):
+        pass
+
+    def getContainerView(self):
+        return self._custom
+
+    getContainer = getContainerView
+    getSheetContainer = getContainerView
+
+    def getWindow(self):
+        import exd_context
+        return exd_context.Window()
+
     def __getattr__(self, item):
         if item.startswith("__") or item.startswith("_"):
             raise AttributeError(item)
         return _compat.lenient("BottomSheet", item)
-
-    class Builder:
-        def __init__(self, context=None, dark=None, *args):
-            self._view = None
-            self._title = None
-
-        def setCustomView(self, view):
-            self._view = view
-            return self
-
-        def setTitle(self, title):
-            self._title = title
-            return self
-
-        def create(self):
-            return self
-
-        def __getattr__(self, item):
-            if item.startswith("_"):
-                raise AttributeError(item)
-            return lambda *args, **kwargs: self
-
-        def show(self):
-            if self._view is None:
-                return None
-            return _show_sheet(self._view, "sheet")
-
-    def __init__(self, *args):
-        pass
 
 
 def _android_listener(listener):
@@ -2031,7 +2383,7 @@ class AlertDialog(metaclass=_UiClassMeta):
 
         def show(self):
             if self._view is not None:
-                return _show_sheet(self._view, "alert")
+                return _show_sheet(self._view, "alert", self._title or "")
             import ui.alert as alert
             builder = alert.AlertDialogBuilder(None)
             if self._title:

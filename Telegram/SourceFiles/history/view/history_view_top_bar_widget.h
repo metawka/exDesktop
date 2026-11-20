@@ -78,6 +78,11 @@ public:
 		return _membersShowAreaActive.events();
 	}
 	void setAnimatingMode(bool enabled);
+	void setExdFloating(bool floating);
+	void setExdPlaqueBg(const style::color *bg);
+	void setExdPlaqueMargins(style::margins margins);
+	[[nodiscard]] style::margins exdPlaqueMargins() const;
+	[[nodiscard]] bool exdFloating() const;
 
 	void setActiveChat(
 		ActiveChat activeChat,
@@ -274,6 +279,9 @@ private:
 	int _rightTaken = 0;
 	float64 _titleShownRatio = 1.;
 	bool _animatingMode = false;
+	bool _exdFloating = false;
+	const style::color *_exdPlaqueBg = nullptr;
+	std::optional<style::margins> _exdPlaqueMargins;
 	std::unique_ptr<Ui::InfiniteRadialAnimation> _connecting;
 
 	SendActionPainter *_sendAction = nullptr;

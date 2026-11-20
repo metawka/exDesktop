@@ -1,6 +1,8 @@
 import json
 import sys
-from dataclasses import dataclass
+from abc import ABC
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 import _compat
@@ -9,39 +11,77 @@ import extera_host as _host
 
 # Hooks
 
-class HookStrategy:
+class HookStrategy(str, Enum):
     DEFAULT = "DEFAULT"
     CANCEL = "CANCEL"
     MODIFY = "MODIFY"
     MODIFY_FINAL = "MODIFY_FINAL"
-    NONE = DEFAULT
+    NONE = "DEFAULT"
+
+    def __str__(self):
+        return self.value
+
+
+class IntentHookType(Enum):
+    BEFORE = 0
+    AFTER = 1
 
 
 class HookResult:
-    __slots__ = ("strategy", "request", "response", "update", "updates", "params", "result")
+    __slots__ = ("strategy", "request", "response", "update", "updates", "error", "params", "result")
 
-    def __init__(self, strategy: str = HookStrategy.DEFAULT, request=None, response=None,
-                 update=None, updates=None, params=None, result=None):
+    def __init__(self, strategy=HookStrategy.DEFAULT, request=None, response=None,
+                 update=None, updates=None, error=None, params=None, result=None):
         self.strategy = strategy
         self.request = request
         self.response = response
         self.update = update
         self.updates = updates
+        self.error = error
         self.params = params
         self.result = result
+
+    def __eq__(self, other):
+        return isinstance(other, HookResult) and all(
+            getattr(self, k) == getattr(other, k) for k in self.__slots__)
 
     def __repr__(self):
         return f"HookResult(strategy={self.strategy!r})"
 
 
-class AppEvent:
+class PluginError(Exception):
+    def __init__(self, message: str, plugin_id: Optional[str] = None):
+        super().__init__(message)
+        self.plugin_id = plugin_id
+
+    def __str__(self):
+        text = super().__str__()
+        return f"[{self.plugin_id}] {text}" if self.plugin_id else text
+
+
+@dataclass
+class PluginMetadata:
+    id: str
+    name: str
+    description: str = ""
+    author: str = ""
+    version: str = ""
+    icon: str = ""
+    min_version: str = ""
+    requirements: List[str] = field(default_factory=list)
+
+
+class AppEvent(str, Enum):
     START = "START"
     STOP = "STOP"
     PAUSE = "PAUSE"
     RESUME = "RESUME"
 
+    def __str__(self):
+        return self.value
+
     @staticmethod
-    def from_java(event: str) -> Optional[str]:
+    def from_java(event: str):
         return _APP_EVENT_FROM_JAVA.get(event)
 
 
@@ -55,18 +95,21 @@ _APP_EVENT_FROM_JAVA = {
 
 # Menu
 
-class MenuItemType:
+class MenuItemType(str, Enum):
     MESSAGE_CONTEXT_MENU = "MESSAGE_CONTEXT_MENU"
     DRAWER_MENU = "DRAWER_MENU"
     MAIN_MENU = "MAIN_MENU"
     CHAT_ACTION_MENU = "CHAT_ACTION_MENU"
     PROFILE_ACTION_MENU = "PROFILE_ACTION_MENU"
-    CHAT_CONTEXT = MESSAGE_CONTEXT_MENU
+    CHAT_CONTEXT = "MESSAGE_CONTEXT_MENU"
+
+    def __str__(self):
+        return self.value
 
 
 @dataclass
 class MenuItemData:
-    menu_type: str
+    menu_type: Any
     text: str
     on_click: Callable[[Dict[str, Any]], None]
     item_id: Optional[str] = None
@@ -78,15 +121,11 @@ class MenuItemData:
 
 # Method hooking
 
-class BaseHook:
-    def __init__(self, xposed_hook=None, before=None, after=None):
-        if before is not None:
-            self.before_hooked_method = before
-        if after is not None:
-            self.after_hooked_method = after
+class XposedHook(ABC):
+    pass
 
 
-class MethodHook(BaseHook):
+class MethodHook(XposedHook):
     def before_hooked_method(self, param):
         pass
 
@@ -94,12 +133,40 @@ class MethodHook(BaseHook):
         pass
 
 
-class MethodReplacement(BaseHook):
+class MethodReplacement(XposedHook):
     def replace_hooked_method(self, param):
         return None
 
 
-XposedHook = MethodHook
+class BaseHook(MethodHook):
+    def __init__(self, plugin=None, *, before=None, after=None, before_filters=None, after_filters=None):
+        if plugin is not None and not isinstance(plugin, BasePlugin) and callable(plugin) and before is None:
+            before, plugin = plugin, None
+        self.plugin = plugin
+        self.before = before
+        self.after = after
+        self.before_filters = list(before_filters or ())
+        self.after_filters = list(after_filters or ())
+
+    def before_hooked_method(self, param):
+        if self.before is not None:
+            self.before(param)
+
+    def after_hooked_method(self, param):
+        if self.after is not None:
+            self.after(param)
+
+
+import exd_xposed as _xposed
+
+
+class MethodHookParam(_xposed.MethodHookParam):
+    pass
+
+
+class VirtualParam(MethodHookParam):
+    def __init__(self, args, this=None, method=None):
+        super().__init__(method, this, args)
 
 
 PluginsController = _compat.Stub("PluginsController")
@@ -127,46 +194,27 @@ class PluginsConstants(metaclass=_compat.LenientMeta):
         AFTER_HOOKED_METHOD = "after_hooked_method"
         HOOK_FILTERS = "__hook_filters__"
 
+    class HookFilterTypes:
+        ARGUMENT_EQUAL = "argument_equal"
+        ARGUMENT_IS_FALSE = "argument_is_false"
+        ARGUMENT_IS_INSTANCE_OF = "argument_is_instance_of"
+        ARGUMENT_IS_NULL = "argument_is_null"
+        ARGUMENT_IS_TRUE = "argument_is_true"
+        ARGUMENT_NOT_EQUAL = "argument_not_equal"
+        ARGUMENT_NOT_NULL = "argument_not_null"
+        CONDITION = "condition"
+        OR = "or"
+        RESULT_EQUAL = "result_equal"
+        RESULT_IS_FALSE = "result_is_false"
+        RESULT_IS_INSTANCE_OF = "result_is_instance_of"
+        RESULT_IS_NULL = "result_is_null"
+        RESULT_IS_TRUE = "result_is_true"
+        RESULT_NOT_EQUAL = "result_not_equal"
+        RESULT_NOT_NULL = "result_not_null"
+
 
 class _FunctionalHook:
     pass
-
-
-class VirtualParam:
-    def __init__(self, args, this=None, method=None):
-        self.args = list(args)
-        self.thisObject = this
-        self.method = method
-        self.returnEarly = False
-        self._result = None
-        self._throwable = None
-
-    def setResult(self, value):
-        self._result = value
-        self.returnEarly = True
-
-    def getResult(self):
-        return self._result
-
-    def getResultOrThrowable(self):
-        return self._result
-
-    def setThrowable(self, throwable):
-        self._throwable = throwable
-        self.returnEarly = True
-
-    def getThrowable(self):
-        return self._throwable
-
-    def hasThrowable(self):
-        return self._throwable is not None
-
-    def getArgs(self):
-        return self.args
-
-    def getThisObject(self):
-        return self.thisObject
-
 
 _VIRTUAL_HOOKS = {
     ("SendMessagesHelper", "sendMessage"): "send",
@@ -200,7 +248,73 @@ _VIRTUAL_HOOKS = {
     ("DialogsActivity", "onBecomeFullyVisible"): "dialogs_open",
     ("DialogsActivity", "onFragmentCreate"): "dialogs_open",
     ("ProfileActivity", "onBecomeFullyVisible"): "profile_open",
+    ("MediaController", "playMessage"): "play_message",
+    ("AudioPlayerAlert", "updateTitle"): "player_title",
+    ("ChatActivityEnterView", "setReplyingMessageObject"): "reply",
+    ("VoIPHelper", "startCall"): "start_call",
+    ("LaunchActivity", "handleIntent"): "intent",
+    ("ChatMessageCell", "setMessageObject"): "message_text",
+    ("ChatMessageCell", "setMessageContent"): "message_text",
+    ("MessageObject", "generateLayout"): "message_text",
+    ("ChatAvatarContainer", "setSubtitle"): "chat_subtitle_set",
+    ("ChatAvatarContainer", "updateSubtitle"): "chat_subtitle",
+    ("PluginSettingsActivity", "fillItems"): "settings_fill",
+    ("PluginSettingsActivity", "createView"): "settings_fill",
+    ("TranscribeButton", "onTap"): "transcribe",
+    ("ChatActivity", "createMenu"): "message_menu",
+    ("ChatActivity", "fillMessageMenu"): "message_menu",
+    ("SendMessagesHelper", "sendReaction"): "send_reaction",
+    ("NotificationsController", "showOrUpdateNotification"): "notification",
+    ("ChatAvatarContainer", "onAvatarClick"): "avatar_click",
+    ("ChatActivity", "openProfile"): "avatar_click",
+    ("MediaController", "playNextMessage"): "player_next",
+    ("MediaController", "playNextMessageWithoutOrder"): "player_next",
+    ("MediaController", "playPreviousMessage"): "player_prev",
+    ("MediaController", "cleanupPlayer"): "player_stop",
+    ("MediaController", "setPlaylist"): "player_playlist",
+    ("LaunchActivity", "onNewIntent"): "intent",
+    ("MainTabsActivity", "onResume"): "dialogs_open",
+    ("MainTabsActivity", "createView"): "dialogs_open",
+    ("MainTabsActivity", "onFragmentCreate"): "dialogs_open",
+    ("ChatActivity", "onTransitionAnimationEnd"): "chat_open",
+    ("ChatMessageCell", "setMessageObjectInternal"): "message_text",
+    ("ProfileActivity", "updateProfileData"): "profile_open",
+    ("ProfileActivity", "updateRowsIds"): "profile_rows",
+    ("ListAdapter", "onBindViewHolder"): "profile_bind",
+    ("AndroidUtilities", "openForView"): "file_open",
+    ("ChatActivity", "getMessageContent"): "copy_text",
+    ("ChatAvatarContainer", "setTitle"): "chat_title",
+    ("DialogCell", "update"): "dialog_update",
+    ("SettingsActivity", "fillItems"): "settings_main",
+    ("ChatActivity", "addToSelectedMessages"): "select_message",
+    ("ChatActivity", "sendMedia"): "send_media",
+    ("SendMessagesHelper", "prepareSendingMedia"): "send_media",
+    ("SendMessagesHelper", "prepareSendingDocuments"): "send_media",
+    ("SettingsActivity", "onClick"): "settings_main_click",
+    ("DialogCell", "buildLayout"): "dialog_name",
+    ("DialogCell", "setDialog"): "dialog_name",
+    ("ChatActivity", "updateTitle"): "chat_title",
+    ("ChatActivity", "processNewMessages"): "incoming",
+    ("ChatActivity", "updateSubtitle"): "chat_subtitle",
+    ("ChatActivity", "onStart"): "chat_open",
+    ("TopicsFragment", "onResume"): "chat_open",
+    ("TopicsFragment", "createView"): "chat_open",
+    ("TopicsFragment", "onPause"): "chat_close",
+    ("BaseFragment", "onResume"): "chat_open",
+    ("BaseFragment", "onBecomeFullyVisible"): "chat_open",
 }
+
+_UI_KINDS = {"message_text": "message_text", "chat_subtitle": "chat_subtitle", "chat_subtitle_set": "chat_subtitle",
+             "copy_text": "copy_text", "chat_title": "chat_title", "dialog_name": "dialog_name",
+             "dialog_update": "dialog_name"}
+_EVENT_KINDS = {
+    "play_message": "play_message", "player_title": "play_message", "player_playlist": "play_message",
+    "reply": "reply", "start_call": "start_call", "transcribe": "transcribe", "message_menu": "message_menu",
+    "send_reaction": "send_reaction", "notification": "notification", "avatar_click": "avatar_click",
+    "player_next": "player_next", "player_prev": "player_prev", "player_stop": "player_stop",
+    "select_message": "select_message", "send_media": "send_media",
+}
+_HOST_KINDS = dict(_UI_KINDS, **_EVENT_KINDS)
 
 
 def _exd_shim_target(target, method_name=None):
@@ -225,7 +339,7 @@ def _exd_shim_target(target, method_name=None):
                     cls = type(cls)
                 method_name = m_name
         else:
-            inner = getattr(target, "_class", None)
+            inner = target._class if isinstance(target, exd_java.JavaClassInfo) else getattr(target, "_class", None)
             cls = inner if isinstance(inner, type) else None
     if cls is None and isinstance(target, str):
         cls = exd_java.lookup(target)
@@ -287,181 +401,136 @@ class HookParam:
         return f"HookParam({object.__getattribute__(self, '_param')!r})"
 
 
-def _filter_value(value):
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return str(value)
+@dataclass
+class HookFilterData:
+    filter_type: str
+    arg_index: Optional[int] = None
+    or_filters: Any = None
+    mvel_expression: Optional[str] = None
+    instance_of: Any = None
+    object: Any = None
 
-
-def _filter_class_name(cls):
-    if isinstance(cls, str):
-        return cls
-    return str(cls)
-
-
-class HookFilter:
-    __slots__ = ("kind", "data")
-
-    def __init__(self, kind: str, **data):
-        self.kind = kind
-        self.data = data
+    def to_java_filter(self):
+        java = _xposed.HookFilter(self.filter_type)
+        if self.arg_index is not None:
+            java.setArgIndex(int(self.arg_index))
+        if self.or_filters is not None:
+            java.setOrFilters(_xposed.to_java_filters(self.or_filters))
+        if self.mvel_expression is not None:
+            java.setMvelExpression(str(self.mvel_expression))
+        if self.instance_of is not None:
+            java.setInstanceOf(self.instance_of)
+        java.setObject(self.object)
+        return java
 
     def to_dict(self) -> Dict[str, Any]:
-        out = {"type": self.kind}
-        out.update(self.data)
+        out = {"type": self.filter_type}
+        if self.arg_index is not None:
+            out["index"] = self.arg_index
+        if self.mvel_expression is not None:
+            out["expression"] = self.mvel_expression
+        if self.object is not None:
+            out["object"] = self.object
         return out
 
-    def __eq__(self, other):
-        return isinstance(other, HookFilter) and self.to_dict() == other.to_dict()
-
     def __hash__(self):
-        return hash((self.kind, repr(sorted(self.data.items()))))
+        return hash((self.filter_type, self.arg_index, self.mvel_expression))
 
-    def __repr__(self):
-        args = ", ".join(f"{k}={v!r}" for k, v in self.data.items())
-        return f"HookFilter({self.kind}{', ' if args else ''}{args})"
 
-    @staticmethod
-    def argument_is_null(index: int) -> "HookFilter":
-        return HookFilter("argument_is_null", index=int(index))
+class HookFilter(Enum):
+    RESULT_IS_NULL = HookFilterData("result_is_null")
+    RESULT_IS_TRUE = HookFilterData("result_is_true")
+    RESULT_IS_FALSE = HookFilterData("result_is_false")
+    RESULT_NOT_NULL = HookFilterData("result_not_null")
 
-    @staticmethod
-    def argument_not_null(index: int) -> "HookFilter":
-        return HookFilter("argument_not_null", index=int(index))
+    @property
+    def filter_data(self):
+        return self.value
 
-    @staticmethod
-    def argument_is_true(index: int) -> "HookFilter":
-        return HookFilter("argument_is_true", index=int(index))
+    def to_java_filter(self):
+        return self.value.to_java_filter()
 
     @staticmethod
-    def argument_is_false(index: int) -> "HookFilter":
-        return HookFilter("argument_is_false", index=int(index))
+    def ResultIsInstanceOf(clazz):
+        return HookFilterData("result_is_instance_of", instance_of=clazz)
 
     @staticmethod
-    def argument_equal(index: int, value) -> "HookFilter":
-        return HookFilter("argument_equal", index=int(index), value=_filter_value(value))
+    def ResultEqual(value):
+        return HookFilterData("result_equal", object=value)
 
     @staticmethod
-    def argument_not_equal(index: int, value) -> "HookFilter":
-        return HookFilter("argument_not_equal", index=int(index), value=_filter_value(value))
+    def ResultNotEqual(value):
+        return HookFilterData("result_not_equal", object=value)
 
     @staticmethod
-    def argument_is_instance_of(index: int, cls) -> "HookFilter":
-        return HookFilter("argument_is_instance_of", index=int(index),
-                          **{"class": _filter_class_name(cls)})
+    def ArgumentIsNull(index: int):
+        return HookFilterData("argument_is_null", arg_index=int(index))
 
     @staticmethod
-    def result_is_null() -> "HookFilter":
-        return HookFilter("result_is_null")
+    def ArgumentIsTrue(index: int):
+        return HookFilterData("argument_is_true", arg_index=int(index))
 
     @staticmethod
-    def result_not_null() -> "HookFilter":
-        return HookFilter("result_not_null")
+    def ArgumentIsFalse(index: int):
+        return HookFilterData("argument_is_false", arg_index=int(index))
 
     @staticmethod
-    def result_is_true() -> "HookFilter":
-        return HookFilter("result_is_true")
+    def ArgumentNotNull(index: int):
+        return HookFilterData("argument_not_null", arg_index=int(index))
 
     @staticmethod
-    def result_is_false() -> "HookFilter":
-        return HookFilter("result_is_false")
+    def ArgumentIsInstanceOf(index: int, clazz):
+        return HookFilterData("argument_is_instance_of", arg_index=int(index), instance_of=clazz)
 
     @staticmethod
-    def result_equal(value) -> "HookFilter":
-        return HookFilter("result_equal", value=_filter_value(value))
+    def ArgumentEqual(index: int, value):
+        return HookFilterData("argument_equal", arg_index=int(index), object=value)
 
     @staticmethod
-    def result_not_equal(value) -> "HookFilter":
-        return HookFilter("result_not_equal", value=_filter_value(value))
+    def ArgumentNotEqual(index: int, value):
+        return HookFilterData("argument_not_equal", arg_index=int(index), object=value)
 
     @staticmethod
-    def result_is_instance_of(cls) -> "HookFilter":
-        return HookFilter("result_is_instance_of", **{"class": _filter_class_name(cls)})
+    def Condition(condition: str, object: Any = None):
+        return HookFilterData("condition", mvel_expression=str(condition), object=object)
 
     @staticmethod
-    def condition(expression: str, object=None) -> "HookFilter":
-        data: Dict[str, Any] = {"expression": str(expression)}
-        if object is not None:
-            data["object"] = _filter_value(object)
-        return HookFilter("condition", **data)
-
-    @staticmethod
-    def or_(*filters: "HookFilter") -> "HookFilter":
-        return HookFilter("or", filters=[
-            f.to_dict() if hasattr(f, "to_dict") else f for f in filters
-        ])
+    def Or(*filters):
+        return HookFilterData("or", or_filters=list(filters))
 
 
-HookFilter.ArgumentIsNull = HookFilter.argument_is_null
-HookFilter.ArgumentNotNull = HookFilter.argument_not_null
-HookFilter.ArgumentIsTrue = HookFilter.argument_is_true
-HookFilter.ArgumentIsFalse = HookFilter.argument_is_false
-HookFilter.ArgumentEqual = HookFilter.argument_equal
-HookFilter.ArgumentNotEqual = HookFilter.argument_not_equal
-HookFilter.ArgumentIsInstanceOf = HookFilter.argument_is_instance_of
-HookFilter.ResultIsNull = HookFilter.result_is_null
-HookFilter.ResultNotNull = HookFilter.result_not_null
-HookFilter.ResultIsTrue = HookFilter.result_is_true
-HookFilter.ResultIsFalse = HookFilter.result_is_false
-HookFilter.ResultEqual = HookFilter.result_equal
-HookFilter.ResultNotEqual = HookFilter.result_not_equal
-HookFilter.ResultIsInstanceOf = HookFilter.result_is_instance_of
-HookFilter.Condition = HookFilter.condition
-HookFilter.Or = HookFilter.or_
-
-HookFilter.RESULT_IS_NULL = HookFilter.result_is_null()
-HookFilter.RESULT_NOT_NULL = HookFilter.result_not_null()
-HookFilter.RESULT_IS_TRUE = HookFilter.result_is_true()
-HookFilter.RESULT_IS_FALSE = HookFilter.result_is_false()
+for _old, _new in (("argument_is_null", "ArgumentIsNull"), ("argument_not_null", "ArgumentNotNull"),
+                   ("argument_is_true", "ArgumentIsTrue"), ("argument_is_false", "ArgumentIsFalse"),
+                   ("argument_equal", "ArgumentEqual"), ("argument_not_equal", "ArgumentNotEqual"),
+                   ("argument_is_instance_of", "ArgumentIsInstanceOf"), ("result_equal", "ResultEqual"),
+                   ("result_not_equal", "ResultNotEqual"), ("result_is_instance_of", "ResultIsInstanceOf"),
+                   ("condition", "Condition"), ("or_", "Or")):
+    type.__setattr__(HookFilter, _old, staticmethod(getattr(HookFilter, _new)))
+for _old, _member in (("result_is_null", "RESULT_IS_NULL"), ("result_not_null", "RESULT_NOT_NULL"),
+                      ("result_is_true", "RESULT_IS_TRUE"), ("result_is_false", "RESULT_IS_FALSE")):
+    type.__setattr__(HookFilter, _old, staticmethod((lambda m: lambda: HookFilter[m])(_member)))
 
 
 def hook_filters(*filters, before=None, after=None):
     def decorator(fn):
-        fn.__hook_filters__ = {
-            "before": [*(before or ()), *filters],
-            "after": list(after or ()),
-        }
+        values = [*(before or ()), *filters, *(after or ())]
+        try:
+            setattr(fn, PluginsConstants.Xposed.HOOK_FILTERS, values)
+        except AttributeError:
+            target = getattr(fn, "__func__", None)
+            if target is not None:
+                setattr(target, PluginsConstants.Xposed.HOOK_FILTERS, values)
         return fn
     return decorator
 
 
+def fn_hook_filters(field_name: str):
+    def getter(obj):
+        method = getattr(obj, field_name, None)
+        return list(getattr(method, PluginsConstants.Xposed.HOOK_FILTERS, None) or ())
+    return getter
+
 _NO_CLIENT_OVERRIDE = object()
-
-
-class _PluginLogger:
-    def __init__(self, plugin):
-        self._plugin = plugin
-
-    def _write(self, level, message, args):
-        try:
-            text = str(message) % args if args else str(message)
-        except Exception:
-            text = str(message)
-        self._plugin.log(f"[{level}] {text}")
-
-    def debug(self, message, *args):
-        self._write("debug", message, args)
-
-    def info(self, message, *args):
-        self._write("info", message, args)
-
-    def warning(self, message, *args):
-        self._write("warning", message, args)
-
-    def error(self, message, *args):
-        self._write("error", message, args)
-
-    def exception(self, message, *args):
-        import traceback
-        self._write("error", message, args)
-        self._plugin.log(traceback.format_exc(limit=6))
-
-    def dump(self, obj):
-        try:
-            text = repr(obj)
-        except Exception:
-            text = object.__repr__(obj)
-        self._plugin.log(text)
 
 
 # Plugin
@@ -525,14 +594,144 @@ class BasePlugin:
     def plugin_id(self) -> Optional[str]:
         return self._extera_plugin_id
 
+    def _exd_meta(self, key, default=None):
+        try:
+            record = _host._records.get(self._extera_plugin_id or "")
+            value = (record.meta if record is not None else {}).get(key)
+        except Exception:
+            value = None
+        return default if value is None else value
+
+    @property
+    def name(self) -> str:
+        return self.__dict__.get("name") or self._exd_meta("name", self._extera_plugin_id or "")
+
+    @name.setter
+    def name(self, value):
+        self.__dict__["name"] = value
+
+    @property
+    def description(self) -> str:
+        return self.__dict__.get("description") or self._exd_meta("description", "")
+
+    @description.setter
+    def description(self, value):
+        self.__dict__["description"] = value
+
+    @property
+    def author(self) -> str:
+        return self.__dict__.get("author") or self._exd_meta("author", "")
+
+    @author.setter
+    def author(self, value):
+        self.__dict__["author"] = value
+
+    @property
+    def version(self) -> str:
+        return self.__dict__.get("version") or self._exd_meta("version", "")
+
+    @version.setter
+    def version(self, value):
+        self.__dict__["version"] = value
+
+    @property
+    def min_version(self) -> str:
+        return self.__dict__.get("min_version") or self._exd_meta("min_version", "")
+
+    @min_version.setter
+    def min_version(self, value):
+        self.__dict__["min_version"] = value
+
+    @property
+    def icon(self):
+        return self.__dict__.get("icon") or self._exd_meta("icon")
+
+    @icon.setter
+    def icon(self, value):
+        self.__dict__["icon"] = value
+
+    @property
+    def requirements(self) -> list:
+        value = self.__dict__.get("requirements")
+        return list(value if value is not None else self._exd_meta("requirements", []) or [])
+
+    @requirements.setter
+    def requirements(self, value):
+        self.__dict__["requirements"] = list(value or [])
+
+    @property
+    def initialized(self) -> bool:
+        return bool(self.__dict__.get("initialized"))
+
+    @initialized.setter
+    def initialized(self, value):
+        self.__dict__["initialized"] = bool(value)
+
+    @property
+    def metadata(self) -> PluginMetadata:
+        return PluginMetadata(self._extera_plugin_id or "", self.name, self.description, self.author,
+                              self.version, self.icon or "", self.min_version, self.requirements)
+
+    @property
+    def stop_event(self):
+        import threading
+        event = self.__dict__.get("_exd_stop_event")
+        if event is None:
+            event = threading.Event()
+            self.__dict__["_exd_stop_event"] = event
+        return event
+
+    def register_cleanup(self, cleanup):
+        if not callable(cleanup):
+            raise TypeError("cleanup must be callable")
+        self._extera_state("_exd_cleanups", list).append(cleanup)
+        return cleanup
+
+    def add_file_hook(self, file_info):
+        import file_utils
+        secret = file_utils.FilesController.register(file_info)
+        self._extera_state("_exd_file_hooks", dict)[file_info.ext] = secret
+        return secret
+
+    def remove_file_hook(self, ext, secret=None) -> None:
+        import file_utils
+        ext = str(ext or "").lstrip(".").lower()
+        secret = secret or self._extera_state("_exd_file_hooks", dict).get(ext)
+        file_utils.FilesController.unregister(ext, secret)
+        self._extera_state("_exd_file_hooks", dict).pop(ext, None)
+
+    def add_intent_hook(self, info, type=IntentHookType.BEFORE):
+        import intents
+        kind = type.value if isinstance(type, IntentHookType) else type
+        if kind in (IntentHookType.AFTER.value, "after", "AFTER"):
+            handle = intents.IntentsManager.new_global_after_handler(info)
+        else:
+            handle = intents.IntentsManager.new_global_before_handler(info)
+        self._extera_state("_exd_intent_hooks", list).append(handle.handler_id)
+        return handle
+
+    def remove_intent_hook(self, handler_id):
+        import intents
+        handler_id = str(getattr(handler_id, "handler_id", handler_id))
+        intents.IntentsManager.unhandle(handler_id)
+        hooks = self._extera_state("_exd_intent_hooks", list)
+        if handler_id in hooks:
+            hooks.remove(handler_id)
+
+
     def log(self, msg):
         _host.log(f"[{self._extera_plugin_id or '?'}] {msg}")
 
     @property
     def logger(self):
         if "_extera_logger" not in self.__dict__:
-            self.__dict__["_extera_logger"] = _PluginLogger(self)
+            import log_utils
+            self.__dict__["_extera_logger"] = log_utils.Logger(self._extera_plugin_id or "plugin")
         return self.__dict__["_extera_logger"]
+
+    @logger.setter
+    def logger(self, value):
+        self.__dict__["_extera_logger"] = value
 
     def get_setting(self, key: str, default=None):
         import plugin_settings
@@ -622,32 +821,41 @@ class BasePlugin:
     def client(self):
         self.__dict__.pop("_extera_client_override", None)
 
-    def _extera_build_method_handler(self, handler, before=None, after=None):
-        if isinstance(handler, (MethodHook, MethodReplacement)):
-            return handler
-        if handler is not None and any(
-                hasattr(handler, attr) for attr in
-                ("before_hooked_method", "after_hooked_method", "replace_hooked_method")):
-            return handler
-        if handler is not None:
-            if not callable(handler):
-                raise TypeError(
-                    "handler must be a MethodHook/MethodReplacement instance or a callable")
+    def _extera_build_method_handler(self, handler, before=None, after=None,
+                                     before_filters=None, after_filters=None):
+        if isinstance(handler, (MethodHook, MethodReplacement, _xposed.XC_MethodHook)) or (
+                handler is not None and any(hasattr(handler, attr) for attr in (
+                    "before_hooked_method", "after_hooked_method", "replace_hooked_method",
+                    "beforeHookedMethod", "afterHookedMethod", "replaceHookedMethod"))):
+            handler_obj = handler
+        else:
+            if handler is not None:
+                if not callable(handler):
+                    raise TypeError(
+                        "handler must be a MethodHook/MethodReplacement instance or a callable")
+                if before is not None:
+                    raise TypeError("pass either a handler callable or before=, not both")
+                before, handler = handler, None
+            if before is None and after is None:
+                raise TypeError("hook_method requires a handler or before=/after= callbacks")
+            handler_obj = _FunctionalHook()
             if before is not None:
-                raise TypeError("pass either a handler callable or before=, not both")
-            before, handler = handler, None
-        if before is None and after is None:
-            raise TypeError("hook_method requires a handler or before=/after= callbacks")
-        wrapper = _FunctionalHook()
-        if before is not None:
-            wrapper.before_hooked_method = before
-        if after is not None:
-            wrapper.after_hooked_method = after
-        return wrapper
+                handler_obj.before_hooked_method = before
+            if after is not None:
+                handler_obj.after_hooked_method = after
+        return _xposed.wrap(handler_obj, self._extera_plugin_id, before_filters, after_filters)
 
     def _exd_target(self, target, method_name=None):
-        name = None
+        import exd_java
+        if isinstance(target, exd_java.ShimMember):
+            name = target._java_name
+            if isinstance(target, exd_java.ShimConstructor):
+                name = name[:-len(".<init>")]
+        else:
+            name = None
         for attr in ("getName", "_java_name", "_name", "__name__"):
+            if name:
+                break
             try:
                 value = getattr(target, attr, None)
                 value = value() if callable(value) and attr == "getName" else value
@@ -655,7 +863,6 @@ class BasePlugin:
                 value = None
             if isinstance(value, str) and value:
                 name = value
-                break
         if not name:
             try:
                 name = str(target)
@@ -680,6 +887,10 @@ class BasePlugin:
         if short not in notes and len(notes) < 32:
             notes.append(short)
 
+    def _exd_index(self, hook_id, member, handler):
+        self.__dict__.setdefault("_exd_hook_index", {})[str(hook_id)] = (member, handler)
+        return _xposed.Unhook(str(hook_id), member, getattr(handler, "handler", handler), self)
+
     def _exd_virtual_hook(self, target, method_name, handler_obj, priority):
         key = self._exd_target(target, method_name)
         kind = _VIRTUAL_HOOKS.get(key)
@@ -689,68 +900,101 @@ class BasePlugin:
         handlers.append(handler_obj)
         if kind == "send":
             _host.add_send_hook(self.id, int(priority or 0))
-        hook_id = "exd_virtual_%s_%d" % (kind, len(handlers))
-        return UnhookId(hook_id, self)
+        counter = self.__dict__.get("_exd_virtual_counter", 0) + 1
+        self.__dict__["_exd_virtual_counter"] = counter
+        hook_id = "exd_virtual_%s_%d" % (kind, counter)
+        self.__dict__.setdefault("_exd_virtual_ids", {})[hook_id] = (kind, handler_obj)
+        if kind in _HOST_KINDS:
+            _host.sync_ui_hooks()
+        return self._exd_index(hook_id, target, handler_obj)
 
     def _exd_shim_hook(self, target, method_name, handler_obj, priority):
         try:
             import exd_java
-            cls, name = _exd_shim_target(target, method_name)
+            if isinstance(target, exd_java.ShimConstructor):
+                cls, name = target._cls, "<init>"
+            else:
+                cls, name = _exd_shim_target(target, method_name)
             if cls is None:
                 return None
             hook_id = exd_java.hook_shim(cls, name, self.id, handler_obj, priority)
         except Exception:
             return None
-        return UnhookId(hook_id, self) if hook_id else None
+        return self._exd_index(hook_id, target, handler_obj) if hook_id else None
 
-    def _extera_hook_all(self, kind: str, clazz, method_name, handler_obj, priority, filters_json):
+    @staticmethod
+    def _exd_priority(handler, priority):
+        if isinstance(priority, int) and not isinstance(priority, bool):
+            return priority
+        value = getattr(handler, "priority", None)
+        return value if isinstance(value, int) else 50
+
+    def _extera_hook_all(self, kind: str, clazz, method_name, handler_obj, priority, filters_json=None):
+        import exd_java
+        if kind == "constructors":
+            cls = clazz if isinstance(clazz, type) else (
+                clazz._class if isinstance(clazz, exd_java.JavaClassInfo) else None)
+            if isinstance(cls, type):
+                hook_id = exd_java.hook_shim(cls, "<init>", self.id, handler_obj, priority)
+                if hook_id:
+                    return UnhookIdList((self._exd_index(hook_id, exd_java.ShimConstructor(cls), handler_obj),), self)
         virtual = self._exd_virtual_hook(clazz, method_name, handler_obj, priority)
         if virtual is not None:
-            return UnhookIdList((str(virtual),), self)
+            return UnhookIdList((virtual,), self)
         shim = self._exd_shim_hook(clazz, method_name, handler_obj, priority)
         if shim is not None:
-            return UnhookIdList((str(shim),), self)
+            return UnhookIdList((shim,), self)
         self._exd_note_hook(clazz, method_name)
-        self.log(f"{kind} requires the Android runtime, not available on desktop")
-        return UnhookIdList(("exd_unsupported",), self)
+        self.log(f"{kind} {self._exd_target(clazz, method_name)} is not available on desktop")
+        return UnhookIdList((_xposed.Unhook("exd_unsupported", clazz, handler_obj, self),), self)
 
-    def hook_method(self, method, handler=None, priority: int = 50, filters=None,
-                    before=None, after=None, before_filters=None, after_filters=None):
-        if (isinstance(method, str) or isinstance(method, type)) and isinstance(handler, str):
+    def hook_method(self, method_or_constructor=None, xposed_hook=None, priority=None, filters=None, *,
+                    before=None, after=None, before_filters=None, after_filters=None, method=None, handler=None):
+        method_or_constructor = method if method_or_constructor is None else method_or_constructor
+        xposed_hook = handler if xposed_hook is None else xposed_hook
+        if isinstance(method_or_constructor, (str, type)) and isinstance(xposed_hook, str):
             real = priority if not isinstance(priority, int) else filters
-            res = self.hook_all_methods(method, handler, real, before=before, after=after)
-            return res[0] if res else UnhookId("exd_unsupported", self)
-        handler_obj = self._extera_build_method_handler(handler, before=before, after=after)
-        virtual = self._exd_virtual_hook(method, None, handler_obj, priority)
+            res = self.hook_all_methods(method_or_constructor, xposed_hook, real, before=before, after=after,
+                                         before_filters=before_filters, after_filters=after_filters)
+            return res[0] if res else _xposed.Unhook("exd_unsupported", method_or_constructor, xposed_hook, self)
+        handler_obj = self._extera_build_method_handler(xposed_hook, before, after, before_filters, after_filters)
+        priority = self._exd_priority(xposed_hook, priority)
+        virtual = self._exd_virtual_hook(method_or_constructor, None, handler_obj, priority)
         if virtual is not None:
             return virtual
-        shim = self._exd_shim_hook(method, None, handler_obj, priority)
+        shim = self._exd_shim_hook(method_or_constructor, None, handler_obj, priority)
         if shim is not None:
             return shim
-        self._exd_note_hook(method)
-        self.log("hook_method is not available on desktop")
-        return UnhookId("exd_unsupported", self)
+        self._exd_note_hook(method_or_constructor)
+        self.log(f"hook_method {self._exd_target(method_or_constructor)} is not available on desktop")
+        return _xposed.Unhook("exd_unsupported", method_or_constructor, xposed_hook, self)
 
-    def hook_all_methods(self, clazz, method_name, handler=None, priority: int = 50,
-                         filters=None, before=None, after=None,
-                         before_filters=None, after_filters=None) -> list:
-        handler_obj = self._extera_build_method_handler(handler, before=before, after=after)
-        return self._extera_hook_all("methods", clazz, method_name, handler_obj,
-                                     priority, None)
+    def hook_all_methods(self, hook_class=None, method_name=None, xposed_hook=None, priority=None, filters=None, *,
+                         before=None, after=None, before_filters=None, after_filters=None,
+                         clazz=None, handler=None) -> list:
+        hook_class = clazz if hook_class is None else hook_class
+        xposed_hook = handler if xposed_hook is None else xposed_hook
+        handler_obj = self._extera_build_method_handler(xposed_hook, before, after, before_filters, after_filters)
+        return self._extera_hook_all("methods", hook_class, method_name, handler_obj,
+                                     self._exd_priority(xposed_hook, priority))
 
-    def hook_all_constructors(self, clazz, handler=None, priority: int = 50,
-                              filters=None, before=None, after=None,
-                              before_filters=None, after_filters=None) -> list:
-        handler_obj = self._extera_build_method_handler(handler, before=before, after=after)
-        return self._extera_hook_all("constructors", clazz, None, handler_obj,
-                                     priority, None)
+    def hook_all_constructors(self, hook_class=None, xposed_hook=None, priority=None, filters=None, *,
+                              before=None, after=None, before_filters=None, after_filters=None,
+                              clazz=None, handler=None) -> list:
+        hook_class = clazz if hook_class is None else hook_class
+        xposed_hook = handler if xposed_hook is None else xposed_hook
+        handler_obj = self._extera_build_method_handler(xposed_hook, before, after, before_filters, after_filters)
+        return self._extera_hook_all("constructors", hook_class, None, handler_obj,
+                                     self._exd_priority(xposed_hook, priority))
 
     def unhook_method(self, unhook_obj):
         if unhook_obj is None:
             return
-        ids = unhook_obj if isinstance(unhook_obj, (list, tuple)) else [unhook_obj]
+        ids = unhook_obj if isinstance(unhook_obj, (list, tuple, set)) else [unhook_obj]
+        index = self.__dict__.setdefault("_exd_hook_index", {})
         for value in ids:
             value = str(value)
+            index.pop(value, None)
             if value.startswith("exd_shim_"):
                 try:
                     import exd_java
@@ -758,24 +1002,43 @@ class BasePlugin:
                 except Exception:
                     pass
                 continue
-            for kind in set(_VIRTUAL_HOOKS.values()) - {"send"}:
-                if value.startswith("exd_virtual_%s_" % kind):
-                    self.__dict__["_exd_virtual_" + kind] = []
-            if value.startswith("exd_virtual_send_"):
-                self.__dict__["_exd_virtual_send"] = []
-                if not self.__dict__.get("_extera_send_message_registered"):
-                    _host.remove_send_hook(self.id)
+            entry = self.__dict__.setdefault("_exd_virtual_ids", {}).pop(value, None)
+            if entry is None:
+                continue
+            kind, handler_obj = entry
+            handlers = self.__dict__.get("_exd_virtual_" + kind) or []
+            self.__dict__["_exd_virtual_" + kind] = [h for h in handlers if h is not handler_obj]
+            if kind in _HOST_KINDS:
+                _host.sync_ui_hooks()
+            if kind == "send" and not self.__dict__["_exd_virtual_send"] \
+                    and not self.__dict__.get("_extera_send_message_registered"):
+                _host.remove_send_hook(self.id)
 
     def _extera_cleanup_resources(self):
+        self.stop_event.set()
+        for cleanup in reversed(self._extera_state("_exd_cleanups", list)):
+            try:
+                cleanup()
+            except Exception as e:
+                self.log(f"cleanup failed: {e!r}")
+        self.__dict__["_exd_cleanups"] = []
         try:
             import exd_java
             exd_java.unhook_shim(plugin_id=self._extera_plugin_id)
         except Exception:
             pass
+        for kind in set(_VIRTUAL_HOOKS.values()):
+            self.__dict__.pop("_exd_virtual_" + kind, None)
+        self.__dict__.pop("_exd_virtual_ids", None)
+        self.__dict__.pop("_exd_hook_index", None)
+        _host.sync_ui_hooks(exclude=self._extera_plugin_id)
         for module_name, cleanup in (("file_utils", "_unregister_all_for_plugin"),
-                                     ("intents", "_unhandle_all_for_plugin")):
+                                     ("intents", "_unhandle_all_for_plugin"),
+                                     ("exd_webview", "close_plugin"),
+                                     ("extera_utils.classes", "release_plugin")):
             try:
-                module = __import__(module_name)
+                import importlib
+                module = importlib.import_module(module_name)
                 getattr(module, cleanup)(self._extera_plugin_id)
             except Exception:
                 pass

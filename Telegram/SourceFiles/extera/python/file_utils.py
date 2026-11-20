@@ -1,8 +1,9 @@
 import json
 import os
 import threading
-from dataclasses import dataclass
-from typing import Callable, List, Optional
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Callable, List, Optional
 
 
 def get_plugins_dir() -> Optional[str]:
@@ -193,110 +194,151 @@ def _current_plugin_id() -> Optional[str]:
     return _owner_plugin_id()
 
 
+class staticproperty:
+    def __init__(self, fget):
+        self.fget = fget.__func__ if isinstance(fget, staticmethod) else fget
+
+    def __get__(self, obj, owner):
+        return self.fget()
+
+
 class FilesController:
-    class ExtensionAlreadyRegistered(Exception):
-        pass
+    @staticproperty
+    @staticmethod
+    def DIRECT_FILE_ICONS() -> bool:
+        return False
 
-    class ExtensionNotRegistered(Exception):
-        pass
+    @staticproperty
+    @staticmethod
+    def SUPPORT_ICONS() -> bool:
+        return False
 
-    class SecretInvalid(Exception):
-        pass
-
-    class Place:
-        UNKNOWN = "UNKNOWN"
-        ChatActivity = "ChatActivity"
-        FilteredSearchView = "FilteredSearchView"
-        SharedMediaLayout = "SharedMediaLayout"
-        SearchDownloadsContainer = "SearchDownloadsContainer"
-        ChannelAdminLogActivity = "ChannelAdminLogActivity"
+    class Place(Enum):
+        UNKNOWN = 1
+        ChatActivity = 2
+        FilteredSearchView = 3
+        SharedMediaLayout = 4
+        SearchDownloadsContainer = 5
+        ChannelAdminLogActivity = 6
 
     @dataclass
     class FileInfo:
         ext: str
-        on_click: Optional[Callable] = None
-        whitelist_places: Optional[List[str]] = None
-        blacklist_places: Optional[List[str]] = None
-        get_icon: Optional[Callable] = None
+        on_click: Callable = field(compare=False, repr=False, default=None)
+        whitelist_places: list = field(default_factory=list, kw_only=True)
+        blacklist_places: list = field(default_factory=list, kw_only=True)
+        get_icon: Optional[Callable] = field(default=None, compare=False, repr=False, kw_only=True)
+
+        def __post_init__(self):
+            self.ext = str(self.ext or "").lstrip(".").lower()
+            if not self.ext:
+                raise ValueError("FileInfo.ext must not be empty")
+            if not callable(self.on_click):
+                raise ValueError("FileInfo.on_click must be callable")
+            if self.whitelist_places and self.blacklist_places:
+                raise ValueError("whitelist_places and blacklist_places are mutually exclusive")
+            self.whitelist_places = [FilesController._place(p) for p in self.whitelist_places or ()]
+            self.blacklist_places = [FilesController._place(p) for p in self.blacklist_places or ()]
+
+    @dataclass
+    class OnClickArgs:
+        place: Any
+        file: Any = field(compare=False, repr=False)
+        file_name: str = ""
+        message: Any = field(default=None, compare=False, repr=False)
+        activity: Any = field(default=None, compare=False, repr=False)
+        parent_fragment: Any = field(default=None, compare=False, repr=False)
+
+    class ExtensionAlreadyRegistered(Exception):
+        def __init__(self, ext: str = ""):
+            super().__init__(f"extension {ext!r} is already registered")
+            self.ext = ext
+
+    class ExtensionNotRegistered(Exception):
+        def __init__(self, ext: str = ""):
+            super().__init__(f"extension {ext!r} is not registered")
+            self.ext = ext
+
+    class SecretInvalid(Exception):
+        def __init__(self, ext: str = "", secret: str = ""):
+            super().__init__(f"invalid secret for extension {ext!r}")
+            self.ext = ext
+            self.secret = secret
 
     _lock = threading.RLock()
     _registrations = {}
-    _secret_counter = [0]
 
     @staticmethod
-    def register(info=None, on_click: Optional[Callable] = None,
-                 whitelist_places: Optional[List] = None,
-                 blacklist_places: Optional[List] = None,
-                 get_icon: Optional[Callable] = None,
-                 whitelist: Optional[List] = None, blacklist: Optional[List] = None,
-                 icon: bool = False) -> str:
-        if isinstance(info, FilesController.FileInfo):
-            ext = info.ext
-            on_click = info.on_click if on_click is None else on_click
-            whitelist_places = info.whitelist_places \
-                if whitelist_places is None else whitelist_places
-            blacklist_places = info.blacklist_places \
-                if blacklist_places is None else blacklist_places
-            get_icon = info.get_icon if get_icon is None else get_icon
-        else:
-            ext = info
-        whitelist_places = whitelist if whitelist is not None else whitelist_places
-        blacklist_places = blacklist if blacklist is not None else blacklist_places
-        if not ext:
-            raise ValueError("register() requires a file extension")
-        ext = str(ext).lstrip(".").lower()
-        if not callable(on_click):
-            raise ValueError("register() requires an on_click callback")
-        if whitelist_places and blacklist_places:
-            raise ValueError("whitelist_places and blacklist_places are mutually exclusive")
+    def _place(value):
+        if isinstance(value, FilesController.Place):
+            return value
+        if isinstance(value, int):
+            return FilesController.Place(value)
+        return FilesController.Place[str(value)]
+
+    @classmethod
+    def register(cls, file_info=None, on_click: Optional[Callable] = None, **kwargs) -> str:
+        if not isinstance(file_info, FilesController.FileInfo):
+            whitelist = kwargs.pop("whitelist_places", None) or kwargs.pop("whitelist", None) or []
+            blacklist = kwargs.pop("blacklist_places", None) or kwargs.pop("blacklist", None) or []
+            file_info = FilesController.FileInfo(file_info, on_click, whitelist_places=list(whitelist),
+                                                 blacklist_places=list(blacklist),
+                                                 get_icon=kwargs.pop("get_icon", None))
         plugin_id = _current_plugin_id()
         if not plugin_id:
-            raise RuntimeError(
-                "FilesController.register must be called from a plugin context "
-                "(on_plugin_load / a hook callback)")
-        key = (plugin_id, ext)
-        with FilesController._lock:
-            if key in FilesController._registrations:
-                raise FilesController.ExtensionAlreadyRegistered(
-                    f"extension {ext!r} is already registered by {plugin_id!r}")
-            FilesController._secret_counter[0] += 1
-            secret = f"{plugin_id}:{ext}:{FilesController._secret_counter[0]}"
-            FilesController._registrations[key] = {
-                "secret": secret, "on_click": on_click, "get_icon": get_icon,
-            }
-        import extera_host
-        extera_host.notify_file_handler_registered(plugin_id, ext)
+            raise RuntimeError("FilesController.register must be called from a plugin context")
+        import secrets
+        with cls._lock:
+            if file_info.ext in cls._registrations:
+                raise FilesController.ExtensionAlreadyRegistered(file_info.ext)
+            secret = secrets.token_hex(16)
+            cls._registrations[file_info.ext] = {"secret": secret, "info": file_info, "plugin": plugin_id}
         return secret
 
-    @staticmethod
-    def unregister(ext: str, secret: str) -> None:
-        ext = str(ext).lstrip(".").lower()
-        plugin_id = _current_plugin_id()
-        with FilesController._lock:
-            key = (plugin_id, ext)
-            entry = FilesController._registrations.get(key)
-            if entry is None and plugin_id is None:
-                matches = [k for k in FilesController._registrations if k[1] == ext]
-                if len(matches) == 1:
-                    key = matches[0]
-                    entry = FilesController._registrations.get(key)
+    @classmethod
+    def unregister(cls, ext: str, secret: str):
+        ext = str(ext or "").lstrip(".").lower()
+        with cls._lock:
+            entry = cls._registrations.get(ext)
             if entry is None:
-                raise FilesController.ExtensionNotRegistered(
-                    f"extension {ext!r} is not registered")
+                raise FilesController.ExtensionNotRegistered(ext)
             if entry["secret"] != str(secret):
-                raise FilesController.SecretInvalid(
-                    f"invalid secret for extension {ext!r}")
-            del FilesController._registrations[key]
+                raise FilesController.SecretInvalid(ext, str(secret))
+            del cls._registrations[ext]
 
     @staticmethod
     def icons_supported() -> bool:
         return False
+
+    @classmethod
+    def dispatch(cls, path: str, place: str = "ChatActivity", message=None, fragment=None, activity=None) -> bool:
+        ext = os.path.splitext(str(path))[1].lstrip(".").lower()
+        with cls._lock:
+            entry = cls._registrations.get(ext)
+        if entry is None:
+            return False
+        info = entry["info"]
+        try:
+            where = FilesController._place(place)
+        except Exception:
+            where = FilesController.Place.UNKNOWN
+        if info.whitelist_places and where not in info.whitelist_places:
+            return False
+        if info.blacklist_places and where in info.blacklist_places:
+            return False
+        import exd_java
+        args = FilesController.OnClickArgs(place=where, file=exd_java.File(str(path)),
+                                           file_name=os.path.basename(str(path)), message=message,
+                                           activity=activity, parent_fragment=fragment)
+        import extera_host
+        with extera_host.owner_scope(entry["plugin"]):
+            info.on_click(args)
+        return True
 
 
 def _unregister_all_for_plugin(plugin_id: str):
     if not plugin_id:
         return
     with FilesController._lock:
-        keys = [key for key in FilesController._registrations if key[0] == plugin_id]
-        for key in keys:
+        for key in [k for k, v in FilesController._registrations.items() if v["plugin"] == plugin_id]:
             del FilesController._registrations[key]

@@ -66,6 +66,11 @@
 | `SendMessagesHelper.sendMessage` | 6 | да, виртуальный хук |
 | `UniversalAdapter.fillItems`, `updateRowsIds` | 11, 5 | нет, списки настроек Android |
 | `UserConfig.isPremium` | 3 | не нужен, в exDesktop свои настройки Premium |
+| `MediaController.playMessage`, `AudioPlayerAlert.updateTitle` | 3, 5 | да, при запуске аудио в чате |
+| `ChatActivityEnterView.setReplyingMessageObject` | 3 | да, при выборе ответа |
+| `LaunchActivity.handleIntent` | 4 | да, при открытии ссылки `tg://` |
+| `VoIPHelper.startCall` | 2 | да, при исходящем звонке |
+| `PluginsController.setPluginEnabled`, `PythonPluginsEngine.unloadPlugin`, `LocaleController.applyLanguage` | ZwyLib | да, действия клиента идут через эти методы |
 
 Перехваты интерфейса составляют основную долю. Их функции переносятся только переписыванием плагина: через ИИ-перенос или вручную.
 

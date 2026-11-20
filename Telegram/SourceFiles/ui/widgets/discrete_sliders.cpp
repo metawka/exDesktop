@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/widgets/discrete_sliders.h"
+#include "ui/style/style_core.h"
+#include "ui/painter.h"
 
 #include "ui/effects/ripple_animation.h"
 #include "styles/style_widgets.h"
@@ -442,6 +444,27 @@ void SettingsSlider::paintEvent(QPaintEvent *e) {
 			p.fillRect(rect, active ? _st.barFgActive : _st.barFg);
 		}
 	};
+	const auto exdPill = _st.barSnapToLabel && style::Md3Enabled();
+	if (exdPill && range.width > 0) {
+		const auto padH = style::ConvertScale(12);
+		const auto padV = style::ConvertScale(5);
+		const auto height = _st.labelStyle.font->height + 2 * padV;
+		const auto pill = QRect(
+			range.left - padH,
+			_st.labelTop - padV,
+			range.width + 2 * padH,
+			height);
+		const auto base = st::windowBg->c;
+		const auto accent = st::windowBgActive->c;
+		const auto mix = [](int a, int b) { return int(a + (b - a) * 0.22); };
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(QColor(
+			mix(base.red(), accent.red()),
+			mix(base.green(), accent.green()),
+			mix(base.blue(), accent.blue())));
+		p.drawRoundedRect(myrtlrect(pill), height / 2., height / 2.);
+	}
 	enumerateSections([&](Section &section) {
 		const auto activeWidth = _st.barSnapToLabel
 			? section.contentWidth
@@ -497,7 +520,10 @@ void SettingsSlider::paintEvent(QPaintEvent *e) {
 			section.contentWidth,
 			_st.labelStyle.font->height);
 		if (rect.intersects(clip)) {
-			p.setPen(anim::pen(_st.labelFg, _st.labelFgActive, active));
+			p.setPen(anim::pen(
+				_st.labelFg,
+				exdPill ? st::windowFg : _st.labelFgActive,
+				active));
 			section.label.draw(p, {
 				.position = QPoint(labelLeft, _st.labelTop),
 				.outerWidth = width(),
@@ -507,7 +533,7 @@ void SettingsSlider::paintEvent(QPaintEvent *e) {
 		}
 		return true;
 	});
-	if (_st.barSnapToLabel) {
+	if (_st.barSnapToLabel && !exdPill) {
 		const auto add = _st.barStroke / 2;
 		const auto from = std::max(range.left - add, 0);
 		const auto till = std::min(range.left + range.width + add, width());

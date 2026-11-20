@@ -32,6 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/image/image.h"
 #include "ui/widgets/fields/special_fields.h"
 #include "ui/widgets/buttons.h"
+#include "ui/style/style_core.h"
 #include "ui/widgets/discrete_sliders.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/shadow.h"
@@ -1340,6 +1341,19 @@ void StickersBox::Inner::paintEvent(QPaintEvent *e) {
 			tr::lng_contacts_loading(tr::now),
 			style::al_center);
 	} else {
+		if (style::Md3Grouped()) {
+			const auto inset = style::ConvertScale(10);
+			const auto radius = style::ConvertScale(18.);
+			const auto card = QRectF(
+				inset,
+				_itemsTop,
+				width() - 2 * inset,
+				int(_rows.size()) * _rowHeight);
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(anim::color(st::boxBg, st::windowFg, 0.055));
+			p.drawRoundedRect(card, radius, radius);
+		}
 		p.translate(0, _itemsTop);
 
 		const auto yFrom = clip.y() - _itemsTop;

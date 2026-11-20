@@ -6,6 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/ui/dialogs_layout.h"
+#include "extera/exd_md3.h"
+
+#include <QtGui/QPainterPath>
 #include "extera/extera_config.h"
 #include "extera/extera_streamer.h"
 
@@ -576,12 +579,45 @@ void PaintRow(
 	if (swipeTranslation) {
 		p.translate(swipeMirrored ? swipeTranslation : -swipeTranslation, 0);
 	}
-	p.fillRect(geometry, bg);
+	const auto activeRadius = Extera::Md3::RoundedSelection()
+		? st::dialogsRowActiveRadius
+		: 0;
+	const auto highlight = QRectF(
+		geometry.marginsRemoved(st::dialogsRowActiveMargins));
+	if (activeRadius > 0) {
+		p.fillRect(geometry, context.currentBg);
+		const auto exdOpacity = context.active
+			? 1.
+			: (context.exdHover >= 0.)
+			? context.exdHover
+			: context.selected
+			? 1.
+			: 0.;
+		if (exdOpacity > 0.) {
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(context.active ? bg : st::dialogsBgOver);
+			p.setOpacity(exdOpacity);
+			p.drawRoundedRect(highlight, activeRadius, activeRadius);
+			p.setOpacity(1.);
+		}
+	} else {
+		p.fillRect(geometry, bg);
+	}
 	if (!(flags & Flag::TopicJumpRipple)) {
 		auto ripple = context.active
 			? st::dialogsRippleBgActive
 			: st::dialogsRippleBg;
-		row->paintRipple(p, 0, 0, context.width, &ripple->c);
+		if (activeRadius > 0) {
+			auto clip = QPainterPath();
+			clip.addRoundedRect(highlight, activeRadius, activeRadius);
+			p.save();
+			p.setClipPath(clip, Qt::IntersectClip);
+			row->paintRipple(p, 0, 0, context.width, &ripple->c);
+			p.restore();
+		} else {
+			row->paintRipple(p, 0, 0, context.width, &ripple->c);
+		}
 	}
 
 	if (flags & Flag::SavedMessages) {
@@ -1529,10 +1565,10 @@ void PaintCollapsedRow(
 		const QString &text,
 		int unread,
 		const PaintContext &context) {
+	const auto bar = QRect{ 0, 0, context.width, st::dialogsImportantBarHeight };
 	p.fillRect(
-		QRect{ 0, 0, context.width, st::dialogsImportantBarHeight },
+		bar,
 		context.selected ? st::dialogsBgOver : context.currentBg);
-
 	row.paintRipple(p, 0, 0, context.width);
 
 	const auto unreadTop = (st::dialogsImportantBarHeight - st::dialogsUnreadHeight) / 2;

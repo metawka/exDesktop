@@ -13,6 +13,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer.h"
 #include "core/application.h"
 #include "core/core_settings.h"
+#include "ui/painter.h"
+#include "ui/style/style_core.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/continuous_sliders.h"
 #include "ui/widgets/shadow.h"
@@ -431,11 +433,26 @@ void Widget::updateControlsGeometry() {
 
 	updatePlayPrevNextPositions();
 
-	_playbackSlider->setGeometry(
-		0,
-		height() - st::mediaPlayerPlayback.fullWidth,
-		width(),
-		st::mediaPlayerPlayback.fullWidth);
+	if (style::Md3Enabled()) {
+		const auto &margins = st::exdMediaPlayerPlaqueMargins;
+		const auto plaqueHeight = st::mediaPlayerHeight
+			- margins.top()
+			- margins.bottom();
+		const auto inset = margins.left() + plaqueHeight / 2;
+		_playbackSlider->setGeometry(
+			inset,
+			st::mediaPlayerHeight
+				- margins.bottom()
+				- st::mediaPlayerPlayback.fullWidth,
+			width() - inset * 2,
+			st::mediaPlayerPlayback.fullWidth);
+	} else {
+		_playbackSlider->setGeometry(
+			0,
+			height() - st::mediaPlayerPlayback.fullWidth,
+			width(),
+			st::mediaPlayerPlayback.fullWidth);
+	}
 
 	updateDropdownsGeometry();
 }
@@ -459,9 +476,20 @@ void Widget::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
 	auto fill = e->rect().intersected(
 		QRect(0, 0, width(), st::mediaPlayerHeight + st::lineWidth));
-	if (!fill.isEmpty()) {
-		p.fillRect(fill, st::mediaPlayerBg);
+	if (fill.isEmpty()) {
+		return;
+	} else if (style::Md3Enabled()) {
+		p.fillRect(fill, st::windowBg);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto plaque = QRect(0, 0, width(), st::mediaPlayerHeight)
+			.marginsRemoved(st::exdMediaPlayerPlaqueMargins);
+		const auto radius = plaque.height() / 2.;
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::mediaPlayerBg);
+		p.drawRoundedRect(plaque, radius, radius);
+		return;
 	}
+	p.fillRect(fill, st::mediaPlayerBg);
 }
 
 void Widget::enterEventHook(QEnterEvent *e) {

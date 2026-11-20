@@ -757,6 +757,7 @@ void Histories::sendReadRequest(not_null<History*> history, State &state) {
 		&& !Extera::ConsumeGhostRead(history->peer->id.value)) {
 		state.sentReadDone = true;
 		state.sentReadTill = 0;
+		history->owner().exdRememberGhostRead(history->peer->id, tillId);
 		history->validateMonoAndForumUnread(tillId);
 		return;
 	}

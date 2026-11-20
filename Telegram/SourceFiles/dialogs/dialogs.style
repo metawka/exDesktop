@@ -973,3 +973,12 @@ restoreWindowsOfferClose: IconButton(dialogsCancelSearchInPeer) {
 	rippleAreaPosition: point(0px, 1px);
 	rippleAreaSize: 28px;
 }
+
+dialogsRowActiveRadius: 0px;
+dialogsRowActiveMargins: margins(0px, 0px, 0px, 0px);
+dialogsFilterIconLeft: 0px;
+dialogsFilterIcon: icon {{ "box_search", placeholderFg }};
+
+exdDialogsHoverDuration: 140;
+exdArchiveTopBarMargins: margins(14px, 9px, 15px, 10px);
+exdStoriesSearchInset: 6px;

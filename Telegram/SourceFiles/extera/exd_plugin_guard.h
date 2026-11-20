@@ -33,6 +33,10 @@ struct Report {
 	QString llmReason;
 	QString llmError;
 	QString sha256;
+	bool similarityBlock = false;
+	bool decoded = false;
+	bool decodedApproved = false;
+	int decodedLayers = 0;
 };
 
 [[nodiscard]] int Mode();

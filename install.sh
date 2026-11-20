@@ -116,6 +116,18 @@ say "Downloading $URL" "Загрузка $URL"
 FILE="$TMP/package"
 fetch "$URL" "$FILE"
 
+DIGEST="$(tr ',' '
+' < "$TMP/release.json" | awk -v url="$URL" '
+	/"digest"/ { d = $0; sub(/.*"sha256:/, "", d); sub(/".*/, "", d) }
+	index($0, url) { print d; exit }')"
+[ -n "$DIGEST" ] || fail "release checksum was not found" "контрольная сумма релиза не найдена"
+if command -v sha256sum >/dev/null 2>&1; then
+	ACTUAL="$(sha256sum "$FILE" | cut -d ' ' -f 1)"
+else
+	ACTUAL="$(shasum -a 256 "$FILE" | cut -d ' ' -f 1)"
+fi
+[ "$ACTUAL" = "$DIGEST" ] || fail "checksum mismatch, the download is damaged or replaced" "контрольная сумма не совпадает, файл повреждён или подменён"
+
 if [ "$OS" = "Linux" ]; then
 	mkdir -p "$TMP/unpack"
 	tar -xzf "$FILE" -C "$TMP/unpack"
@@ -178,7 +190,7 @@ if [ "$OPT_TGWS" = 1 ]; then
 		say "Installing TG WS Proxy dependencies..." "Установка зависимостей TG WS Proxy..."
 		if [ "$OS" = "Linux" ]; then LIB="$TGWS_DIR/lib"; else LIB="$TGWS_DIR"; fi
 		mkdir -p "$LIB"
-		python3 -m pip install --quiet --disable-pip-version-check --target "$LIB" cryptography h2 httpx certifi \
+		python3 -m pip install --quiet --disable-pip-version-check --target "$LIB" cryptography==44.0.0 h2==4.1.0 httpx==0.28.1 certifi==2024.12.14 \
 			|| say "TG WS Proxy dependencies were not installed" "Зависимости TG WS Proxy не установлены"
 	else
 		say "python3 was not found, TG WS Proxy dependencies were skipped" "python3 не найден, зависимости TG WS Proxy пропущены"

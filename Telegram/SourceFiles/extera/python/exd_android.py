@@ -249,6 +249,13 @@ class NotificationCenterDelegate(JavaObject):
         pass
 
 
+def _owner_of(delegate):
+    try:
+        return vars(delegate).get("_extera_plugin_id")
+    except TypeError:
+        return None
+
+
 class _Center(JavaObject):
     _java_name = "org.telegram.messenger.NotificationCenter"
 
@@ -259,7 +266,7 @@ class _Center(JavaObject):
     def addObserver(self, delegate, notification_id):
         host = _host()
         plugin_id = host.current_plugin_id()
-        if plugin_id and getattr(delegate, "_extera_plugin_id", None) is None:
+        if plugin_id and _owner_of(delegate) is None:
             try:
                 delegate._extera_plugin_id = plugin_id
             except Exception:
@@ -324,7 +331,7 @@ for _index, _name in enumerate(_NOTIFICATION_NAMES, start=1):
 def post(notification_id, account, *args):
     host = _host()
     for delegate in list(host._observers.get(int(notification_id), [])):
-        plugin_id = getattr(delegate, "_extera_plugin_id", None)
+        plugin_id = _owner_of(delegate)
         try:
             if plugin_id:
                 with host._plugin_context(plugin_id):
@@ -1105,8 +1112,15 @@ class Plugin(JavaObject):
         PluginsController.getInstance().setPluginEnabled(self.id, bool(value))
 
 
-class _Controller(JavaObject):
+class PluginsController(JavaObject):
     _java_name = "com.exteragram.messenger.plugins.PluginsController"
+    _instance = None
+
+    @staticmethod
+    def getInstance():
+        if PluginsController._instance is None:
+            PluginsController._instance = PluginsController()
+        return PluginsController._instance
 
     @property
     def plugins(self):
@@ -1141,11 +1155,13 @@ class _Controller(JavaObject):
         return False
 
     def setPluginEnabled(self, plugin_id, enabled=True, *args):
-        result = _host()._set_enabled({"id": str(plugin_id), "enabled": bool(enabled)})
-        try:
-            _extera.plugins_changed()
-        except Exception:
-            pass
+        host = _host()
+        result = host._set_enabled_core({"id": str(plugin_id), "enabled": bool(enabled)})
+        if not host._HOST_CALL.get("setPluginEnabled"):
+            try:
+                _extera.plugins_changed()
+            except Exception:
+                pass
         callback = args[-1] if args else None
         run = getattr(callback, "run", callback)
         if callable(run):
@@ -1169,15 +1185,7 @@ class _Controller(JavaObject):
         return PythonPluginsEngine
 
 
-class PluginsController(JavaObject):
-    _java_name = "com.exteragram.messenger.plugins.PluginsController"
-    _instance = None
-
-    @staticmethod
-    def getInstance():
-        if PluginsController._instance is None:
-            PluginsController._instance = _Controller()
-        return PluginsController._instance
+_Controller = PluginsController
 
 
 class PythonPluginsEngine(JavaObject):
@@ -1196,102 +1204,72 @@ class PythonPluginsEngine(JavaObject):
         return True
 
     @staticmethod
-    def unloadPlugin(*args):
+    def unloadPlugin(plugin_id=None, *args):
+        host = _host()
+        record = host._records.get(str(plugin_id))
+        if record is not None:
+            host._deactivate_core(record)
+        callback = args[-1] if args else None
+        run = getattr(callback, "run", callback)
+        if callable(run):
+            try:
+                run(record is not None)
+            except TypeError:
+                run()
         return None
 
     @staticmethod
-    def loadPlugin(*args):
+    def loadPlugin(plugin_id=None, *args):
+        host = _host()
+        record = host._records.get(str(plugin_id))
+        if record is not None and record.instance is None:
+            host._activate_core(record)
+        callback = args[-1] if args else None
+        run = getattr(callback, "run", callback)
+        if callable(run):
+            try:
+                run(record is not None and record.instance is not None)
+            except TypeError:
+                run()
         return None
 
-
-# Xposed
-
-class _XposedAdapter:
-    def __init__(self, callback):
-        self._callback = callback
-        for java, python in (("beforeHookedMethod", "before_hooked_method"),
-                             ("afterHookedMethod", "after_hooked_method"),
-                             ("replaceHookedMethod", "replace_hooked_method")):
-            method = None
-            for attr in (java, python):
-                cand = getattr(callback, attr, None)
-                if callable(cand) and not getattr(cand, "_exd_default", False) and not str(cand).startswith("<stub"):
-                    method = cand
-                    break
-            if callable(method):
-                setattr(self, python, method)
-
-
-def _current_instance():
-    host = _host()
-    pid = host.current_plugin_id()
-    if pid:
-        record = host._records.get(pid)
-        return getattr(record, "instance", None)
-    records = list(getattr(host, "_records", {}).values())
-    if len(records) == 1:
-        return getattr(records[0], "instance", None)
-    for record in records:
-        inst = getattr(record, "instance", None)
-        if inst is not None:
-            return inst
-    try:
-        import base_plugin
-        return getattr(base_plugin.BasePlugin, "_last_instance", None)
-    except Exception:
+    @staticmethod
+    def loadPluginFromFile(path=None, *args):
+        host = _host()
+        info = None
+        try:
+            import plugin_guard
+            report = plugin_guard.scan(str(path))
+            dangerous = [f for f in report.get("findings") or () if str(f.get("level")).upper() in ("CRITICAL", "HIGH")]
+            if dangerous:
+                _log("loadPluginFromFile refused %s: %s" % (path, ", ".join(f.get("rule", "?") for f in dangerous)))
+            else:
+                info = host._install({"path": str(path)})
+                try:
+                    _extera.plugins_changed()
+                except Exception:
+                    pass
+        except Exception as e:
+            _log("loadPluginFromFile failed: %r" % (e,))
+        callback = args[-1] if args else None
+        run = getattr(callback, "run", callback)
+        if callable(run):
+            try:
+                run(None if info else "install failed")
+            except TypeError:
+                run()
         return None
 
-
-class XposedBridge(JavaObject):
-    _java_name = "de.robv.android.xposed.XposedBridge"
-
     @staticmethod
-    def log(message):
-        _log("[xposed] %s" % message)
-
-    @staticmethod
-    def hookMethod(method, callback):
-        instance = _current_instance()
-        if instance is None:
-            return None
-        return instance.hook_method(method, _XposedAdapter(callback))
-
-    @staticmethod
-    def hookAllMethods(clazz, name, callback):
-        instance = _current_instance()
-        if instance is None:
-            return []
-        return instance.hook_all_methods(clazz, name, _XposedAdapter(callback))
-
-    @staticmethod
-    def hookAllConstructors(clazz, callback):
-        instance = _current_instance()
-        if instance is None:
-            return []
-        return instance.hook_all_constructors(clazz, _XposedAdapter(callback))
-
-    @staticmethod
-    def invokeOriginalMethod(method, target, args):
-        invoke = getattr(method, "invoke", None)
-        return invoke(target, *list(args or [])) if callable(invoke) else None
+    def isPluginActive(plugin_id):
+        record = _host()._records.get(str(plugin_id))
+        return bool(record is not None and record.instance is not None)
 
 
-class XC_MethodHook(JavaObject):
-    _java_name = "de.robv.android.xposed.XC_MethodHook"
-
-    def beforeHookedMethod(self, param):
-        pass
-
-    def afterHookedMethod(self, param):
-        pass
-
-
-class XC_MethodReplacement(XC_MethodHook):
-    _java_name = "de.robv.android.xposed.XC_MethodReplacement"
-    DO_NOTHING = None
-
-    def replaceHookedMethod(self, param):
-        return None
+try:
+    from exd_xposed import XposedBridge, XC_MethodHook, XC_MethodReplacement
+except ImportError:
+    pass
 
 
 # Install
@@ -1300,7 +1278,6 @@ def install(shims):
     import android_views
     import base_plugin
     import client_utils
-    XC_MethodHook.MethodHookParam = base_plugin.VirtualParam
     _patch_bitmap()
     _patch_utilities()
     context = _context_class()
@@ -1343,8 +1320,6 @@ def install(shims):
         "com.exteragram.messenger": {"ExteraConfig": ExteraConfig},
         "com.exteragram.messenger.plugins": {"PluginsController": PluginsController, "Plugin": Plugin,
                                              "PythonPluginsEngine": PythonPluginsEngine},
-        "de.robv.android.xposed": {"XposedBridge": XposedBridge, "XC_MethodHook": XC_MethodHook,
-                                   "XC_MethodReplacement": XC_MethodReplacement},
     }
     for module, values in entries.items():
         shims.setdefault(module, {}).update(values)

@@ -1,0 +1,31 @@
+group material;
+exteraPluginCardMargin: margins(10px, 0px, 10px, 8px);
+exteraPluginCardRadius: 18px;
+exteraCardRadius: 18px;
+exteraCategoryGridPadding: margins(10px, 10px, 10px, 0px);
+exteraCategoryCardSkip: 2px;
+exteraCategoryCardRadius: 18px;
+exteraCategoryTileRadius: 12px;
+sessionListItem: PeerListItem(defaultPeerListItem) {
+	button: OutlineButton(defaultPeerListButton) {
+		font: normalFont;
+		padding: margins(11px, 5px, 11px, 5px);
+		textBg: transparent;
+	}
+	height: 80px;
+	photoPosition: point(30px, 10px);
+	nameStyle: TextStyle(defaultTextStyle) {
+		font: msgNameFont;
+	}
+	namePosition: point(86px, 11px);
+	statusPosition: point(86px, 32px);
+	photoSize: 42px;
+	statusFg: boxTextFg;
+	statusFgOver: boxTextFg;
+}
+sessionList: PeerList(defaultPeerList) {
+	item: sessionListItem;
+	padding: margins(0px, 0px, 0px, 0px);
+	bg: transparent;
+}
+settingsSendTypePadding: margins(22px, 10px, 10px, 10px);

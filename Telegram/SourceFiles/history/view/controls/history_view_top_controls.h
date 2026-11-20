@@ -81,6 +81,7 @@ public:
 	void subscribeToPinnedMessages();
 	void setAnimatingMode(bool enabled);
 	void finishAnimating();
+	[[nodiscard]] bool exdPinnedPending() const;
 	void setRepliesRootId(MsgId repliesRootId);
 	void setTopic(Data::ForumTopic *topic);
 	void setRepliesRootVisible(bool shown);

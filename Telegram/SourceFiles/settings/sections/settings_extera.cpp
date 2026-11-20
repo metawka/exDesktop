@@ -9,6 +9,7 @@
 #include "core/version.h"
 #include "window/notifications_manager.h"
 #include "extera/extera_app_icon.h"
+#include "extera/exd_md3.h"
 #include "ui/new_badges.h"
 #include "ui/widgets/popup_menu.h"
 #include "base/event_filter.h"
@@ -79,6 +80,7 @@
 #include "styles/style_settings.h"
 
 #include <QtGui/QMouseEvent>
+#include <QtGui/QPainterPath>
 #include "styles/style_edit_peer_members.h"
 #include "styles/style_boxes.h"
 #include "styles/style_chat.h"
@@ -317,6 +319,7 @@ void AddSlider(
 		.factory = [=](not_null<Ui::VerticalLayout*> container) {
 			auto result = object_ptr<Ui::VerticalLayout>(container);
 			const auto raw = result.data();
+			Ui::SetupGroupedRowBackground(raw);
 			auto labelWidth = 0;
 			for (const auto value : values) {
 				labelWidth = std::max(
@@ -427,6 +430,9 @@ void AddSwitchGroup(
 						Extera::Bool(entry.key),
 						st::settingsCheckbox),
 					st::settingsButtonNoIcon.padding);
+				Ui::SetupGroupedRowBackground(
+					checkbox,
+					st::settingsButtonNoIcon.padding);
 				const auto button = Ui::CreateChild<Ui::RippleButton>(
 					inner,
 					st::defaultRippleAnimation);
@@ -467,6 +473,26 @@ void AddSwitchGroup(
 	});
 }
 
+[[nodiscard]] style::margins PreviewMargin() {
+	return style::Md3Grouped()
+		? style::margins()
+		: st::exteraPreviewPadding;
+}
+
+QRect PaintPreviewCard(QPainter &p, not_null<Ui::RpWidget*> widget) {
+	if (style::Md3Grouped()) {
+		widget->setProperty("md3GroupedRow", true);
+		Ui::PaintGroupedRow(p, widget, st::windowBg->c, false);
+		const auto inset = style::ConvertScale(10);
+		return widget->rect().marginsRemoved({ inset, 0, inset, 0 });
+	}
+	const auto frame = widget->rect();
+	p.setBrush(st::boxDividerBg);
+	const auto radius = st::exteraCardRadius;
+	p.drawRoundedRect(frame, radius, radius);
+	return frame;
+}
+
 void AddPreview(
 		SectionBuilder &builder,
 		const QString &key,
@@ -478,15 +504,15 @@ void AddPreview(
 			ctx.container,
 			heightValue ? heightValue() : height);
 		const auto raw = result.data();
+		if (style::Md3Grouped()) {
+			raw->setProperty("md3GroupedRow", true);
+		}
 		raw->paintRequest(
 		) | rpl::on_next([=] {
 			auto p = QPainter(raw);
 			auto hq = PainterHighQualityEnabler(p);
-			const auto frame = raw->rect();
 			p.setPen(Qt::NoPen);
-			p.setBrush(st::boxDividerBg);
-			const auto radius = st::exteraCardRadius;
-			p.drawRoundedRect(frame, radius, radius);
+			const auto frame = PaintPreviewCard(p, raw);
 			paint(p, frame, Extera::Int(key));
 		}, raw->lifetime());
 		Config().intChanges(
@@ -499,7 +525,7 @@ void AddPreview(
 		}, raw->lifetime());
 		return SectionBuilder::WidgetToAdd{
 			.widget = std::move(result),
-			.margin = st::exteraPreviewPadding,
+			.margin = PreviewMargin(),
 		};
 	});
 }
@@ -537,15 +563,15 @@ void AddLivePreview(
 			ctx.container,
 			height());
 		const auto raw = result.data();
+		if (style::Md3Grouped()) {
+			raw->setProperty("md3GroupedRow", true);
+		}
 		raw->paintRequest(
 		) | rpl::on_next([=] {
 			auto p = QPainter(raw);
 			auto hq = PainterHighQualityEnabler(p);
-			const auto frame = raw->rect();
 			p.setPen(Qt::NoPen);
-			p.setBrush(st::boxDividerBg);
-			const auto radius = st::exteraCardRadius;
-			p.drawRoundedRect(frame, radius, radius);
+			const auto frame = PaintPreviewCard(p, raw);
 			paint(p, frame);
 		}, raw->lifetime());
 		Config().changes(
@@ -557,7 +583,7 @@ void AddLivePreview(
 		}, raw->lifetime());
 		return SectionBuilder::WidgetToAdd{
 			.widget = std::move(result),
-			.margin = st::exteraPreviewPadding,
+			.margin = PreviewMargin(),
 		};
 	});
 }
@@ -621,22 +647,25 @@ void PaintFolderTabsPreview(QPainter &p, QRect frame) {
 	};
 	const auto skip = st::exteraPreviewSkip;
 	const auto &font = st::semiboldFont;
-	auto left = frame.x() + skip;
+	const auto count = int(tabs.size());
+	const auto column = (frame.width() - 2 * skip) / count;
 	const auto center = frame.y() + frame.height() / 2;
-	for (auto i = 0; i != int(tabs.size()); ++i) {
+	const auto showIcon = (style != 1);
+	const auto showText = (style != 2);
+	for (auto i = 0; i != count; ++i) {
 		const auto &tab = tabs[i];
 		const auto active = (i == 0);
 		const auto &icons = Ui::LookupFilterIcon(tab.icon);
 		const auto icon = active ? icons.active : icons.normal;
-		const auto showIcon = (style != 1);
-		const auto showText = (style != 2);
-		auto width = 0;
-		if (showIcon) {
-			width += icon->width();
-		}
-		if (showText) {
-			width += (showIcon ? skip / 2 : 0) + font->width(tab.title);
-		}
+		const auto iconWidth = showIcon ? icon->width() : 0;
+		const auto gap = (showIcon && showText) ? skip / 2 : 0;
+		const auto room = std::max(column - iconWidth - gap - skip, 0);
+		const auto title = showText
+			? font->elided(tab.title, room)
+			: QString();
+		const auto textWidth = showText ? font->width(title) : 0;
+		const auto width = iconWidth + gap + textWidth;
+		const auto left = frame.x() + skip + column * i + (column - width) / 2;
 		auto x = left;
 		if (showIcon) {
 			icon->paint(
@@ -645,15 +674,15 @@ void PaintFolderTabsPreview(QPainter &p, QRect frame) {
 				center - icon->height() / 2,
 				frame.width(),
 				active ? st::activeButtonBg->c : st::windowSubTextFg->c);
-			x += icon->width() + skip / 2;
+			x += iconWidth + gap;
 		}
 		if (showText) {
 			p.setFont(font);
 			p.setPen(active ? st::activeButtonBg : st::windowSubTextFg);
 			p.drawText(
-				QRect(x, frame.y(), font->width(tab.title), frame.height()),
+				QRect(x, frame.y(), textWidth, frame.height()),
 				Qt::AlignVCenter,
-				tab.title);
+				title);
 		}
 		if (active) {
 			p.setPen(Qt::NoPen);
@@ -664,7 +693,6 @@ void PaintFolderTabsPreview(QPainter &p, QRect frame) {
 				line / 2.,
 				line / 2.);
 		}
-		left += width + skip * 2;
 	}
 }
 
@@ -1809,6 +1837,18 @@ void PartAppearance0(SectionBuilder &builder) {
 
 	builder.addSkip();
 	builder.card([&] {
+		builder.addButton({
+			.id = u"extera/md3"_q,
+			.title = tr::lng_exd_md3_title(),
+			.icon = { &st::exteraIconAppearance },
+			.onClick = [=] { Extera::Md3::ShowSettingsBox(controller); },
+			.keywords = { u"material"_q, u"md3"_q, u"design"_q },
+		});
+	});
+	AddAbout(builder, tr::lng_exd_md3_about());
+
+	builder.addSkip();
+	builder.card([&] {
 		auto corners = std::vector<int>();
 		for (auto i = 0; i <= 28; ++i) {
 			corners.push_back(i);
@@ -1935,15 +1975,6 @@ void PartAppearance4(SectionBuilder &builder) {
 			builder,
 			u"system_emoji"_q,
 			tr::lng_extera_system_emoji());
-		AddSwitchGroup(
-			builder,
-			u"material_design"_q,
-			tr::lng_extera_material,
-			{
-				{ u"md3_sliders"_q, &tr::lng_extera_md3_sliders },
-				{ u"md3_switches"_q, &tr::lng_extera_md3_switches },
-				{ u"md3_switches_muted"_q, &tr::lng_exd_md3_switches_muted },
-			});
 		AddToggle(
 			builder,
 			u"custom_chat_themes"_q,
@@ -2012,7 +2043,7 @@ void PartChats1(SectionBuilder &builder) {
 		const auto aiButton = builder.addButton({
 			.id = u"extera/ai_chat_open"_q,
 			.title = tr::lng_extera_ai_chat(),
-			.icon = { &st::menuIconBotCommands },
+			.icon = { &st::exdMenuIconAi },
 			.onClick = [=] {
 				if (aiController) {
 					Extera::ShowAiChat(aiController);
@@ -3319,12 +3350,18 @@ void AddCategoryGrid(SectionBuilder &builder) {
 				+ st::exteraCategoryAboutSkip
 				+ 2 * st::exteraCategoryAboutFont->height));
 		const auto skip = st::exteraCategoryCardSkip;
+		const auto joined = style::Md3Grouped();
 		auto result = object_ptr<Ui::FixedHeightWidget>(
 			ctx.container,
-			rows * cardHeight + (rows - 1) * skip);
+			rows * cardHeight + (rows - 1) * skip + (joined ? skip : 0));
 		const auto grid = result.data();
+		if (joined) {
+			grid->setProperty("md3GroupedRow", true);
+		}
 		struct State {
 			int over = -1;
+			int overWas = -1;
+			Ui::Animations::Simple overAnimation;
 			int pressed = -1;
 			std::vector<QString> titles;
 			std::vector<QString> abouts;
@@ -3367,23 +3404,64 @@ void AddCategoryGrid(SectionBuilder &builder) {
 			const auto radius = st::exteraCategoryCardRadius;
 			const auto tile = st::exteraCategoryTileSize;
 			const auto padding = st::exteraCategoryCardPadding;
+			const auto md3 = style::Md3Enabled();
+			const auto mix = [](QColor a, QColor b, float64 k) {
+				return QColor(
+					int(a.red() + (b.red() - a.red()) * k),
+					int(a.green() + (b.green() - a.green()) * k),
+					int(a.blue() + (b.blue() - a.blue()) * k));
+			};
+			const auto md3Card = mix(st::windowBg->c, st::windowFg->c, 0.055);
+			const auto md3Tile = mix(md3Card, st::windowBgActive->c, 0.22);
+			const auto big = float64(radius);
+			const auto small = style::ConvertScale(4.);
+			const auto shape = [&](int index) {
+				const auto r = QRectF(cardRect(index));
+				auto path = QPainterPath();
+				if (!joined) {
+					path.addRoundedRect(r, big, big);
+					return path;
+				}
+				const auto row = index / 2;
+				const auto left = (index % 2) == 0;
+				const auto tl = (row == 0 && left) ? big : small;
+				const auto tr = (row == 0 && !left) ? big : small;
+				const auto br = small;
+				const auto bl = small;
+				path.moveTo(r.left() + tl, r.top());
+				path.lineTo(r.right() - tr, r.top());
+				path.quadTo(r.right(), r.top(), r.right(), r.top() + tr);
+				path.lineTo(r.right(), r.bottom() - br);
+				path.quadTo(r.right(), r.bottom(), r.right() - br, r.bottom());
+				path.lineTo(r.left() + bl, r.bottom());
+				path.quadTo(r.left(), r.bottom(), r.left(), r.bottom() - bl);
+				path.lineTo(r.left(), r.top() + tl);
+				path.quadTo(r.left(), r.top(), r.left() + tl, r.top());
+				path.closeSubpath();
+				return path;
+			};
 			for (auto i = 0; i != count; ++i) {
 				const auto rect = cardRect(i);
+				const auto path = shape(i);
 				p.setPen(Qt::NoPen);
-				p.setBrush(st::windowBgOver);
-				p.drawRoundedRect(rect, radius, radius);
-				if (i == state->over) {
+				p.fillPath(path, md3 ? QBrush(md3Card) : st::windowBgOver->b);
+				const auto overProgress = state->overAnimation.value(1.);
+				const auto overAlpha = (i == state->over)
+					? overProgress
+					: (i == state->overWas)
+					? (1. - overProgress)
+					: 0.;
+				if (overAlpha > 0.) {
 					auto over = st::windowFg->c;
-					over.setAlphaF(0.07);
-					p.setBrush(over);
-					p.drawRoundedRect(rect, radius, radius);
+					over.setAlphaF(0.07 * overAlpha);
+					p.fillPath(path, over);
 				}
 				const auto tileRect = QRect(
 					rect.x() + padding,
 					rect.y() + (rect.height() - tile) / 2,
 					tile,
 					tile);
-				p.setBrush((*cards)[i].color);
+				p.setBrush(md3 ? md3Tile : (*cards)[i].color);
 				p.drawRoundedRect(
 					tileRect,
 					st::exteraCategoryTileRadius,
@@ -3394,16 +3472,30 @@ void AddCategoryGrid(SectionBuilder &builder) {
 					state->icons.resize(count);
 				}
 				auto &image = state->icons[i];
-				if (image.width() != iconSize * ratio) {
+				const auto iconColor = md3
+					? st::windowBgActive->c
+					: QColor(255, 255, 255);
+				if (image.width() != iconSize * ratio
+					|| image.text(u"exd_color"_q) != iconColor.name()) {
 					image = QImage(
 						QSize(iconSize, iconSize) * ratio,
 						QImage::Format_ARGB32_Premultiplied);
 					image.fill(Qt::transparent);
 					image.setDevicePixelRatio(ratio);
-					auto q = QPainter(&image);
-					QSvgRenderer(QByteArray(kCardSvgs[i])).render(
-						&q,
-						QRectF(0, 0, iconSize, iconSize));
+					{
+						auto q = QPainter(&image);
+						QSvgRenderer(QByteArray(kCardSvgs[i])).render(
+							&q,
+							QRectF(0, 0, iconSize, iconSize));
+						if (md3) {
+							q.setCompositionMode(
+								QPainter::CompositionMode_SourceIn);
+							q.fillRect(
+								QRect(0, 0, iconSize, iconSize),
+								iconColor);
+						}
+					}
+					image.setText(u"exd_color"_q, iconColor.name());
 				}
 				p.drawImage(
 					QRect(
@@ -3475,14 +3567,33 @@ void AddCategoryGrid(SectionBuilder &builder) {
 				const auto over = cardAt(
 					static_cast<QMouseEvent*>(e.get())->pos());
 				if (state->over != over) {
+					state->overWas = state->over;
 					state->over = over;
+					state->overAnimation.stop();
+					state->overAnimation.start(
+						[=] { grid->update(); },
+						0.,
+						1.,
+						st::exteraCategoryHoverDuration,
+						anim::easeOutCubic);
 					grid->setCursor((over >= 0)
 						? style::cur_pointer
 						: style::cur_default);
 					grid->update();
 				}
 			} else if (type == QEvent::Leave) {
-				state->over = -1;
+				const auto over = -1;
+				if (state->over != over) {
+					state->overWas = state->over;
+					state->over = over;
+					state->overAnimation.stop();
+					state->overAnimation.start(
+						[=] { grid->update(); },
+						0.,
+						1.,
+						st::exteraCategoryHoverDuration,
+						anim::easeOutCubic);
+				}
 				grid->update();
 			} else if (type == QEvent::MouseButtonPress) {
 				state->pressed = cardAt(
@@ -3571,6 +3682,11 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 			tr::lng_exd_no_auto_safe());
 		AddToggle(
 			builder,
+			u"plugins_dev_server"_q,
+			tr::lng_exd_plugins_dev_server(),
+			{ u"dev"_q, u"debug"_q, u"reload"_q });
+		AddToggle(
+			builder,
 			u"sbx_leak_tokens"_q,
 			tr::lng_exd_sbx_leak_tokens(),
 			{ u"token"_q, u"sandbox"_q });
@@ -3624,7 +3740,7 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 			u"plugins_docs"_q,
 			tr::lng_extera_plugins_docs(),
 			QString(),
-			u"https://plugins.exteragram.app/docs"_q,
+			u"https://exdesktop.xyz/docs/"_q,
 			{ &st::menuIconFaq });
 		for (const auto &source : Extera::PluginTrust::Sources()) {
 			const auto bare = source.id;
@@ -3704,7 +3820,7 @@ void BuildAiChat(SectionBuilder &builder) {
 		builder.addButton({
 			.id = u"extera/ai_open"_q,
 			.title = tr::lng_extera_ai_open(),
-			.icon = { &st::menuIconBotCommands },
+			.icon = { &st::exdMenuIconAi },
 			.onClick = [=] {
 				if (controller) {
 					Extera::ShowAiChat(controller);
@@ -4172,7 +4288,9 @@ void BuildMain(SectionBuilder &builder) {
 	AddHeader(builder);
 	AddCategorySearch(builder, AllCategorySections(), [&] {
 		AddCategoryGrid(builder);
-		builder.addSkip();
+		if (!style::Md3Grouped()) {
+			builder.addSkip();
+		}
 		builder.card([&] {
 			builder.addSectionButton({
 				.title = tr::lng_extera_other(),
@@ -4268,7 +4386,7 @@ const auto kAiChatMeta = BuildHelper({
 	.id = ExteraAiChat::Id(),
 	.parentId = ExteraPlugins::Id(),
 	.title = &tr::lng_extera_ai_chat,
-	.icon = &st::menuIconBotCommands,
+	.icon = &st::exdMenuIconAi,
 }, BuildAiChat);
 
 const auto kPrivacyMeta = BuildHelper({

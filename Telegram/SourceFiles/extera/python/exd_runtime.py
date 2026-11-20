@@ -39,11 +39,30 @@ def map_path(plugin_id, path):
             target = os.path.join(data_dir(plugin_id), "android", *[p for p in rest.split("/") if p])
             os.makedirs(os.path.dirname(target), exist_ok=True)
             return target
+    if os.path.isabs(raw) and lowered.endswith(".py"):
+        source = _plugin_source(raw)
+        if source:
+            return source
     if os.path.isabs(raw) or lowered in ("nul", "con") or raw == os.devnull:
         return raw
     if text.startswith("/"):
         return raw
     return os.path.join(data_dir(plugin_id), raw)
+
+
+def _plugin_source(raw):
+    try:
+        import extera_host
+        folder = os.path.normcase(os.path.abspath(extera_host.PLUGINS_DIR or ""))
+    except Exception:
+        return None
+    if not folder or os.path.exists(raw):
+        return None
+    full = os.path.abspath(raw)
+    if os.path.normcase(os.path.dirname(full)) != folder:
+        return None
+    record = extera_host._records.get(os.path.splitext(os.path.basename(full))[0])
+    return record.path if record is not None else None
 
 
 _os_mapping_installed = False

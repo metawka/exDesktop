@@ -21,6 +21,8 @@
 #include "ui/layers/generic_box.h"
 #include "ui/effects/panel_animation.h"
 #include "ui/painter.h"
+#include "ui/abstract_button.h"
+#include "ui/style/style_core.h"
 #include "ui/ui_utility.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
@@ -46,6 +48,7 @@
 #include "window/window_adaptive.h"
 #include "window/window_session_controller.h"
 #include "styles/style_chat.h"
+#include "styles/style_dialogs.h"
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
 
@@ -541,6 +544,13 @@ private:
 	QPointer<HistoryView::ListWidget> _inner;
 	base::unique_qptr<Ui::PopupMenu> _menu;
 	Ui::IconButton *_menuToggle = nullptr;
+	Ui::IconButton *_exdBack = nullptr;
+	Ui::IconButton *_exdSettings = nullptr;
+	Ui::AbstractButton *_exdMarkRead = nullptr;
+	int _exdUnread = 0;
+	void exdSetupMarkRead();
+	void exdMarkAllRead();
+	void exdCountUnread();
 	rpl::event_stream<> _refreshes;
 	bool _skipScrollEvent = false;
 
@@ -586,6 +596,9 @@ FeedWidget::FeedWidget(
 	controller->setChatStyleTheme(_theme);
 	setupTopBar();
 	setupTabs();
+	crl::on_main(this, [=] {
+		controller->closeThirdSection();
+	});
 
 	_scroll->setHandleTouch(false);
 	_inner = _scroll->setOwnedWidget(object_ptr<HistoryView::ListWidget>(
@@ -629,12 +642,56 @@ void FeedWidget::setupTopBar() {
 	_topBar->resize(width(), st::topBarHeight);
 	_topBar->paintRequest() | rpl::on_next([=](QRect clip) {
 		auto p = QPainter(_topBar.data());
-		p.fillRect(clip, st::topBarBg);
+		const auto md3 = style::Md3Enabled();
+		if (md3) {
+			const auto plaque = QRectF(_topBar->rect().marginsRemoved(
+				st::exdTopBarPlaqueMargins));
+			const auto radius = float64(st::exdTopBarPlaqueRadius);
+			auto hq = PainterHighQualityEnabler(p);
+			auto path = QPainterPath();
+			path.addRoundedRect(plaque, radius, radius);
+			p.fillPath(path, st::topBarBg);
+		} else {
+			p.fillRect(clip, st::topBarBg);
+		}
 		p.setPen(st::dialogsNameFg);
 		p.setFont(st::semiboldFont);
-		const auto left = st::historyTopBarBack.width;
+		const auto left = st::historyTopBarBack.width
+			+ (md3 ? st::exdTopBarPlaqueMargins.left() : 0);
 		const auto categories = Categories();
 		const auto category = CurrentCategory(categories);
+		if (md3) {
+			const auto nameTop = st::topBarArrowPadding.top();
+			const auto statusTop = _topBar->height()
+				- st::topBarArrowPadding.bottom()
+				- st::dialogsTextFont->height;
+			const auto available = _topBar->width() - left * 2;
+			if (category && !_titleText.isEmpty()) {
+				_titleText.draw(p, {
+					.position = QPoint(left, nameTop),
+					.availableWidth = available,
+					.now = crl::now(),
+					.elisionLines = 1,
+				});
+			} else {
+				p.drawText(
+					left,
+					nameTop + st::semiboldFont->ascent,
+					tr::lng_extera_feed(tr::now));
+			}
+			p.setPen(st::historyStatusFg);
+			p.setFont(st::dialogsTextFont);
+			p.drawText(
+				left,
+				statusTop + st::dialogsTextFont->ascent,
+				st::dialogsTextFont->elided(
+					tr::lng_exd_feed_unread(
+						tr::now,
+						lt_amount,
+						QString::number(_exdUnread)),
+					available));
+			return;
+		}
 		if (category && !_titleText.isEmpty()) {
 			_titleText.draw(p, {
 				.position = QPoint(
@@ -656,12 +713,27 @@ void FeedWidget::setupTopBar() {
 		_topBar.data(),
 		st::historyTopBarBack);
 	back->setClickedCallback([=] { controller()->showBackFromStack(); });
-	back->moveToLeft(0, 0);
+	back->moveToLeft(
+		style::Md3Enabled() ? st::exdTopBarPlaqueMargins.left() : 0,
+		0);
+	_exdBack = back;
 	_menuToggle = Ui::CreateChild<Ui::IconButton>(
 		_topBar.data(),
 		st::topBarMenuToggle);
 	_menuToggle->setClickedCallback([=] { showMenu(); });
 	_menuToggle->show();
+	if (style::Md3Enabled()) {
+		_menuToggle->hide();
+		_exdSettings = Ui::CreateChild<Ui::IconButton>(
+			_topBar.data(),
+			st::exdFeedSettings);
+		_exdSettings->setClickedCallback([=] {
+			ShowFeedSettings(controller());
+		});
+		_exdSettings->setAccessibleName(tr::lng_extera_feed_settings(tr::now));
+		_exdSettings->show();
+		exdSetupMarkRead();
+	}
 	_topBar->show();
 	_topBarShadow->show();
 }
@@ -699,15 +771,67 @@ void FeedWidget::rebuildTexts() {
 }
 
 int FeedWidget::tabsHeight() const {
-	return Categories().empty() ? 0 : st::topBarHeight;
+	return Categories().empty()
+		? 0
+		: style::Md3Enabled()
+		? st::exdFeedSegmentBar
+		: st::topBarHeight;
 }
 
 void FeedWidget::setupTabs() {
 	_tabs->paintRequest() | rpl::on_next([=](QRect clip) {
 		auto p = QPainter(_tabs.data());
 		auto hq = PainterHighQualityEnabler(p);
-		p.fillRect(clip, st::topBarBg);
 		const auto current = Int(u"feed_category"_q);
+		if (style::Md3Enabled()) {
+			const auto &font = st::semiboldFont;
+			const auto pad = st::exdFeedSegmentPadding;
+			const auto itemHeight = st::exdFeedSegmentHeight;
+			const auto itemPadding = st::exdFeedSegmentItemPadding;
+			const auto outerTop = (_tabs->height() - itemHeight - 2 * pad) / 2;
+			auto widthTotal = 0;
+			for (const auto &text : _tabTexts) {
+				widthTotal += text.maxWidth() + itemPadding * 2;
+			}
+			widthTotal += 2 * pad
+				+ std::max(int(_tabTexts.size()) - 1, 0) * st::lineWidth * 2;
+			const auto outer = QRect(
+				st::exdTopBarPlaqueMargins.left(),
+				outerTop,
+				std::min(
+					widthTotal,
+					_tabs->width() - 2 * st::exdTopBarPlaqueMargins.left()),
+				itemHeight + 2 * pad);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::topBarBg);
+			p.drawRoundedRect(outer, outer.height() / 2., outer.height() / 2.);
+			p.setClipRect(outer);
+			auto left = outer.x() + pad;
+			_tabRects.clear();
+			for (auto i = 0; i != int(_tabTexts.size()); ++i) {
+				const auto &text = _tabTexts[i];
+				const auto width = text.maxWidth() + itemPadding * 2;
+				const auto rect = QRect(left, outer.y() + pad, width, itemHeight);
+				_tabRects.push_back(rect);
+				const auto active = (i == current);
+				if (active) {
+					p.setPen(Qt::NoPen);
+					p.setBrush(st::windowBgActive);
+					p.drawRoundedRect(rect, itemHeight / 2., itemHeight / 2.);
+				}
+				p.setPen(active ? st::windowBg : st::windowFg);
+				text.draw(p, {
+					.position = QPoint(
+						rect.x() + itemPadding,
+						rect.y() + (itemHeight - font->height) / 2),
+					.availableWidth = text.maxWidth(),
+					.now = crl::now(),
+				});
+				left += width + st::lineWidth * 2;
+			}
+			return;
+		}
+		p.fillRect(clip, st::topBarBg);
 		const auto &font = st::semiboldFont;
 		const auto height = font->height + st::normalFont->height / 2 * 2;
 		const auto padding = font->height;
@@ -926,11 +1050,20 @@ void FeedWidget::updateControlsGeometry() {
 		_menuToggle->moveToRight(0, 0, contentWidth);
 		_menuToggle->raise();
 	}
+	if (_exdSettings) {
+		_exdSettings->moveToRight(
+			st::exdTopBarPlaqueMargins.right(),
+			0,
+			contentWidth);
+		_exdSettings->raise();
+	}
 	const auto tabs = tabsHeight();
 	_tabs->setGeometry(0, _topBar->height(), contentWidth, tabs);
 	_tabs->setVisible(tabs > 0);
 	_tabs->raise();
-	_topBarShadow->resize(contentWidth, st::lineWidth);
+	_topBarShadow->resize(
+		contentWidth,
+		style::Md3Enabled() ? 0 : st::lineWidth);
 	_topBarShadow->moveToLeft(0, _topBar->height() + tabs);
 	_topBarShadow->raise();
 	const auto top = _topBar->height() + tabs;
@@ -942,6 +1075,13 @@ void FeedWidget::updateControlsGeometry() {
 		_skipScrollEvent = false;
 	}
 	_scroll->move(0, top);
+	if (_exdMarkRead) {
+		_exdMarkRead->moveToRight(
+			st::exdFeedFabSkip,
+			height() - st::exdFeedFabSkip - _exdMarkRead->height(),
+			contentWidth);
+		_exdMarkRead->raise();
+	}
 	updateInnerVisibleArea();
 }
 
@@ -957,10 +1097,100 @@ void FeedWidget::paintEvent(QPaintEvent *e) {
 	} else if (controller()->contentOverlapped(this, e)) {
 		return;
 	}
+	if (style::Md3Enabled()) {
+		auto p = QPainter(this);
+		p.fillRect(e->rect(), st::windowBg);
+		return;
+	}
 	const auto above = _topBar->height();
 	const auto bg = e->rect().intersected(
 		QRect(0, above, width(), height() - above));
 	SectionWidget::PaintBackground(controller(), _theme.get(), this, bg);
+}
+
+void FeedWidget::exdCountUnread() {
+	auto result = 0;
+	for (const auto history : FeedChannels(_owner)) {
+		result += history->unreadCount();
+	}
+	if (_exdUnread != result) {
+		_exdUnread = result;
+		_topBar->update();
+	}
+}
+
+void FeedWidget::exdMarkAllRead() {
+	const auto window = controller();
+	const auto owner = _owner;
+	const auto weak = base::make_weak(this);
+	window->show(Ui::MakeConfirmBox({
+		.text = tr::lng_extera_feed_mark_read_sure(),
+		.confirmed = [=](Fn<void()> close) {
+			for (const auto history : FeedChannels(owner)) {
+				if (history->unreadCount() > 0) {
+					owner->histories().readInbox(history);
+				}
+			}
+			close();
+			window->showToast(tr::lng_extera_feed_mark_read_done(tr::now));
+			if (const auto strong = weak.get()) {
+				strong->exdCountUnread();
+			}
+		},
+		.confirmText = tr::lng_extera_feed_mark_read(),
+	}));
+}
+
+void FeedWidget::exdSetupMarkRead() {
+	_exdMarkRead = Ui::CreateChild<Ui::AbstractButton>(this);
+	const auto button = _exdMarkRead;
+	const auto text = tr::lng_extera_feed_mark_read(tr::now);
+	const auto &font = st::semiboldFont;
+	const auto &icon = st::menuIconMarkRead;
+	const auto padding = st::exdFeedFabPadding;
+	button->resize(
+		padding + icon.width() + st::exdFeedFabIconSkip
+			+ font->width(text) + padding,
+		st::exdFeedFabHeight);
+	button->setAccessibleName(text);
+	button->setClickedCallback([=] { exdMarkAllRead(); });
+	button->paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(button);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto mix = [](QColor a, QColor b, float64 k) {
+			return QColor(
+				anim::interpolate(a.red(), b.red(), k),
+				anim::interpolate(a.green(), b.green(), k),
+				anim::interpolate(a.blue(), b.blue(), k));
+		};
+		const auto tonal = mix(
+			st::windowBg->c,
+			st::windowBgActive->c,
+			button->isOver() ? 0.3 : 0.22);
+		p.setPen(Qt::NoPen);
+		p.setBrush(tonal);
+		const auto radius = st::exdFeedFabRadius;
+		p.drawRoundedRect(button->rect(), radius, radius);
+		const auto iconTop = (button->height() - icon.height()) / 2;
+		icon.paint(p, padding, iconTop, button->width(), st::windowBgActive->c);
+		p.setPen(st::windowBgActive);
+		p.setFont(font);
+		p.drawText(
+			padding + icon.width() + st::exdFeedFabIconSkip,
+			(button->height() - font->height) / 2 + font->ascent,
+			text);
+	}, button->lifetime());
+	button->setCursor(style::cur_pointer);
+	button->events() | rpl::filter([](not_null<QEvent*> e) {
+		return (e->type() == QEvent::Enter) || (e->type() == QEvent::Leave);
+	}) | rpl::on_next([=] {
+		crl::on_main(button, [=] { button->update(); });
+	}, button->lifetime());
+	button->show();
+	_refreshes.events() | rpl::on_next([=] {
+		exdCountUnread();
+	}, button->lifetime());
+	exdCountUnread();
 }
 
 class ChannelsPicker final : public PeerListController {

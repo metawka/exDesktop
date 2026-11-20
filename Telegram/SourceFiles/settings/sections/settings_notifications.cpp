@@ -866,6 +866,17 @@ NotifyViewCheckboxes SetupNotifyViewOptions(
 	) | rpl::on_next([=](QRect rect) {
 		Painter p(widget);
 		p.setClipRect(rect);
+		if (style::Md3Grouped()) {
+			const auto inset = style::ConvertScale(10);
+			const auto radius = style::ConvertScale(18.);
+			auto path = QPainterPath();
+			path.addRoundedRect(
+				QRectF(widget->rect()).marginsRemoved(
+					QMarginsF(inset, 0, inset, 0)),
+				radius,
+				radius);
+			p.setClipPath(path, Qt::IntersectClip);
+		}
 		Window::SectionWidget::PaintBackground(
 			p,
 			theme->get(),
@@ -1568,7 +1579,7 @@ void BuildSystemIntegrationAndAdvancedSection(SectionBuilder &builder) {
 			const auto group = std::make_shared<Ui::RadiobuttonGroup>(
 				currentIndex);
 
-			advancedWrap->add(
+			const auto exdRow = advancedWrap->add(
 				object_ptr<Ui::Radiobutton>(
 					advancedWrap,
 					group,
@@ -1576,6 +1587,7 @@ void BuildSystemIntegrationAndAdvancedSection(SectionBuilder &builder) {
 					tr::lng_settings_notifications_display_default(tr::now),
 					st::settingsSendType),
 				st::settingsSendTypePadding);
+			Ui::SetupGroupedRowBackground(exdRow, st::settingsSendTypePadding);
 
 			for (auto i = 0; i < screens.size(); ++i) {
 				const auto &screen = screens[i];
@@ -1587,7 +1599,7 @@ void BuildSystemIntegrationAndAdvancedSection(SectionBuilder &builder) {
 				const auto label = name.isEmpty()
 					? QString("Display (%1)").arg(resolution)
 					: QString("%1 (%2)").arg(name).arg(resolution);
-				advancedWrap->add(
+				const auto exdScreenRow = advancedWrap->add(
 					object_ptr<Ui::Radiobutton>(
 						advancedWrap,
 						group,
@@ -1595,6 +1607,7 @@ void BuildSystemIntegrationAndAdvancedSection(SectionBuilder &builder) {
 						label,
 						st::settingsSendType),
 					st::settingsSendTypePadding);
+				Ui::SetupGroupedRowBackground(exdScreenRow, st::settingsSendTypePadding);
 			}
 			group->setChangedCallback([=](int selectedIndex) {
 				if (selectedIndex == kDefaultDisplayIndex) {
@@ -1627,6 +1640,7 @@ void BuildSystemIntegrationAndAdvancedSection(SectionBuilder &builder) {
 
 		const auto position = advancedWrap->add(
 			object_ptr<NotificationsCount>(advancedWrap, controller));
+		Ui::SetupGroupedRowBackground(position, style::margins());
 
 		Ui::AddSkip(advancedWrap, st::settingsCheckboxesSkip);
 		Ui::AddSubsectionTitle(advancedWrap, tr::lng_settings_notifications_count());
@@ -1634,6 +1648,7 @@ void BuildSystemIntegrationAndAdvancedSection(SectionBuilder &builder) {
 		const auto countSlider = advancedWrap->add(
 			object_ptr<Ui::SettingsSlider>(advancedWrap, st::settingsSlider),
 			st::settingsBigScalePadding);
+		Ui::SetupGroupedRowBackground(countSlider, st::settingsBigScalePadding);
 		for (int i = 0; i != kMaxNotificationsCount; ++i) {
 			countSlider->addSection(QString::number(i + 1));
 		}

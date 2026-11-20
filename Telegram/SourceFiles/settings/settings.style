@@ -1156,3 +1156,26 @@ exteraWelcomeText: FlatLabel(defaultFlatLabel) {
 	textFg: windowSubTextFg;
 }
 exteraWelcomeTextPadding: margins(24px, 0px, 24px, 14px);
+
+exdPdfHeaderMargin: 12px;
+exdPdfHeaderHeight: 64px;
+exdPdfHeaderRadius: 22px;
+exdPdfInnerSkip: 10px;
+exdPdfTileSize: 40px;
+exdPdfTileRadius: 12px;
+exdPdfCloseSize: 44px;
+exdPdfButtonHeight: 40px;
+exdPdfButtonPadding: 16px;
+exdPdfButtonIconSkip: 8px;
+exdPdfPageRadius: 14px;
+exdPdfCounterHeight: 36px;
+exdPdfCounterPadding: 16px;
+exdPdfCounterSkip: 20px;
+exdPdfBox: Box(defaultBox) {
+	bg: windowBg;
+	buttonPadding: margins(0px, 0px, 0px, 12px);
+	buttonHeight: 0px;
+}
+exdPdfPageSkip: 12px;
+
+exteraCategoryHoverDuration: 140;

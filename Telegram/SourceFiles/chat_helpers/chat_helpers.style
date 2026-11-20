@@ -1915,3 +1915,9 @@ exteraCharsCounter: FlatLabel(defaultFlatLabel) {
 	}
 }
 exteraCharsCounterSkip: 8px;
+
+historyComposePillRadius: 0px;
+historyComposePillBg: historyComposeAreaBg;
+historyComposePillMargins: margins(0px, 0px, 0px, 0px);
+exdPinnedPlaqueMargins: margins(8px, 2px, 8px, 4px);
+exdPinnedPlaqueRadius: 18px;

@@ -32,6 +32,8 @@ class FadeWrap;
 namespace Intro {
 namespace details {
 
+void ExdSetupFieldCard(not_null<QWidget*> field);
+
 struct Data;
 enum class StackAction;
 enum class Animate;

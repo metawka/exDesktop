@@ -173,8 +173,15 @@ def _clear_plugin(plugin_id):
         del _menu_items[item_id]
     for bucket in _observers.values():
         for delegate in [d for d in bucket
-                         if getattr(d, "_extera_plugin_id", None) == plugin_id]:
+                         if _delegate_owner(d) == plugin_id]:
             bucket.remove(delegate)
+
+
+def _delegate_owner(delegate):
+    try:
+        return vars(delegate).get("_extera_plugin_id")
+    except TypeError:
+        return None
 
 
 # Loading
@@ -393,7 +400,29 @@ def _instantiate(record):
     record.instance = instance
 
 
+_HOST_CALL = {}
+
+
+def _engine_hooked(name):
+    try:
+        import exd_android
+        import exd_java
+        return exd_java.has_shim_hooks(exd_android.PythonPluginsEngine, name)
+    except Exception:
+        return False
+
+
 def _activate(record):
+    if record.instance is None and not record.library and _engine_hooked("loadPlugin"):
+        import exd_android
+        exd_android.PythonPluginsEngine.loadPlugin(record.id, record.path)
+        return
+    _activate_core(record)
+
+
+def _activate_core(record):
+    if record.instance is not None and record.instance.__dict__.get("initialized"):
+        return
     record.error = None
     blocked = _blocked_reason(record)
     if blocked:
@@ -415,6 +444,7 @@ def _activate(record):
             raise RuntimeError("No BasePlugin subclass found")
         with _plugin_context(record.id):
             record.instance.on_plugin_load()
+        record.instance.__dict__["initialized"] = True
         log(f"plugin {record.id} loaded")
         if record.instance.__dict__.get("_exd_virtual_app_create"):
             _fire_app_create(record)
@@ -473,13 +503,28 @@ def _install_requirements(record, requirements):
 
 
 def _deactivate(record):
+    if record.instance is not None and _engine_hooked("unloadPlugin"):
+        import exd_android
+        exd_android.PythonPluginsEngine.unloadPlugin(record.id)
+        if record.instance is not None:
+            return
+    _deactivate_core(record)
+
+
+def _deactivate_core(record):
     if record.instance is not None:
+        instance = record.instance
         try:
             with _plugin_context(record.id):
-                record.instance._extera_cleanup_resources()
-                record.instance.on_plugin_unload()
+                instance.on_plugin_unload()
         except Exception:
             log(f"plugin {record.id} unload failed:\n{traceback.format_exc(limit=4)}")
+        try:
+            with _plugin_context(record.id):
+                instance._extera_cleanup_resources()
+        except Exception:
+            log(f"plugin {record.id} cleanup failed:\n{traceback.format_exc(limit=4)}")
+        instance.__dict__["initialized"] = False
     _clear_plugin(record.id)
     record.instance = None
     record.module = None
@@ -613,6 +658,39 @@ def _send_hook(args):
     return result
 
 
+def _settings_fill_items(record):
+    if not any(r.instance and r.instance.__dict__.get("_exd_virtual_settings_fill") for r in _records.values()):
+        return []
+    import exd_android
+    import exd_java
+    import exd_java_more2
+    import ui.settings as settings
+    values = exd_java.ArrayList()
+    activity = exd_java_more2.PluginSettingsActivity(exd_android.Plugin(record))
+    _run_virtual("settings_fill", activity, "PluginSettingsActivity.fillItems", [values, None])
+    out = []
+    for value in list(values):
+        if isinstance(value, settings.Custom):
+            out.append(value)
+        elif hasattr(value, "viewType"):
+            listener = value.__dict__.get("onClickListener") or value.__dict__.get("clickCallback")
+            out.append(settings.Custom(item=value, on_click=getattr(listener, "onClick", listener)))
+    return out
+
+
+def _setting_view(item):
+    import exd_misc
+    uitem = getattr(item, "item", None)
+    view = exd_misc.TextCheckCell2(None)
+    if uitem is not None:
+        import ui.settings as settings
+        view.setText(settings.uitem_text(uitem))
+        view.setChecked(bool(getattr(uitem, "checked", False)))
+        if "collapsed" in uitem.__dict__:
+            view.setCollapsed(uitem.__dict__["collapsed"])
+    return view
+
+
 def _settings_items(plugin_id):
     record = _records.get(plugin_id)
     if not record or not record.instance:
@@ -624,6 +702,7 @@ def _settings_items(plugin_id):
     except Exception:
         log(f"[{plugin_id}] create_settings failed:\n{traceback.format_exc(limit=4)}")
         return []
+    items = list(items) + _settings_fill_items(record)
     settings.register_items(plugin_id, items)
     result = []
     for index, item in enumerate(items):
@@ -645,10 +724,52 @@ _MENU_TYPE_ALIASES = {
 }
 
 
+_settings_uitems = {}
+
+
+def _settings_activity_items():
+    import exd_java
+    import exd_java_more2
+    uitem = exd_java_more2.UItem
+    seed = [uitem("button", -1, 0, "exteraGram")]
+    items = exd_java.ArrayList(list(seed))
+    cls = exd_java._CLASSES.get("org.telegram.ui.SettingsActivity")
+    activity = cls() if cls is not None else None
+    _run_virtual("settings_main", activity, "SettingsActivity.fillItems", [items, None])
+    _settings_uitems.clear()
+    result = []
+    for index, item in enumerate(list(items)):
+        if any(item is entry for entry in seed):
+            continue
+        text = getattr(item, "text", None)
+        if not text:
+            continue
+        key = "settings_item:%d:%d" % (index, int(getattr(item, "id", 0) or 0))
+        _settings_uitems[key] = (activity, item, index)
+        result.append({"id": key, "text": str(text), "subtext": "", "priority": 0})
+    return result
+
+
+def _settings_item_click(key):
+    import android_views
+    entry = _settings_uitems.get(key)
+    if entry is None:
+        return False
+    activity, item, index = entry
+    _run_virtual("settings_main_click", activity, "SettingsActivity.onClick",
+                 [item, android_views.View(None), index, 0.0, 0.0])
+    return True
+
+
 def _menu_list(args):
     wanted = args.get("type")
     wanted = _MENU_TYPE_ALIASES.get(str(wanted).lower(), str(wanted).upper())
     result = []
+    if wanted == "DRAWER_MENU":
+        try:
+            result.extend(_settings_activity_items())
+        except Exception:
+            log(f"settings items failed:\n{traceback.format_exc(limit=4)}")
     for item_id, (plugin_id, data) in _menu_items.items():
         record = _records.get(plugin_id)
         if not record or not record.instance:
@@ -669,6 +790,8 @@ def _menu_list(args):
 
 
 def _menu_click(args):
+    if str(args.get("id") or "").startswith("settings_item:"):
+        return _settings_item_click(str(args.get("id")))
     entry = _menu_items.get(args.get("id"))
     if not entry:
         return False
@@ -679,6 +802,28 @@ def _menu_click(args):
     context = dict(args.get("context") or {})
     context.setdefault("account", 0)
     context.setdefault("dialog_id", context.get("peer"))
+    try:
+        import _compat
+        import exd_java
+        import tgnet_bridge
+        context.setdefault("context", _compat._LaunchActivity.instance)
+        dialog = int(context.get("dialog_id") or 0)
+        if dialog > 0:
+            user = tgnet_bridge.get_user(dialog)
+            if user is not None:
+                context.setdefault("user", user)
+                context.setdefault("userId", int(user.id))
+        elif dialog < 0:
+            chat = tgnet_bridge.get_chat(dialog)
+            if chat is not None:
+                context.setdefault("chat", chat)
+                context.setdefault("chatId", int(chat.id))
+        if context.get("message_id"):
+            context.setdefault("message", exd_java.message_object({
+                "id": int(context.get("message_id")), "dialog_id": dialog,
+                "text": context.get("message_text") or ""}, int(context.get("account") or 0)))
+    except Exception:
+        log(f"menu context failed:\n{traceback.format_exc(limit=3)}")
     try:
         with _plugin_context(plugin_id):
             record.instance._extera_dispatch_menu_click(args.get("id"), context)
@@ -704,42 +849,384 @@ def _matching_request_plugins(name):
 _screen_state = {"chat": 0}
 
 
-def _virtual_screen(kind, fragment, name, args=()):
+def _run_virtual(kind, this, name, args=(), original=None, account=0, records=None):
     import client_utils
+    import exd_xposed
+    import _compat
     base = _base()
-    for record in list(_records.values()):
+    entries = []
+    for record in records if records is not None else list(_records.values()):
         if not record.instance:
             continue
-        handlers = list(record.instance.__dict__.get("_exd_virtual_" + kind) or ())
-        for handler in handlers:
-            param = base.VirtualParam(list(args), fragment, _compat.Missing(name))
-            try:
-                with client_utils.hook_scope(0):
-                    with _plugin_context(record.id):
-                        before = getattr(handler, "before_hooked_method", None)
-                        after = getattr(handler, "after_hooked_method", None)
-                        if callable(before):
-                            before(param)
-                        if callable(after) and not param.returnEarly:
-                            after(param)
-            except Exception:
-                log(f"[{record.id}] {name} hook failed:\n{traceback.format_exc(limit=4)}")
+        for handler in list(record.instance.__dict__.get("_exd_virtual_" + kind) or ()):
+            entries.append({"plugin": record.id, "handler": handler,
+                            "priority": getattr(handler, "priority", 50) if isinstance(
+                                getattr(handler, "priority", 50), int) else 50})
+    param = base.VirtualParam(list(args), this, _compat.Missing(name))
+    if not entries:
+        return param, False
+    with client_utils.hook_scope(account):
+        try:
+            exd_xposed.run(entries, param, original or (lambda p: None))
+        except Exception:
+            log(f"{name} hook failed: {traceback.format_exc(limit=4)}")
+    return param, bool(param.returnEarly)
+
+
+def _virtual_screen(kind, fragment, name, args=()):
+    _run_virtual(kind, fragment, name, args)
 
 
 def _fire_app_create(record):
     import _compat
+    _run_virtual("app_create", _compat._LaunchActivity.instance, "LaunchActivity.onCreate", [None],
+                 records=[record])
+
+
+def sync_ui_hooks(exclude=None):
     base = _base()
-    handlers = list(record.instance.__dict__.get("_exd_virtual_app_create") or ())
-    for handler in handlers:
-        param = base.VirtualParam([None], _compat._LaunchActivity.instance, _compat.Missing("LaunchActivity.onCreate"))
+    kinds = set()
+    for record in list(_records.values()):
+        if not record.instance or record.id == exclude:
+            continue
+        for kind, target in base._HOST_KINDS.items():
+            if record.instance.__dict__.get("_exd_virtual_" + kind):
+                kinds.add(target)
+    try:
+        _extera.set_ui_hooks(json.dumps(sorted(kinds)))
+    except Exception:
+        pass
+
+
+class _SubtitleView:
+    def __init__(self, owner, field):
+        self._owner = owner
+        self._field = field
+
+    def setText(self, text, *args):
+        setattr(self._owner, self._field, str(text))
+
+    def getText(self):
+        return getattr(self._owner, self._field)
+
+
+class _ChatAvatarContainer:
+    _java_name = "org.telegram.ui.Components.ChatAvatarContainer"
+
+    def __init__(self, dialog_id, subtitle):
+        import tgnet_bridge
+        self.dialog_id = dialog_id
+        self.subtitle = subtitle
+        self.title = None
+        self.fragment = tgnet_bridge.ChatActivity(dialog_id)
+
+    def setSubtitle(self, text, *args):
+        self.subtitle = str(text)
+
+    def setTitle(self, text, *args):
+        self.title = str(text)
+
+    def getSubtitleTextView(self):
+        return _SubtitleView(self, "subtitle")
+
+    def getTitleTextView(self):
+        return _SubtitleView(self, "title")
+
+    def getLastSubtitle(self):
+        return self.subtitle
+
+    def getChatActivity(self):
+        return self.fragment
+
+    def getDialogId(self):
+        return self.dialog_id
+
+
+class _ChatMessageCell:
+    _java_name = "org.telegram.ui.Cells.ChatMessageCell"
+
+    def __init__(self, message):
+        self.message = message
+
+    def getMessageObject(self):
+        return self.message
+
+    def getPrimaryMessageObject(self):
+        return self.message
+
+    def setMessageObject(self, message, *args):
+        self.message = message
+
+
+def _ui_hook(args):
+    import exd_java
+    kind = str(args.get("kind") or "")
+    text = str(args.get("text") or "")
+    if kind == "message_text":
+        data = dict(args.get("message") or {})
+        data.setdefault("text", text)
+        message = exd_java.message_object(data, 0)
+        cell = _ChatMessageCell(message)
+        _run_virtual("message_text", cell, "ChatMessageCell.setMessageObject", [message, None, False, False])
+        shown = str(message.messageText) if message.messageText is not None else text
+        if shown == text:
+            shown = str(getattr(message.messageOwner, "message", text) or "")
+        return shown if shown != text else None
+    if kind == "chat_subtitle":
+        container = _ChatAvatarContainer(int(args.get("dialog_id") or 0), text)
+        param, _ = _run_virtual("chat_subtitle_set", container, "ChatAvatarContainer.setSubtitle", [text])
+        if param.args and str(param.args[0]) != text and container.subtitle == text:
+            container.subtitle = str(param.args[0])
+        _run_virtual("chat_subtitle", container, "ChatAvatarContainer.updateSubtitle", [False])
+        return container.subtitle if container.subtitle != text else None
+    if kind == "dialog_name":
+        return _dialog_name(int(args.get("dialog_id") or 0), text)
+    if kind == "chat_title":
+        container = _ChatAvatarContainer(int(args.get("dialog_id") or 0), None)
+        container.title = text
+        param, _ = _run_virtual("chat_title", container, "ChatAvatarContainer.setTitle", [text])
+        if param.args and str(param.args[0]) != text and container.title == text:
+            container.title = str(param.args[0])
+        return container.title if container.title and container.title != text else None
+    if kind == "copy_text":
+        import tgnet_bridge
+        data = dict(args.get("message") or {})
+        message = exd_java.message_object(data, 0)
+        chat = tgnet_bridge.ChatActivity(int(data.get("dialog_id") or 0))
+        param, _ = _run_virtual("copy_text", chat, "ChatActivity.getMessageContent", [message, 0, True],
+                                original=lambda p: text)
+        result = param.getResult() if hasattr(param, "getResult") else None
+        if result is None:
+            return None
+        result = str(result)
+        return result if result != text else None
+    return None
+
+
+def _dialog_name(dialog_id, text):
+    import exd_player
+    import tgnet_bridge
+    cell = exd_player.DialogCell(None)
+    cell.currentDialogId = dialog_id
+    cell.nameString = text
+    pinned = {}
+    if dialog_id > 0:
+        user = tgnet_bridge.get_user(dialog_id)
+        if user is None:
+            return None
+        cell.user = user
+        pinned[("user", dialog_id)] = user
+    elif dialog_id < 0:
+        chat = tgnet_bridge.get_chat(-dialog_id)
+        if chat is None:
+            return None
+        cell.chat = chat
+        pinned[("chat", -dialog_id)] = chat
+
+    def shown():
+        if cell.nameString != text:
+            return str(cell.nameString)
+        if cell.user is not None:
+            first = str(getattr(cell.user, "first_name", "") or "")
+            last = str(getattr(cell.user, "last_name", "") or "")
+            return (first + " " + last).strip() or text
+        if cell.chat is not None:
+            return str(getattr(cell.chat, "title", "") or text)
+        return text
+
+    with tgnet_bridge.pin_peers(pinned):
+        _run_virtual("dialog_update", cell, "DialogCell.update", [0])
+        result = {"value": text}
+
+        def build(param):
+            result["value"] = shown()
+            return None
+        _run_virtual("dialog_name", cell, "DialogCell.buildLayout", [], original=build)
+    value = result["value"]
+    return value if value and value != text else None
+
+
+def _client_event(args):
+    import exd_java
+    import tgnet_bridge
+    import _compat
+    kind = str(args.get("kind") or "")
+    data = args.get("message") or None
+    message = exd_java.message_object(data, int(args.get("account") or 0)) if data else None
+    dialog_id = int(args.get("dialog_id") or (data or {}).get("dialog_id") or 0)
+    player = _media_controller(int(args.get("account") or 0))
+    if kind == "play_message":
+        _, cancelled = _run_virtual("player_playlist", player, "MediaController.setPlaylist",
+                                    [exd_java.ArrayList([message] if message is not None else []), message, 0])
+        if cancelled:
+            return True
+        _, cancelled = _run_virtual("play_message", player, "MediaController.playMessage", [message])
+        if not cancelled:
+            import exd_player
+            _run_virtual("player_title", exd_player.current() or exd_player.AudioPlayerAlert(),
+                         "AudioPlayerAlert.updateTitle",
+                         [False])
+        return cancelled
+    if kind == "reply":
+        enter = tgnet_bridge.ChatActivity(dialog_id) if dialog_id else None
+        _, cancelled = _run_virtual("reply", enter, "ChatActivityEnterView.setReplyingMessageObject",
+                                    [message, None])
+        return cancelled
+    if kind == "start_call":
+        user = int(args.get("user_id") or dialog_id or 0)
+        _, cancelled = _run_virtual("start_call", _compat.Stub("VoIPHelper"), "VoIPHelper.startCall",
+                                    [tgnet_bridge.get_user(user) if hasattr(tgnet_bridge, "get_user") else user,
+                                     bool(args.get("video")), True, _compat._LaunchActivity.instance, None, None])
+        return cancelled
+    if kind == "player_next":
+        return _run_virtual("player_next", player, "MediaController.playNextMessage", [])[1]
+    if kind == "player_prev":
+        return _run_virtual("player_prev", player, "MediaController.playPreviousMessage", [])[1]
+    if kind == "player_stop":
+        return _run_virtual("player_stop", player, "MediaController.cleanupPlayer", [True, True])[1]
+    if kind == "transcribe":
+        return _run_virtual("transcribe", __import__("exd_player").TranscribeButton(None, message), "TranscribeButton.onTap", [])[1]
+    if kind == "message_menu":
+        chat = tgnet_bridge.ChatActivity(dialog_id) if dialog_id else None
+        return _run_virtual("message_menu", chat, "ChatActivity.createMenu",
+                            [_ChatMessageCell(message), True, False, 0.0, 0.0, False, False])[1]
+    if kind == "send_reaction":
+        reaction = _VisibleReaction(str(args.get("emoji") or ""), int(args.get("document_id") or 0))
+        helper = _controller("SendMessagesHelper", int(args.get("account") or 0))
+        return _run_virtual("send_reaction", helper, "SendMessagesHelper.sendReaction",
+                            [message, exd_java.ArrayList([] if args.get("remove") else [reaction]), reaction,
+                             False, True, tgnet_bridge.ChatActivity(dialog_id) if dialog_id else None, None])[1]
+    if kind == "notification":
+        controller = _controller("NotificationsController", int(args.get("account") or 0))
         try:
-            with _plugin_context(record.id):
-                for attr in ("before_hooked_method", "after_hooked_method"):
-                    method = getattr(handler, attr, None)
-                    if callable(method) and not param.returnEarly:
-                        method(param)
+            controller.pushMessages = exd_java.ArrayList([message] if message is not None else [])
         except Exception:
-            log(f"[{record.id}] LaunchActivity.onCreate hook failed:\n{traceback.format_exc(limit=4)}")
+            pass
+        return _run_virtual("notification", controller, "NotificationsController.showOrUpdateNotification",
+                            [False])[1]
+    if kind == "send_media":
+        import exd_java_more2
+        entries = []
+        for index, path in enumerate(args.get("paths") or ()):
+            entry = exd_java_more2.MediaController.PhotoEntry(0, index, 0, str(path), 0, False)
+            entry.caption = str(args.get("caption") or "") or None
+            entries.append(entry)
+        chat = tgnet_bridge.ChatActivity(dialog_id) if dialog_id else None
+        return _run_virtual("send_media", chat, "ChatActivity.sendMedia",
+                            [entries[0] if entries else None, None, True, 0, False, exd_java.ArrayList(entries)])[1]
+    if kind == "select_message":
+        chat = tgnet_bridge.ChatActivity(dialog_id) if dialog_id else None
+        return _run_virtual("select_message", chat, "ChatActivity.addToSelectedMessages",
+                            [message, False, True])[1]
+    if kind == "avatar_click":
+        return _run_virtual("avatar_click", _ChatAvatarContainer(dialog_id, None),
+                            "ChatAvatarContainer.onAvatarClick", [False])[1]
+    return False
+
+
+def _dev_server(args):
+    import dev_server
+    try:
+        if args.get("enabled"):
+            dev_server.DevServer.start_server()
+        else:
+            dev_server.DevServer.stop_server()
+            dev_server.DevServer.stop_remote_debugging(dev_server.DebuggerPlatform.VSCode)
+        return True
+    except Exception:
+        log(f"dev server failed:\n{traceback.format_exc(limit=4)}")
+        return False
+
+
+def _profile_rows(args):
+    import exd_profile
+    try:
+        return exd_profile.rows(int(args.get("dialog_id") or 0), args)
+    except Exception:
+        log(f"profile rows failed:\n{traceback.format_exc(limit=4)}")
+    return []
+
+
+def _player_menu(args):
+    import exd_player
+    action = str(args.get("action") or "")
+    try:
+        if action == "open":
+            alert = exd_player.opened()
+            _run_virtual("player_title", alert, "AudioPlayerAlert.updateTitle", [False])
+            return True
+        if action == "close":
+            exd_player.closed()
+            return True
+        if action == "items":
+            return exd_player.menu_items()
+        if action == "click":
+            return exd_player.menu_click(int(args.get("id") or 0))
+    except Exception:
+        log(f"player menu failed:\n{traceback.format_exc(limit=4)}")
+    return [] if action == "items" else False
+
+
+_CONTROLLER_GETTERS = {
+    "MediaController": "get_media_controller",
+    "SendMessagesHelper": "get_send_messages_helper",
+    "NotificationsController": "get_notifications_controller",
+}
+
+
+def _controller(name, account=0):
+    import client_utils
+    import _compat
+    getter = getattr(client_utils, _CONTROLLER_GETTERS.get(name, ""), None)
+    return getter(account) if callable(getter) else _compat.Stub(name)
+
+
+def _media_controller(account=0):
+    return _controller("MediaController", account)
+
+
+class _VisibleReaction:
+    _java_name = "org.telegram.ui.Components.Reactions.ReactionsLayoutInBubble$VisibleReaction"
+
+    def __init__(self, emoji, document_id):
+        self.emojicon = emoji or None
+        self.documentId = int(document_id or 0)
+        self.isStar = False
+        self.isEffect = False
+
+    def equals(self, other):
+        return isinstance(other, _VisibleReaction) and other.emojicon == self.emojicon             and other.documentId == self.documentId
+
+    def __eq__(self, other):
+        return self.equals(other)
+
+    def __hash__(self):
+        return hash((self.emojicon, self.documentId))
+
+    def __repr__(self):
+        return "VisibleReaction(%s)" % (self.emojicon or self.documentId)
+
+
+def _file_open_hook(args):
+    import file_utils
+    import tgnet_bridge
+    import _compat
+    import exd_java
+    data = args.get("message") or None
+    message = exd_java.message_object(data, 0) if data else None
+    dialog_id = int((data or {}).get("dialog_id") or 0)
+    fragment = tgnet_bridge.ChatActivity(dialog_id) if dialog_id else None
+    _, cancelled = _run_virtual("file_open", _compat.Stub("AndroidUtilities"), "AndroidUtilities.openForView",
+                                [message, _compat._LaunchActivity.instance, None, False])
+    if cancelled:
+        return True
+    try:
+        return bool(file_utils.FilesController.dispatch(
+            str(args.get("path") or ""), str(args.get("place") or "ChatActivity"),
+            message, fragment, _compat._LaunchActivity.instance))
+    except Exception:
+        log(f"file handler failed:\n{traceback.format_exc(limit=4)}")
+        return False
 
 
 def _open_url_hook(args):
@@ -773,7 +1260,7 @@ def _screen_event(args):
             _virtual_screen("dialogs_open", tgnet_bridge.DialogsActivity(0), "DialogsActivity.onResume")
     elif screen == "profile" and dialog_id:
         _screen_state["profile"] = dialog_id
-        _virtual_screen("profile_open", tgnet_bridge.ProfileActivity(dialog_id), "ProfileActivity.onResume")
+        _virtual_screen("profile_open", __import__("exd_profile").activity(dialog_id), "ProfileActivity.onResume")
         return True
     if screen == "chat":
         profile = _screen_state.pop("profile", 0)
@@ -785,33 +1272,14 @@ def _screen_event(args):
 
 
 def _virtual_incoming(account, update):
-    import client_utils
     import exd_java
-    base = _base()
-    for record in list(_records.values()):
-        if not record.instance:
-            continue
-        handlers = list(record.instance.__dict__.get("_exd_virtual_incoming") or ())
-        if not handlers:
-            continue
-        message = exd_java.message_object(update, account)
-        values = exd_java.ArrayList([message])
-        for handler in handlers:
-            param = base.VirtualParam(
-                [values, int(update.get("dialog_id") or 0), False, False],
-                _compat.Stub("MessagesController"),
-                _compat.Missing("MessagesController.processNewMessages"))
-            try:
-                with client_utils.hook_scope(account):
-                    with _plugin_context(record.id):
-                        before = getattr(handler, "before_hooked_method", None)
-                        after = getattr(handler, "after_hooked_method", None)
-                        if callable(before):
-                            before(param)
-                        if callable(after) and not param.returnEarly:
-                            after(param)
-            except Exception:
-                log(f"[{record.id}] message hook failed:\n{traceback.format_exc(limit=4)}")
+    import _compat
+    if not any(r.instance and r.instance.__dict__.get("_exd_virtual_incoming") for r in _records.values()):
+        return
+    message = exd_java.message_object(update, account)
+    values = exd_java.ArrayList([message])
+    _run_virtual("incoming", _compat.Stub("MessagesController"), "MessagesController.processNewMessages",
+                 [values, int(update.get("dialog_id") or 0), False, False], account=account)
 
 
 class _AttrDict(dict):
@@ -900,7 +1368,7 @@ def _event(args):
         payload = args.get("args") or {}
         for delegate in list(_observers.get(notification_id, [])):
             try:
-                with owner_scope(getattr(delegate, "_extera_plugin_id", None)):
+                with owner_scope(_delegate_owner(delegate)):
                     delegate.didReceivedNotification(notification_id, account, payload)
             except Exception:
                 log(f"notification delegate failed:\n{traceback.format_exc(limit=4)}")
@@ -908,7 +1376,23 @@ def _event(args):
     if kind == "intent":
         from intents import IntentsManager
         context = dict(args.get("context") or {})
+        if args.get("before"):
+            import _compat
+            intent = _compat._Intent(_compat._Intent.ACTION_VIEW, _compat._Uri.parse(context.get("url") or ""))
+            _, cancelled = _run_virtual("intent", _compat._LaunchActivity.instance, "LaunchActivity.handleIntent",
+                                        [intent, False, False, False])
+            if cancelled:
+                return True
         return IntentsManager.dispatch(bool(args.get("before")), context)
+    if kind == "webview":
+        import exd_webview
+        return exd_webview.dispatch(args)
+    if kind == "peers_picked":
+        import exd_pickers
+        return exd_pickers.dispatch(args)
+    if kind == "webview_nav":
+        import exd_webview
+        return exd_webview.navigate(args)
     if kind == "sheet_closed":
         import android_views
         return android_views.handle_sheet_closed(args.get("id"))
@@ -983,6 +1467,17 @@ def _text_changed(args):
     return android_views.dispatch_text_changed(args.get("id"), args.get("text"))
 
 
+def _view_checked(args):
+    import android_views
+    return android_views.dispatch_checked(args.get("id"), bool(args.get("checked")))
+
+
+def _view_progress(args):
+    import android_views
+    return android_views.dispatch_progress(args.get("id"), int(args.get("progress") or 0),
+                                           str(args.get("phase") or "change"))
+
+
 def _install(args):
     import shutil
     import capability_scan
@@ -1030,6 +1525,25 @@ def _delete(args):
 
 def _set_enabled(args):
     record = _records.get(args["id"])
+    if record is not None:
+        try:
+            import exd_android
+            import exd_java
+            controller = exd_android.PluginsController
+            if exd_java.has_shim_hooks(controller, "setPluginEnabled"):
+                _HOST_CALL["setPluginEnabled"] = True
+                try:
+                    controller.getInstance().setPluginEnabled(record.id, bool(args["enabled"]))
+                finally:
+                    _HOST_CALL.pop("setPluginEnabled", None)
+                return record.info()
+        except Exception:
+            log(f"setPluginEnabled hook failed:\n{traceback.format_exc(limit=4)}")
+    return _set_enabled_core(args)
+
+
+def _set_enabled_core(args):
+    record = _records.get(args["id"])
     if not record:
         return None
     if _safe_mode and args["enabled"]:
@@ -1054,6 +1568,11 @@ def _setting_changed(args):
     value = args.get("value")
     if key:
         set_setting(plugin_id, key, value)
+    if type(item).__name__ == "Custom":
+        uitem = getattr(item, "item", None)
+        if uitem is not None:
+            uitem.checked = bool(value)
+        return _setting_click({"id": plugin_id, "index": args["index"]})
     callback = getattr(item, "on_change", None)
     if callback:
         try:
@@ -1079,7 +1598,7 @@ def _setting_click(args):
     try:
         with _plugin_context(plugin_id):
             try:
-                callback(_compat.Stub("view"))
+                callback(_setting_view(item))
             except TypeError:
                 callback()
     except Exception:
@@ -1131,6 +1650,17 @@ def _source(args):
     with open(path, "rb") as f:
         data = f.read(4 * 1024 * 1024)
     return data.decode("utf-8", "replace")
+
+
+def _guard_preview(args):
+    import plugin_guard
+    path = args.get("path")
+    if not path and args.get("id") in _records:
+        path = _records[args["id"]].path
+    try:
+        return plugin_guard.preview(path)
+    except Exception:
+        return _source({"path": path})
 
 
 def _guard_scan(args):
@@ -1227,6 +1757,7 @@ _METHODS = {
     "is_trusted": _is_trusted,
     "unknown_sources": _set_unknown_sources,
     "source": _source,
+    "guard_preview": _guard_preview,
     "capability_lines": _capability_lines,
     "list": lambda args: [r.info() for r in _records.values()],
     "send_hook": _send_hook,
@@ -1235,6 +1766,12 @@ _METHODS = {
     "setting_click": _setting_click,
     "alert_click": _alert_click,
     "open_url_hook": _open_url_hook,
+    "file_open_hook": _file_open_hook,
+    "client_event": _client_event,
+    "player_menu": _player_menu,
+    "profile_rows": _profile_rows,
+    "dev_server": _dev_server,
+    "ui_hook": _ui_hook,
     "menu_list": _menu_list,
     "menu_click": _menu_click,
     "install": _install,
@@ -1247,6 +1784,8 @@ _METHODS = {
     "request_callback": _request_callback,
     "view_click": _view_click,
     "text_changed": _text_changed,
+    "view_checked": _view_checked,
+    "view_progress": _view_progress,
 }
 
 

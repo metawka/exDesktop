@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "ui/style/style_core.h"
 #include "dialogs/dialogs_inner_widget.h"
 
 #include "extera/extera_streamer.h"
@@ -1270,10 +1271,13 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 			: _chatPreviewRow.key
 			? (row->key() == _chatPreviewRow.key)
 			: selected;
+		const auto exdHoverAnimating = _exdHoverAnimation.animating()
+			&& ((row.get() == _exdHoverFrom) || (row.get() == _exdHoverTo));
 		const auto cacheAllowed = _rowsScrollCache.scrolling()
 			&& (!videoUserpic || !context.narrow)
 			&& !active
 			&& !cacheSelected
+			&& !exdHoverAnimating
 			&& !context.quickActionContext
 			&& !context.rightButton
 			&& !expanding
@@ -1367,6 +1371,17 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 			: _chatPreviewRow.key
 			? (row->key() == _chatPreviewRow.key)
 			: selected;
+		context.exdHover = -1.;
+		if (exdHoverAnimating
+			&& !_menuRow.key
+			&& !_chatPreviewRow.key) {
+			const auto progress = _exdHoverAnimation.value(1.);
+			if (row.get() == _exdHoverTo && selected) {
+				context.exdHover = progress;
+			} else if (row.get() == _exdHoverFrom && !selected) {
+				context.exdHover = 1. - progress;
+			}
+		}
 		context.topicJumpSelected = selected
 			&& _selectedTopicJump
 			&& (!_pressed || _pressedTopicJump);
@@ -1712,7 +1727,7 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		}
 
 		if (!_peerSearchResults.empty()) {
-			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::searchedBarBg);
+			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, (style::Md3Enabled() ? st::dialogsBg : st::searchedBarBg));
 			p.setFont(st::searchedBarFont);
 			p.setPen(st::searchedBarFg);
 			p.drawTextLeft(st::searchedBarPosition.x(), st::searchedBarPosition.y(), width(), tr::lng_search_global_results(tr::now));
@@ -1779,7 +1794,7 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		if (_previewResults.empty() && _searchResults.empty()) {
 			if (_loadingAnimation) {
 				const auto text = tr::lng_contacts_loading(tr::now);
-				p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::searchedBarBg);
+				p.fillRect(0, 0, fullWidth, st::searchedBarHeight, (style::Md3Enabled() ? st::dialogsBg : st::searchedBarBg));
 				p.setFont(st::searchedBarFont);
 				p.setPen(st::searchedBarFg);
 				p.drawTextLeft(st::searchedBarPosition.x(), st::searchedBarPosition.y(), width(), text);
@@ -1789,7 +1804,7 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		}
 		if (!_previewResults.empty()) {
 			const auto text = tr::lng_search_tab_public_posts(tr::now);
-			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::searchedBarBg);
+			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, (style::Md3Enabled() ? st::dialogsBg : st::searchedBarBg));
 			p.setFont(st::searchedBarFont);
 			p.setPen(st::searchedBarFg);
 			p.drawTextLeft(st::searchedBarPosition.x(), st::searchedBarPosition.y(), width(), text);
@@ -1871,7 +1886,7 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 			const auto searchLowerText = (_searchHashOrCashtag == HashOrCashtag::None)
 				? _searchState.query.toLower()
 				: QString();
-			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, st::searchedBarBg);
+			p.fillRect(0, 0, fullWidth, st::searchedBarHeight, (style::Md3Enabled() ? st::dialogsBg : st::searchedBarBg));
 			p.setFont(st::searchedBarFont);
 			p.setPen(st::searchedBarFg);
 			p.drawTextLeft(st::searchedBarPosition.x(), st::searchedBarPosition.y(), width(), text);
@@ -2504,6 +2519,17 @@ void InnerWidget::selectByMouse(QPoint globalPosition) {
 			|| _selectedTopicJump != selectedTopicJump
 			|| _selectedRightButton != selectedRightButton) {
 			updateSelectedRow();
+			if (_selected != selected && style::Md3Enabled()) {
+				_exdHoverFrom = _selected;
+				_exdHoverTo = selected;
+				_exdHoverAnimation.stop();
+				_exdHoverAnimation.start(
+					[=] { update(); },
+					0.,
+					1.,
+					st::exdDialogsHoverDuration,
+					anim::easeOutCubic);
+			}
 			_selected = selected;
 			_communitySelected = communitySelected;
 			_selectedTopicJump = selectedTopicJump;

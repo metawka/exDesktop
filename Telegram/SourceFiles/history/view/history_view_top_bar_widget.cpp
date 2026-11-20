@@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text.h"
 #include "ui/text/text_options.h"
 #include "ui/painter.h"
+#include "ui/style/style_core.h"
 #include "ui/unread_badge.h"
 #include "ui/unread_counter_format.h"
 #include "ui/controls/button_context_menu.h"
@@ -572,11 +573,55 @@ void TopBarWidget::paintEvent(QPaintEvent *e) {
 		: -st::topBarHeight;
 	const auto slidingTop = std::max(selectedButtonsTop, searchFieldTop);
 
-	p.fillRect(QRect(0, 0, width(), st::topBarHeight), st::topBarBg);
+	if (exdFloating()) {
+		const auto plaque = QRectF(QRect(0, 0, width(), st::topBarHeight)
+			.marginsRemoved(exdPlaqueMargins()));
+		const auto radius = float64(st::exdTopBarPlaqueRadius);
+		auto path = QPainterPath();
+		path.addRoundedRect(plaque, radius, radius);
+		{
+			auto hq = PainterHighQualityEnabler(p);
+			p.fillPath(path, _exdPlaqueBg ? *_exdPlaqueBg : st::topBarBg);
+		}
+		p.setClipPath(path);
+	} else {
+		p.fillRect(QRect(0, 0, width(), st::topBarHeight), st::topBarBg);
+	}
 	if (slidingTop < 0) {
 		p.translate(0, slidingTop + st::topBarHeight);
 		paintTopBar(p);
 	}
+}
+
+void TopBarWidget::setExdFloating(bool floating) {
+	if (_exdFloating == floating) {
+		return;
+	}
+	_exdFloating = floating;
+	setAttribute(Qt::WA_OpaquePaintEvent, !_animatingMode && !exdFloating());
+	updateControlsGeometry();
+	update();
+}
+
+void TopBarWidget::setExdPlaqueBg(const style::color *bg) {
+	_exdPlaqueBg = bg;
+	update();
+}
+
+void TopBarWidget::setExdPlaqueMargins(style::margins margins) {
+	_exdPlaqueMargins = margins;
+	updateControlsGeometry();
+	update();
+}
+
+style::margins TopBarWidget::exdPlaqueMargins() const {
+	return _exdPlaqueMargins
+		? *_exdPlaqueMargins
+		: st::exdTopBarPlaqueMargins;
+}
+
+bool TopBarWidget::exdFloating() const {
+	return _exdFloating && style::Md3Enabled();
 }
 
 void TopBarWidget::paintTopBar(Painter &p) {
@@ -587,6 +632,14 @@ void TopBarWidget::paintTopBar(Painter &p) {
 	auto statusleft = nameleft;
 	auto nametop = st::topBarArrowPadding.top();
 	auto statustop = st::topBarHeight - st::topBarArrowPadding.bottom() - st::dialogsTextFont->height;
+	if (exdFloating()) {
+		const auto &margins = exdPlaqueMargins();
+		const auto inner = st::topBarHeight - margins.top() - margins.bottom();
+		const auto both = st::semiboldFont->height
+			+ st::dialogsTextFont->height;
+		nametop = margins.top() + (inner - both) / 2;
+		statustop = nametop + st::semiboldFont->height;
+	}
 	auto namewidth = width()
 		- _rightTaken
 		- nameleft
@@ -702,9 +755,19 @@ void TopBarWidget::paintTopBar(Painter &p) {
 	} else if (namePeer) {
 		if (_titleNameVersion < namePeer->nameVersion()) {
 			_titleNameVersion = namePeer->nameVersion();
+			auto titleText = TopBarNameText(namePeer, _activeChat);
+			if (Extera::Plugins::HasUiHook(u"chat_title"_q)) {
+				if (const auto replaced = Extera::Plugins::UiHookText(
+						u"chat_title"_q,
+						nullptr,
+						namePeer,
+						titleText)) {
+					titleText = *replaced;
+				}
+			}
 			_title.setText(
 				st::msgNameStyle,
-				TopBarNameText(namePeer, _activeChat),
+				titleText,
 				Ui::NameTextOptions());
 		}
 		if (const auto info = namePeer->botVerifyDetails()) {
@@ -889,6 +952,11 @@ void TopBarWidget::mousePressEvent(QMouseEvent *e) {
 void TopBarWidget::infoClicked() {
 	const auto key = _activeChat.key;
 	if (!key) {
+		return;
+	} else if (key.peer() && Extera::Plugins::InterceptClientEvent(
+			u"avatar_click"_q,
+			nullptr,
+			{ { u"dialog_id"_q, double(Extera::Plugins::DialogId(key.peer())) } })) {
 		return;
 	} else if (const auto topic = key.topic()) {
 		_controller->showSection(std::make_shared<Info::Memento>(topic));
@@ -1190,6 +1258,9 @@ void TopBarWidget::updateControlsGeometry() {
 		return;
 	}
 	const auto hasSelected = showSelectedActions();
+	const auto exdInset = exdFloating()
+		? exdPlaqueMargins().left()
+		: 0;
 	auto selectedButtonsTop = countSelectedButtonsTop(
 		_selectedShown.value(hasSelected ? 1. : 0.));
 	if (!_searchMode && !_searchShown.animating() && _searchField) {
@@ -1205,12 +1276,13 @@ void TopBarWidget::updateControlsGeometry() {
 		+ st::topBarHeight;
 	const auto backButtonTop = selectedButtonsTop + st::topBarHeight;
 	auto buttonsLeft = st::topBarActionSkip
+		+ exdInset
 		+ (_controller->adaptive().isOneColumn() ? 0 : st::lineWidth);
 	auto buttonsWidth = (_forward->isHidden() ? 0 : _forward->contentWidth())
 		+ (_sendNow->isHidden() ? 0 : _sendNow->contentWidth())
 		+ (_delete->isHidden() ? 0 : _delete->contentWidth())
 		+ _clear->width();
-	buttonsWidth += buttonsLeft + st::topBarActionSkip * 3;
+	buttonsWidth += buttonsLeft + st::topBarActionSkip * 3 + exdInset;
 
 	auto widthLeft = std::min(
 		width() - buttonsWidth,
@@ -1263,17 +1335,17 @@ void TopBarWidget::updateControlsGeometry() {
 			button->setCornerRadii(left, right, left, right);
 		}
 	}
-	_clear->moveToRight(st::topBarActionSkip, selectedButtonsTop);
+	_clear->moveToRight(st::topBarActionSkip + exdInset, selectedButtonsTop);
 
 	if (!_cancelChoose->isHidden()) {
-		_leftTaken = 0;
+		_leftTaken = exdInset;
 		_cancelChoose->moveToLeft(_leftTaken, otherButtonsTop);
 		_leftTaken += _cancelChoose->width();
 	} else if (_back->isHidden()) {
-		_leftTaken = st::topBarArrowPadding.right();
+		_leftTaken = exdInset + st::topBarArrowPadding.right();
 	} else {
 		_leftTaken = anim::interpolate(
-			0,
+			exdInset,
 			(_narrowWidth - _back->width()) / 2,
 			_narrowRatio);
 		_back->moveToLeft(_leftTaken, backButtonTop);
@@ -1297,12 +1369,13 @@ void TopBarWidget::updateControlsGeometry() {
 
 	if (_searchField) {
 		const auto fieldLeft = _back->isHidden()
-			? st::topBarArrowPadding.right()
+			? (exdInset + st::topBarArrowPadding.right())
 			: _leftTaken;
 		const auto fieldTop = searchFieldTop
 			+ (height() - _searchField->height()) / 2;
 		const auto fieldRight = st::dialogsFilterSkip
-			+ st::dialogsFilterPadding.x();
+			+ st::dialogsFilterPadding.x()
+			+ exdInset;
 		const auto fieldWidth = width() - fieldLeft - fieldRight;
 		_searchField->setGeometryToLeft(
 			fieldLeft,
@@ -1324,7 +1397,7 @@ void TopBarWidget::updateControlsGeometry() {
 		updateSearchJumpToDateVisibility();
 	}
 
-	_rightTaken = 0;
+	_rightTaken = exdFloating() ? exdPlaqueMargins().right() : 0;
 	if (rootChatsListBar() && _activeChat.key.folder()) {
 		const auto &toggle = st::topBarMenuToggle;
 		const auto narrowLeft = (_narrowWidth - toggle.icon.width()) / 2
@@ -1374,7 +1447,9 @@ void TopBarWidget::finishAnimating() {
 void TopBarWidget::setAnimatingMode(bool enabled) {
 	if (_animatingMode != enabled) {
 		_animatingMode = enabled;
-		setAttribute(Qt::WA_OpaquePaintEvent, !_animatingMode);
+		setAttribute(
+			Qt::WA_OpaquePaintEvent,
+			!_animatingMode && !exdFloating());
 		finishAnimating();
 	} else if (!enabled) {
 		finishAnimating();
@@ -2062,6 +2137,15 @@ void TopBarWidget::updateOnlineDisplay() {
 
 		} else {
 			text = channel->isMegagroup() ? tr::lng_group_status(tr::now) : tr::lng_channel_status(tr::now);
+		}
+	}
+	if (Extera::Plugins::HasUiHook(u"chat_subtitle"_q)) {
+		if (const auto replaced = Extera::Plugins::UiHookText(
+				u"chat_subtitle"_q,
+				nullptr,
+				peer,
+				text)) {
+			text = *replaced;
 		}
 	}
 	if (_titlePeerText.toString() != text) {

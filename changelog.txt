@@ -1,3 +1,25 @@
+7.4.3.2 (17.11.26)
+- Material 3 Expressive design: Material Symbols icons, Google Sans font, settings and profile in cards, floating message field, animated transitions. Can be turned off in settings.
+- New plugin hooks: message menu, reactions, notifications, chat header, chat list, player and profile rows.
+- Plugins can read and change the message field.
+- Web windows, bottom sheets, chat pickers and Android widgets in plugin windows.
+- Xposed hooks with the call order and cancellation of exteraGram.
+- Work on plugin compatibility continues.
+- PluginGuard blocks installation only for obfuscated code, data theft, payload droppers and code that behaves like known malware. Similarity alone no longer blocks a plugin, and a safe verdict of the AI arbiter lifts such a block.
+- Encrypted plugins are decoded for the check. A fully decoded plugin installs only with a safe verdict of the AI arbiter, otherwise it stays blocked.
+- Plugins that download and load code while running are blocked, since that code cannot be checked.
+- The code preview of an encrypted plugin shows the decoded code.
+- Streamer mode and screenshots by hotkey react instantly.
+- Switching chats without a blank screen or jumps.
+- Plugin settings are shown in full.
+- Saved deleted messages no longer disappear after a restart.
+- Messages read in ghost mode stay read after a restart.
+- Subscriber and administrator rows no longer overlap in channel profiles.
+- The member list no longer flickers.
+- Dialog windows have even rounded corners without square edges.
+- The right column opens together with the chat and closes without a dark strip.
+- The plugin documentation link in settings leads to the exDesktop documentation.
+
 7.4.3.1 (13.11.26)
 - Updated to Telegram Desktop 7.4.3: search for apps, channels, posts and media in search tabs, HTML widgets in bots, camera and microphone access in mini apps, many fixes.
 - The version number now follows the Telegram Desktop version.

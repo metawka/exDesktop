@@ -36,7 +36,7 @@ struct Item {
 		{ u"contacts"_q, tr::lng_menu_contacts, &st::menuIconUserShow },
 		{ u"calls"_q, tr::lng_menu_calls, &st::menuIconPhone },
 		{ u"saved"_q, tr::lng_saved_messages, &st::menuIconSavedMessages },
-		{ u"feed"_q, tr::lng_extera_feed, &st::menuIconChannel },
+		{ u"feed"_q, tr::lng_extera_feed, &st::exdMenuIconFeed },
 		{ u"plugins"_q, tr::lng_extera_plugins, &st::exteraIconPlugins },
 		{ u"wallet"_q, tr::lng_wallet_menu, &st::walletMenuIcon },
 		{ u"settings"_q, tr::lng_menu_settings, &st::menuIconSettings },
@@ -163,7 +163,7 @@ void ApplyMenuLayout(
 			menu->insert(
 				position++,
 				MakeDivider(menu),
-				{ 0, st::mainMenuSkip, 0, st::mainMenuSkip });
+				{ st::mainMenuDividerInset, st::mainMenuSkip, st::mainMenuDividerInset, st::mainMenuSkip });
 			continue;
 		}
 		const auto i = tagged.find(id);
@@ -175,6 +175,11 @@ void ApplyMenuLayout(
 			menu->reorderRows(index, position++);
 		}
 		tagged.erase(i);
+	}
+	for (auto i = position; i < menu->count(); ++i) {
+		if (menu->widgetAt(i)->property("exd_plugin_item").toBool()) {
+			menu->reorderRows(i, position++);
+		}
 	}
 }
 

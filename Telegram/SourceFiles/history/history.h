@@ -204,6 +204,10 @@ public:
 		MsgId lower,
 		MsgId upper,
 		bool includeExisting = false);
+	void exdMergeDeletedIds(
+		std::vector<MsgId> &ids,
+		MsgRange range,
+		int &fullCount);
 	void addNewerSlice(const QVector<MTPMessage> &slice);
 
 	void newItemAdded(not_null<HistoryItem*> item, NewAddType type);
@@ -266,6 +270,7 @@ public:
 	void unknownMessageDeleted(MsgId messageId);
 	[[nodiscard]] bool isUnknownMessageDeleted(MsgId messageId) const;
 	void applyDialogTopMessage(MsgId topMessageId);
+	void exdApplyGhostRead(MsgId topMessageId);
 	void applyDialog(Data::Folder *requestFolder, const MTPDdialog &data);
 	void applyPinnedUpdate(const MTPDupdateDialogPinned &data);
 	void applyDialogFields(

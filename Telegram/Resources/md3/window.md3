@@ -1,0 +1,5 @@
+group material;
+mainMenuButton: SettingsButton(mainMenuButton) {
+	style: defaultTextStyle;
+	textBg: transparent;
+}

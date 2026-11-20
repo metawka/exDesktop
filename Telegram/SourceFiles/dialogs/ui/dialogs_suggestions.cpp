@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "ui/style/style_core.h"
 #include "dialogs/ui/dialogs_suggestions.h"
 
 #include "api/api_chat_participants.h"
@@ -929,7 +930,7 @@ void Suggestions::ObjectListController::setupPlainDivider(
 		label->moveToLeft(x, y, size.width());
 	}, raw->lifetime());
 	raw->paintRequest() | rpl::on_next([=](QRect clip) {
-		QPainter(raw).fillRect(clip, st::searchedBarBg);
+		QPainter(raw).fillRect(clip, (style::Md3Enabled() ? st::dialogsBg : st::searchedBarBg));
 	}, raw->lifetime());
 
 	delegate()->peerListSetAboveWidget(std::move(result));
@@ -997,7 +998,7 @@ void Suggestions::ObjectListController::setupExpandDivider(
 	}, raw->lifetime());
 
 	raw->paintRequest() | rpl::on_next([=](QRect clip) {
-		QPainter(raw).fillRect(clip, st::searchedBarBg);
+		QPainter(raw).fillRect(clip, (style::Md3Enabled() ? st::dialogsBg : st::searchedBarBg));
 	}, raw->lifetime());
 
 	delegate()->peerListSetAboveWidget(std::move(result));
@@ -1118,7 +1119,7 @@ void RecentsController::setupDivider() {
 		label->moveToLeft(x, y, size.width());
 	}, raw->lifetime());
 	raw->paintRequest() | rpl::on_next([=](QRect clip) {
-		QPainter(raw).fillRect(clip, st::searchedBarBg);
+		QPainter(raw).fillRect(clip, (style::Md3Enabled() ? st::dialogsBg : st::searchedBarBg));
 	}, raw->lifetime());
 
 	delegate()->peerListSetAboveWidget(std::move(result));

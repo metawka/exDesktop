@@ -106,6 +106,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_message_reactions.h"
 #include "data/data_peer_values.h"
 #include "styles/style_chat.h"
+#include "extera/extera_plugins.h"
 #include "styles/style_window.h" // columnMaximalWidthLeft
 
 #include <QtWidgets/QApplication>
@@ -2041,7 +2042,10 @@ void ListWidget::changeSelection(
 	}
 	if (action == SelectAction::Select) {
 		auto already = int(applyTo.size());
-		if (isGoodForSelection(applyTo, item, already)) {
+		if (isGoodForSelection(applyTo, item, already)
+			&& !Extera::Plugins::InterceptClientEvent(
+				u"select_message"_q,
+				item)) {
 			addToSelection(applyTo, item);
 		}
 	} else {
@@ -4460,6 +4464,15 @@ void ListWidget::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 		_overItemExact = _accessibilityFocusedItem;
 		if (const auto view = viewForItem(_accessibilityFocusedItem)) {
 			_overElement = view;
+		}
+	}
+	if (const auto menuItem = _overElement
+			? _overElement->data().get()
+			: nullptr) {
+		if (Extera::Plugins::InterceptClientEvent(
+				u"message_menu"_q,
+				menuItem)) {
+			return;
 		}
 	}
 

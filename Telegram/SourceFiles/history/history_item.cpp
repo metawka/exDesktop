@@ -95,6 +95,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat.h"
 #include "styles/style_credits.h"
 #include "styles/style_dialogs.h"
+#include "extera/extera_plugins.h"
 
 namespace {
 
@@ -3923,6 +3924,14 @@ void HistoryItem::toggleReaction(
 		HistoryReactionSource source) {
 	Expects(!reaction.paid());
 
+	if (Extera::Plugins::InterceptClientEvent(u"send_reaction"_q, this, {
+		{ u"emoji"_q, reaction.emoji() },
+		{ u"document_id"_q, QString::number(reaction.custom()) },
+		{ u"remove"_q, bool(_reactions
+			&& ranges::contains(_reactions->chosen(), reaction)) },
+	})) {
+		return;
+	}
 	const auto addToRecent = (source == HistoryReactionSource::Selector);
 	if (_reactions
 		&& ranges::contains(_reactions->chosen(), reaction)) {

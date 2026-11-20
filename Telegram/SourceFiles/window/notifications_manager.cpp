@@ -48,6 +48,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session_settings.h"
 #include "ui/text/text_utilities.h"
 #include "platform/platform_specific.h"
+#include "extera/extera_plugins.h"
 
 #include <QtGui/QWindow>
 #include <QtGui/QGuiApplication>
@@ -446,6 +447,15 @@ void System::schedule(Data::ItemNotification notification) {
 	Expects(_manager != nullptr);
 
 	if (Extera::Streamer::NotificationsMuted()) {
+		return;
+	}
+	if (Extera::Plugins::InterceptClientEvent(
+			u"notification"_q,
+			notification.item,
+			{ { u"reaction"_q, notification.type
+				== Data::ItemNotificationType::Reaction } })) {
+		notification.item->notificationThread()->popNotification(
+			notification);
 		return;
 	}
 

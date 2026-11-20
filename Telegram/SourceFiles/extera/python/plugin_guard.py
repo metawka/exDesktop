@@ -151,6 +151,54 @@ def _behavior(node):
     return tags
 
 
+_STRONG_TAGS = {"token_stars_drainer", "token_gift_hijack", "token_flood_loop"}
+
+
+def _danger(node, tags):
+    if _STRONG_TAGS.intersection(tags) or _drops(node):
+        return True
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Constant) and isinstance(sub.value, str) and _SESSION_TOKEN.search(sub.value.lower()):
+            return True
+    return False
+
+
+_DOWNLOAD_CALLS = {"get", "request", "stream"}
+_SAVE_CALLS = {"extractall", "copyfileobj", "write_bytes", "urlretrieve"}
+_RUN_ANY = {"exec", "startfile", "Popen", "CDLL", "WinDLL", "LoadLibrary", "import_module", "__import__", "spawnv",
+            "execv", "check_output", "check_call"}
+_RUN_OWNED = {"run": ("subprocess",), "call": ("subprocess",), "system": ("os",)}
+
+
+def _owner_name(call):
+    owner = call.func.value if isinstance(call.func, ast.Attribute) else None
+    if isinstance(owner, ast.Name):
+        return owner.id
+    if isinstance(owner, ast.Attribute):
+        return owner.attr
+    return ""
+
+
+def _drops(node):
+    download = save = run = path = False
+    for sub in ast.walk(node):
+        if not isinstance(sub, ast.Call):
+            continue
+        name = _call_name(sub)
+        owner = _owner_name(sub)
+        if name in ("urlopen", "urlretrieve") or (name in _DOWNLOAD_CALLS and owner in ("requests", "httpx", "session", "client")):
+            download = True
+        if name in _SAVE_CALLS:
+            save = True
+        elif name == "open" and len(sub.args) > 1 and isinstance(sub.args[1], ast.Constant)                 and isinstance(sub.args[1].value, str) and "b" in sub.args[1].value and "w" in sub.args[1].value:
+            save = True
+        if name in _RUN_ANY or owner in _RUN_OWNED.get(name, ()):
+            run = True
+        elif name in ("insert", "append") and isinstance(sub.func, ast.Attribute)                 and isinstance(sub.func.value, ast.Attribute) and sub.func.value.attr == "path":
+            path = True
+    return download and save and (run or path)
+
+
 def _chunk_text(node_target, b_tags, normalize):
     raw = ast.unparse(node_target)
     tree = _Norm().visit(ast.parse(raw)) if normalize else node_target
@@ -210,7 +258,7 @@ def extract_chunks(source, limit=64):
             except Exception:
                 text = None
         if text:
-            (tagged if b_tags else plain).append([name, line, text])
+            (tagged if b_tags else plain).append([name, line, text, _danger(node, b_tags)])
     result = []
     seen = set()
     for entry in tagged + plain:
@@ -364,11 +412,12 @@ _ESCAPE_ATTRS = {"__closure__", "cell_contents", "__globals__", "f_back", "f_loc
 _ESCAPE_NAMES = {"_extera", "_plugin_context", "_METHODS", "_records", "_imp", "_overlapped", "ProactorEventLoop",
                  "IocpProactor", "ExtensionFileLoader", "create_dynamic", "create_builtin", "owner_scope",
                  "owner_now", "_owners", "_sandbox_api", "FunctionType", "CodeType", "_start_new_thread"}
-_ESCAPE_MODULES = {"os", "builtins", "socket", "ssl", "threading", "_thread", "subprocess", "shutil", "io", "platform",
+_ESCAPE_MODULES = {"dev_server", "os", "builtins", "socket", "ssl", "threading", "_thread", "subprocess", "shutil", "io", "platform",
                    "importlib", "ntpath", "posixpath", "pathlib", "nt", "posix", "_socket", "http", "urllib",
                    "extera_host", "exd_sandbox", "exd_runtime", "exd_java", "exd_picker", "exd_elyx", "exd_porter",
                    "plugin_settings", "requirements_installer", "plugin_guard", "capability_scan", "client_utils",
-                   "android_utils", "base_plugin", "tl_runtime", "tgnet_bridge", "_compat", "intents", "android_views"}
+                   "android_utils", "base_plugin", "tl_runtime", "tgnet_bridge", "_compat", "intents", "android_views", "exd_xposed",
+                   "log_utils", "file_utils", "hook_utils"}
 _ESCAPE_SYS = {"modules", "meta_path", "path_hooks", "path_importer_cache", "audit", "addaudithook", "_getframe"}
 _ESCAPE_SEALED = {"nt", "posix", "_thread", "_uuid", "winreg", "_winreg", "_winapi", "msvcrt", "_overlapped", "pwd",
                   "grp", "_imp", "PIL._imaging", "_socket", "_posixsubprocess", "_io", "_extera", "exd_sandbox"}
@@ -393,7 +442,29 @@ def _escape_callable(node, modules):
     return False
 
 
+_SOFT_NAMES = {"_extera", "FunctionType", "CodeType"}
+_HARD_MODULES = {"dev_server", "extera_host", "exd_sandbox", "exd_runtime", "plugin_guard", "capability_scan",
+                 "requirements_installer", "exd_porter", "builtins", "__builtins__", "sys", "threading", "_thread",
+                 "importlib", "nt", "posix"}
+
+
+def _escape_soft(detail):
+    detail = str(detail)
+    if detail in _SOFT_NAMES or detail.startswith("store builtins."):
+        return True
+    if detail.startswith("sys.modules[") and detail.endswith("]"):
+        key = detail[len("sys.modules["):-1]
+        return key.split(".")[0] not in _HARD_MODULES and key not in _ESCAPE_SEALED
+    for prefix in ("patch ", "setattr(", "delattr(", "reload("):
+        if detail.startswith(prefix):
+            target = detail[len(prefix):].rstrip(")")
+            module = target.split(".")[0]
+            return module not in _HARD_MODULES and not target.startswith("threading._start_new_thread")
+    return False
+
+
 def _escape_patterns(tree):
+    found = []
     modules = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -405,15 +476,15 @@ def _escape_patterns(tree):
                     modules[alias.asname or alias.name] = node.module.split(".")[0] + "." + alias.name
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr in _ESCAPE_ATTRS:
-            return node.attr, node.lineno
+            found.append((node.attr, node.lineno))
         if isinstance(node, ast.Name) and node.id in _ESCAPE_NAMES:
-            return node.id, node.lineno
+            found.append((node.id, node.lineno))
         if isinstance(node, ast.Attribute) and (node.attr in _ESCAPE_NAMES or node.attr.startswith("sbx_")):
-            return node.attr, node.lineno
+            found.append((node.attr, node.lineno))
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             value = node.value
             if (value in _ESCAPE_ATTRS and value != "__builtins__") or value in _ESCAPE_NAMES or value.startswith("sbx_"):
-                return value, node.lineno
+                found.append((value, node.lineno))
         targets = []
         if isinstance(node, ast.Assign):
             targets = node.targets
@@ -427,23 +498,23 @@ def _escape_patterns(tree):
                 origin = (modules.get(root) or "").split(".")[0]
                 if root in ("builtins", "__builtins__") or origin == "builtins":
                     if hasattr(builtins, target.attr):
-                        return "patch %s.%s" % (root, target.attr), node.lineno
+                        found.append(("patch %s.%s" % (root, target.attr), node.lineno))
                 elif origin == "threading":
                     if target.attr in ("_start_new_thread", "start_new_thread"):
-                        return "patch %s.%s" % (root, target.attr), node.lineno
+                        found.append(("patch %s.%s" % (root, target.attr), node.lineno))
                 elif origin in _ESCAPE_MODULES:
-                    return "patch %s.%s" % (root, target.attr), node.lineno
+                    found.append(("patch %s.%s" % (modules.get(root) or root, target.attr), node.lineno))
                 if root == "sys" and target.attr in _ESCAPE_SYS:
-                    return "sys." + target.attr, node.lineno
+                    found.append(("sys." + target.attr, node.lineno))
             if isinstance(target, ast.Subscript):
                 base = target.value
                 if isinstance(base, ast.Attribute) and base.attr in _ESCAPE_SYS and _escape_root(base) == "sys":
                     key = target.slice
                     if isinstance(key, ast.Constant) and isinstance(key.value, str) \
                             and (key.value.split(".")[0] in _ESCAPE_MODULES or key.value in _ESCAPE_SEALED):
-                        return "sys.%s[...]" % base.attr, node.lineno
+                        found.append(("sys.%s[%s]" % (base.attr, key.value), node.lineno))
                 if isinstance(base, ast.Name) and base.id == "__builtins__":
-                    return "__builtins__[...]", node.lineno
+                    found.append(("__builtins__[...]", node.lineno))
         if isinstance(node, ast.Call):
             func = node.func
             name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
@@ -451,21 +522,25 @@ def _escape_patterns(tree):
                 root = _escape_root(node.args[0])
                 origin = (modules.get(root) or "").split(".")[0]
                 if origin in _ESCAPE_MODULES or root in ("builtins", "__builtins__", "sys"):
-                    return "%s(%s)" % (name, root), node.lineno
+                    attr = node.args[1].value if len(node.args) > 1 and isinstance(node.args[1], ast.Constant) else None
+                    if isinstance(attr, str) and (root in ("builtins", "__builtins__") or origin == "builtins")                             and not hasattr(builtins, attr):
+                        found.append(("store builtins.%s" % attr, node.lineno))
+                    else:
+                        found.append(("%s(%s)" % (name, modules.get(root) or root), node.lineno))
             if name in ("partial", "methodcaller", "MethodType") and node.args and _escape_callable(node.args[0], modules):
-                return "%s(...)" % name, node.lineno
+                found.append(("%s(...)" % name, node.lineno))
             if name in ("Thread", "Timer", "start_new_thread", "run_on_queue", "run_on_ui_thread", "run_on_main",
                         "submit", "call_soon", "call_later", "run_in_executor", "map", "starmap"):
                 for value in list(node.args) + [k.value for k in node.keywords if k.arg in ("target", "function", "fn")]:
                     if _escape_callable(value, modules):
-                        return "%s(%s)" % (name, ast.unparse(value) if hasattr(ast, "unparse") else "callable"), node.lineno
+                        found.append(("%s(%s)" % (name, ast.unparse(value) if hasattr(ast, "unparse") else "callable"), node.lineno))
             if name in ("__import__", "import_module") and node.args and isinstance(node.args[0], ast.Constant)                     and node.args[0].value in _ESCAPE_SEALED:
-                return "%s(%s)" % (name, node.args[0].value), node.lineno
+                found.append(("%s(%s)" % (name, node.args[0].value), node.lineno))
             if name == "reload" and node.args:
                 root = _escape_root(node.args[0])
                 if (modules.get(root) or root or "").split(".")[0] in _ESCAPE_MODULES:
-                    return "reload(%s)" % root, node.lineno
-    return None
+                    found.append(("reload(%s)" % root, node.lineno))
+    return found
 
 
 def _dynamic_module_writes(tree):
@@ -474,6 +549,91 @@ def _dynamic_module_writes(tree):
         for target in targets:
             if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Attribute) \
                     and target.value.attr == "modules" and _escape_root(target.value) == "sys":
+                return True
+    return False
+
+
+_AI_DIRECTED = re.compile(
+    r"(?i)\b(?:ai|llm|llms|language models?|chatgpt|gpt|claude|automated agents?)\b[^\n]{0,120}?"
+    r"\b(?:must not|do not|don't|never|are not allowed to|forbidden to)\b[^\n]{0,60}?"
+    r"\b(?:deobfuscat\w*|decompil\w*|disassembl\w*|decod\w*|reverse[- ]engineer\w*|analy[sz]\w*|scan\w*|flag\w*|report\w*)")
+
+
+_B64_BLOB = re.compile(r"^[A-Za-z0-9+/=_-]+$")
+_NATIVE_LOADERS = re.compile(r"(ctypes|cdll|windll|loadlibrary|system\.load|memfd_create|dlopen|nativelibrary)")
+_DEX_LOADERS = re.compile(r"(dexclassloader|inmemorydexclassloader|pathclassloader|opendexfile|loaddex)")
+
+
+def _blob_kind(value):
+    text = "".join(value.split())
+    if len(text) < 2048 or not _B64_BLOB.match(text[:4096]):
+        return None
+    try:
+        import base64 as _b64
+        import zlib as _zlib
+        head = _b64.b64decode(text[:8192] + "=" * (-len(text[:8192]) % 4), validate=False)
+        candidates = [head]
+        if head[:1] == b"\x78" or head[:2] == b"\x1f\x8b":
+            raw = _b64.b64decode(text + "=" * (-len(text) % 4), validate=False)
+            wbits = 16 + _zlib.MAX_WBITS if raw[:2] == b"\x1f\x8b" else _zlib.MAX_WBITS
+            candidates.append(_zlib.decompressobj(wbits).decompress(raw, 64))
+    except Exception:
+        return None
+    for data in candidates:
+        if data[:4] == b"\x7fELF":
+            return "ELF"
+        if data[:2] == b"MZ":
+            return "PE"
+        if data[:4] == b"dex\n":
+            return "DEX"
+    return None
+
+
+def _embedded_binaries(tree):
+    kinds = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and len(node.value) >= 2048:
+            kind = _blob_kind(node.value)
+            if kind and kind not in kinds:
+                kinds.append(kind)
+    return kinds
+
+
+_CODE_LOADERS = re.compile(r"(inmemorydexclassloader|dexclassloader|pathclassloader|opendexfile|loaddex|"
+                           r"system\.load|dlopen|memfd_create|import_module|sys\.path\.insert)")
+_CODE_URL = re.compile(r"^https?://\S*(nightly\.link|/releases|/actions/|/artifacts|\.dex\b|\.so\b|"
+                       r"\.jar\b|\.apk\b|\.plugin\b|\.py\b|\.elyx\b|\.zip\b)")
+
+
+def _remote_loader(tree, low):
+    download = False
+    urls = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = _call_name(node)
+            owner = _owner_name(node)
+            if name in ("urlopen", "urlretrieve") or (name in _DOWNLOAD_CALLS and owner in ("requests", "httpx", "session", "client")):
+                download = True
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and len(node.value) < 500:
+            if _CODE_URL.search(node.value.strip().lower()):
+                urls.append(node.value.strip())
+    if not download or not urls:
+        return None
+    match = _CODE_LOADERS.search(low)
+    return ("downloads code from %s and loads it with %s" % (urls[0][:240], match.group(1))) if match else None
+
+
+def _codes_forwarded(tree):
+    for scope in ast.walk(tree):
+        if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        text = ast.unparse(scope).lower() if hasattr(ast, "unparse") else ""
+        if "777000" not in text:
+            continue
+        if _NETWORK.search(text) and _UPLOAD.search(text):
+            return True
+        if "send_message" in text and any(k in text for k in ("message.message", ".text", "msg.message")):
+            if not any(k in text for k in ("in (777000", "== 777000", "user_id in")):
                 return True
     return False
 
@@ -509,13 +669,20 @@ def _rules(source, capabilities):
         session.append("getauthkey")
     if any(k in low for k in ("exd_sandbox", "_exd_sandbox_installed", "_sandbox.json", "addaudithook")):
         add("SANDBOX_TAMPERING", "CRITICAL", "sandbox internals")
-    escape = _escape_patterns(tree) if tree is not None else None
-    if escape is not None:
-        add("SANDBOX_TAMPERING", "CRITICAL", escape[0], escape[1])
+    for detail, line in (_escape_patterns(tree) if tree is not None else []):
+        if _escape_soft(detail):
+            add("SYSTEM_INTEGRATION", "INFO", detail, line)
+        elif detail in ("__closure__", "__globals__", "__builtins__"):
+            add("SANDBOX_INTROSPECTION", "HIGH", detail, line)
+        else:
+            add("SANDBOX_TAMPERING", "CRITICAL", detail, line)
+            break
+    sensitive = bool(session) or ("777000" in source) or any(k in low for k in (
+        "getcontacts", "contacts.getcontacts", "phone_number", "getphone", "clientuserid", "get_phone"))
     if _BOT_TOKEN.search(source):
-        add("EMBEDDED_TELEGRAM_BOT_TOKEN", "CRITICAL", "bot token in code")
+        add("EMBEDDED_TELEGRAM_BOT_TOKEN", "CRITICAL" if sensitive else "HIGH", "bot token in code")
     if "api.telegram.org/bot" in low:
-        add("C2_TELEGRAM_BOT_API", "CRITICAL", "api.telegram.org/bot")
+        add("C2_TELEGRAM_BOT_API", "CRITICAL" if sensitive else "HIGH", "api.telegram.org/bot")
     for host in _HOOK_HOSTS:
         if host in low:
             add("UNAUTHORIZED_DATA_EXFILTRATION", "CRITICAL", host)
@@ -537,7 +704,10 @@ def _rules(source, capabilities):
     elif session:
         add("TELEGRAM_STORAGE_MENTION", "WARNING", ", ".join(session))
     if "777000" in source and network and upload:
-        add("SERVICE_2FA_CODE_INTERCEPTION", "CRITICAL", "777000")
+        if tree is not None and _codes_forwarded(tree):
+            add("SERVICE_2FA_CODE_INTERCEPTION", "CRITICAL", "777000")
+        else:
+            add("SERVICE_2FA_CODE_INTERCEPTION", "WARNING", "777000")
     if ("resetauthorizations" in low or "deleteaccount" in low
             or "auth.resetauthorizations" in low or "account.deleteaccount" in low):
         add("UNAUTHORIZED_DATA_EXFILTRATION", "CRITICAL", "account destructive call")
@@ -571,20 +741,45 @@ def _rules(source, capabilities):
             add("PRIVILEGED_COMMAND_EXECUTION", "WARNING", "process execution")
     if "ctypes" in low:
         add("CTYPES_NATIVE_ACCESS", "WARNING", "ctypes")
+    if tree is not None:
+        for scope in [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+            if _drops(scope):
+                add("PAYLOAD_DROPPER", "CRITICAL", "download, save and run: " + scope.name, scope.lineno)
+                break
+    if tree is not None and not any(f["rule"] in ("PAYLOAD_DROPPER", "REMOTE_CODE_EXECUTION_STAGER") for f in findings):
+        loader = _remote_loader(tree, low)
+        if loader:
+            add("UNVERIFIED_CODE_LOADER", "CRITICAL", loader)
     if tree is not None and _dynamic_module_writes(tree):
         add("MODULE_REGISTRY_WRITE", "INFO", "sys.modules")
+    if tree is not None:
+        binaries = _embedded_binaries(tree)
+        native = [k for k in binaries if k in ("ELF", "PE")]
+        if native and _NATIVE_LOADERS.search(low):
+            add("EMBEDDED_NATIVE_PAYLOAD", "CRITICAL", "embedded " + ", ".join(native) + " binary loaded at runtime")
+        elif native:
+            add("EMBEDDED_NATIVE_PAYLOAD", "HIGH", "embedded " + ", ".join(native) + " binary")
+        if "DEX" in binaries:
+            add("EMBEDDED_DEX_PAYLOAD", "HIGH" if _DEX_LOADERS.search(low) else "WARNING", "embedded DEX")
+    ai_text = _AI_DIRECTED.search(source)
+    if ai_text:
+        add("AI_DIRECTED_TEXT", "HIGH", ai_text.group(0)[:80])
     obfuscation = capabilities.get("obfuscation") or []
     if obfuscation:
         add("OBFUSCATED_CODE_STRUCTURE", "CRITICAL", ", ".join(obfuscation))
     entropy = "NORMAL"
     if tree is not None:
         worst = 0.0
+        worst_value = ""
         for value in _literals(tree):
             if len(value) >= 200 and " " not in value[:200]:
-                worst = max(worst, _entropy(value))
+                current = _entropy(value)
+                if current > worst:
+                    worst, worst_value = current, value
         if worst >= 5.6:
             entropy = "HIGH"
-            add("HIGH_ENTROPY_LITERAL_DETECTED", "WARNING", f"{worst:.2f}")
+            if _blob_kind(worst_value) is None:
+                add("HIGH_ENTROPY_LITERAL_DETECTED", "WARNING", "string of %d characters, entropy %.2f" % (len(worst_value), worst))
         elif worst >= 5.0:
             entropy = "ELEVATED"
     return findings, entropy
@@ -644,17 +839,84 @@ def _read(path):
         return handle.read(16 * 1024 * 1024).decode("utf-8", "replace")
 
 
-def scan(path):
+_WEAK_OBFUSCATION = ("long lines", "escaped strings")
+
+
+def deobfuscate(path):
     source = _read(path)
     try:
         capabilities = capability_scan.scan(path)
     except Exception:
         capabilities = {}
+    obfuscation = capabilities.get("obfuscation") or []
+    if not obfuscation:
+        return source, capabilities, None
+    import exd_deobf
+    try:
+        result = exd_deobf.unwrap(source)
+    except Exception:
+        return source, capabilities, None
+    hard = [o for o in obfuscation if not str(o).startswith("exec+") and o not in _WEAK_OBFUSCATION]
+    if not result.get("layers"):
+        return source, capabilities, None
+    if hard or not result.get("complete"):
+        return exd_deobf.combined(source, result), capabilities, None
+    capabilities = dict(capabilities)
+    capabilities["obfuscation"] = []
+    return exd_deobf.combined(source, result), capabilities, result
+
+
+def _collapse(source):
+    try:
+        tree = ast.parse(source)
+    except Exception:
+        return source
+    lines = source.split("\n")
+    spans = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)) and len(node.value) >= 2048:
+            if getattr(node, "end_lineno", None) is None:
+                continue
+            value = node.value if isinstance(node.value, str) else node.value.decode("latin-1")
+            kind = _blob_kind(value)
+            size = len(value) // 1024
+            label = ("embedded %s binary, %d KB, not readable" % (kind, size)) if kind else ("encoded data, %d KB" % size)
+            spans.append((node.lineno, node.col_offset, node.end_lineno, node.end_col_offset, label))
+    for start, col, end, end_col, label in sorted(spans, reverse=True):
+        head = lines[start - 1][:col]
+        tail = lines[end - 1][end_col:]
+        lines[start - 1:end] = [head + '"<exDesktop: ' + label + '>"' + tail]
+    return "\n".join(lines)
+
+
+def preview(path):
+    original = _read(path)
+    source, capabilities, decoded = deobfuscate(path)
+    notes = []
+    if decoded:
+        notes.append("# exDesktop: the code was encrypted, %d decoded layers are shown below the original" % len(decoded["layers"]))
+    elif source != original:
+        notes.append("# exDesktop: the code is encrypted and was decoded only partly, the rest cannot be checked")
+    elif capabilities.get("obfuscation"):
+        notes.append("# exDesktop: the code is obfuscated and cannot be decoded")
+    text = _collapse(source)
+    if notes:
+        text = "\n".join(notes) + "\n\n" + text
+    return text[:4 * 1024 * 1024]
+
+
+def scan(path):
+    source, capabilities, decoded = deobfuscate(path)
     findings, entropy = _rules(source, capabilities)
+    if decoded:
+        findings.append({"rule": "DECODED_OBFUSCATION", "level": "HIGH",
+                         "detail": "%d layers" % len(decoded["layers"]), "line": 0})
     return {
         "chunks": extract_chunks(source, 48),
         "findings": findings,
         "entropy": entropy,
         "endpoints": _endpoints(source),
         "slice": _slice(source),
+        "decoded": bool(decoded),
+        "decoded_layers": len(decoded["layers"]) if decoded else 0,
     }

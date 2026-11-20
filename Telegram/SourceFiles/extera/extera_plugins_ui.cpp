@@ -53,6 +53,7 @@
 #include "ui/wrap/slide_wrap.h"
 #include "extera/extera_config.h"
 #include "base/timer.h"
+#include "settings.h"
 #include "core/click_handler_types.h"
 #include "ui/effects/animations.h"
 #include "ui/boxes/confirm_box.h"
@@ -71,6 +72,7 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QDir>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QCryptographicHash>
 #include <QtCore/QJsonObject>
 
 namespace Extera::Plugins {
@@ -863,6 +865,44 @@ void SetupLinks(
 	});
 }
 
+[[nodiscard]] QString ExdIconFramePath(const QString &key) {
+	const auto hash = QCryptographicHash::hash(
+		key.toUtf8(),
+		QCryptographicHash::Md5).toHex();
+	return cWorkingDir()
+		+ u"tdata/exd_plugin_icons/"_q
+		+ QString::fromLatin1(hash)
+		+ u".png"_q;
+}
+
+[[nodiscard]] base::flat_map<QString, QImage> &ExdIconFrames() {
+	static auto result = base::flat_map<QString, QImage>();
+	return result;
+}
+
+[[nodiscard]] QImage ExdLoadIconFrame(const QString &key) {
+	auto &frames = ExdIconFrames();
+	if (const auto i = frames.find(key); i != end(frames)) {
+		return i->second;
+	}
+	auto image = QImage(ExdIconFramePath(key));
+	if (!image.isNull()) {
+		image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+		image.setDevicePixelRatio(style::DevicePixelRatio());
+		frames.emplace(key, image);
+	}
+	return image;
+}
+
+void ExdStoreIconFrame(const QString &key, QImage image) {
+	ExdIconFrames()[key] = image;
+	const auto path = ExdIconFramePath(key);
+	crl::async([=] {
+		QDir().mkpath(QFileInfo(path).absolutePath());
+		image.save(path, "PNG");
+	});
+}
+
 void SetupPluginIcon(
 		not_null<Ui::AbstractButton*> widget,
 		not_null<Window::SessionController*> controller,
@@ -877,11 +917,20 @@ void SetupPluginIcon(
 		Ui::Animations::Simple appear;
 		bool failed = false;
 		bool shown = false;
+		bool captured = false;
 	};
 	widget->resize(size, size + badge / 3);
 	const auto state = widget->lifetime().make_state<State>();
 	const auto slash = icon.lastIndexOf('/');
 	state->failed = (slash <= 0);
+	const auto frameKey = icon + u"@"_q + QString::number(size);
+	if (!state->failed) {
+		state->image = ExdLoadIconFrame(frameKey);
+		if (!state->image.isNull()) {
+			state->shown = true;
+			state->captured = true;
+		}
+	}
 	const auto startAppear = [=] {
 		if (state->shown) {
 			return;
@@ -930,6 +979,32 @@ void SetupPluginIcon(
 		const auto emojiReady = state->emoji && state->emoji->ready();
 		if (emojiReady) {
 			startAppear();
+			if (!state->captured) {
+				state->captured = true;
+				const auto ratio = style::DevicePixelRatio();
+				auto frame = QImage(
+					QSize(size, size) * ratio,
+					QImage::Format_ARGB32_Premultiplied);
+				frame.setDevicePixelRatio(ratio);
+				frame.fill(Qt::transparent);
+				{
+					auto q = QPainter(&frame);
+					auto fhq = PainterHighQualityEnabler(q);
+					const auto real = std::max(
+						size,
+						int(st::exteraInstallIcon));
+					q.translate(size / 2., size / 2.);
+					if (real != size) {
+						q.scale(size / float64(real), size / float64(real));
+					}
+					state->emoji->paint(q, {
+						.textColor = st::windowFg->c,
+						.now = crl::now(),
+						.position = QPoint(-real / 2, -real / 2),
+					});
+				}
+				ExdStoreIconFrame(frameKey, frame);
+			}
 		}
 		if (state->failed && state->image.isNull() && !emojiReady) {
 			p.setBrush(st::windowBgActive);
@@ -2662,8 +2737,9 @@ void ShowGuardAnalysis(
 			const auto row = threats->add(
 				object_ptr<Ui::VerticalLayout>(threats),
 				QMargins(st::exteraInstallCardPadding.left(), 6, st::exteraInstallCardPadding.left(), 0));
-			const auto head = row->add(
-				object_ptr<Ui::FixedHeightWidget>(row, style::ConvertScale(26)));
+			const auto base = style::ConvertScale(26);
+			const auto head = row->add(object_ptr<Ui::RpWidget>(row));
+			head->resize(head->width(), base);
 			const auto chip = Ui::CreateChild<GuardChip>(
 				head,
 				FindingLevelTitle(finding.level),
@@ -2673,10 +2749,16 @@ void ShowGuardAnalysis(
 				RuleTitle(finding.rule),
 				st::exteraThreatTitle);
 			head->widthValue() | rpl::on_next([=](int width) {
-				chip->moveToLeft(0, (head->height() - chip->height()) / 2, width);
 				const auto left = chip->width() + 8;
-				title->resizeToWidth(width - left);
-				title->moveToLeft(left, (head->height() - title->height()) / 2, width);
+				title->resizeToWidth(std::max(width - left, 1));
+				const auto line = st::exteraThreatTitle.style.font->height;
+				const auto top = (base - line) / 2;
+				chip->moveToLeft(0, (base - chip->height()) / 2, width);
+				title->moveToLeft(left, top, width);
+				const auto height = std::max(base, top + title->height() + top);
+				if (head->height() != height) {
+					head->resize(width, height);
+				}
 			}, head->lifetime());
 			auto details = finding.detail;
 			if (finding.line > 0) {
@@ -3116,9 +3198,14 @@ void PaintPuzzle(QPainter &p, QRectF rect, QColor color) {
 void ShowSourceBox(
 		not_null<Window::SessionController*> controller,
 		const QString &path) {
-	const auto source = Call(u"source"_q, QJsonObject{
+	auto source = Call(u"guard_preview"_q, QJsonObject{
 		{ u"path"_q, path },
 	}).toString();
+	if (source.isEmpty()) {
+		source = Call(u"source"_q, QJsonObject{
+			{ u"path"_q, path },
+		}).toString();
+	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(rpl::single(QFileInfo(path).fileName()));
 		box->setWidth(st::boxWideWidth * 3 / 2);

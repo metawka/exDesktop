@@ -788,6 +788,10 @@ void TopControls::setupPinnedTracker() {
 	}, _pinnedLifetime);
 }
 
+bool TopControls::exdPinnedPending() const {
+	return _pinnedBar && !_shownPinnedBarItem;
+}
+
 void TopControls::checkPinnedBarState() {
 	Expects(_pinnedTracker != nullptr);
 

@@ -57,14 +57,30 @@ class ArrayList(list):
 
 
 class _ClassInfo:
-    def __init__(self, name):
+    def __init__(self, name, cls=None):
         self._name = name
+        self._cls = cls
 
     def getSimpleName(self):
         return self._name
 
     def getName(self):
         return "org.telegram.tgnet.TLRPC$" + self._name
+
+    def getClass(self):
+        return self
+
+    def __eq__(self, other):
+        return isinstance(other, _ClassInfo) and other._name == self._name
+
+    def __hash__(self):
+        return hash(self._name)
+
+    def __getattr__(self, item):
+        if item.startswith("_"):
+            raise AttributeError(item)
+        import exd_java
+        return getattr(exd_java.JavaClassInfo(self.getName(), self._cls), item)
 
 
 class Param:
@@ -92,7 +108,8 @@ class Combinator:
 class TLObject:
     _tl = None
 
-    def __init__(self, **kwargs):
+    def __init__(*args, **kwargs):
+        self = args[0]
         combinator = type(self)._tl
         if combinator is not None:
             for param in combinator.params:
@@ -106,7 +123,7 @@ class TLObject:
         return combinator.id if combinator else 0
 
     def getClass(self):
-        return _ClassInfo(type(self).__name__)
+        return _ClassInfo(type(self).__name__, type(self))
 
     def getObjectSize(self):
         return len(serialize(self))
@@ -542,6 +559,9 @@ class _Namespace:
         if item.startswith("__"):
             raise AttributeError(item)
         cls = lookup(item)
+        if cls is None and self._name.startswith("TL_") and item:
+            bare = item[3:] if item.startswith("TL_") else item
+            cls = lookup(self._name + "_" + bare)
         if cls is None and not item.startswith("TL_"):
             cls = lookup("TL_" + item[0].lower() + item[1:]) if item else None
         if cls is None:

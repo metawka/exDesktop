@@ -113,6 +113,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/file_upload.h"
 #include "storage/storage_account.h"
 #include "tgw/tgw_storage.h"
+#include <QtCore/QJsonArray>
 
 namespace {
 
@@ -3705,6 +3706,10 @@ void ApiWrap::requestHistory(
 				messageId,
 				slice,
 				result);
+			history->exdMergeDeletedIds(
+				parsed.messageIds,
+				parsed.noSkipRange,
+				parsed.fullCount);
 			history->messages().addSlice(
 				std::move(parsed.messageIds),
 				parsed.noSkipRange,
@@ -4383,6 +4388,19 @@ void ApiWrap::sendFiles(
 		SendMediaType type,
 		std::shared_ptr<SendingAlbum> album,
 		SendAction action) {
+	if (Extera::Plugins::HasUiHook(u"send_media"_q)) {
+		auto paths = QJsonArray();
+		for (const auto &file : list.files) {
+			paths.push_back(file.path);
+		}
+		if (Extera::Plugins::InterceptClientEvent(u"send_media"_q, nullptr, {
+			{ u"dialog_id"_q, double(Extera::Plugins::DialogId(action.history->peer)) },
+			{ u"paths"_q, paths },
+			{ u"caption"_q, list.files.empty() ? QString() : list.files.front().caption.text },
+		})) {
+			return;
+		}
+	}
 	if (_session->data().exteraIsDeleted(action.replyTo.messageId)) {
 		auto quote = list.files.empty()
 			? TextWithTags()

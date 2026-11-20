@@ -1,0 +1,11 @@
+group material;
+boxRadius: 20px;
+boxTitleFont: font(18px semibold);
+defaultBoxButton: RoundButton(defaultBoxButton) {
+	height: 38px;
+	textTop: 10px;
+}
+defaultBox: Box(defaultBox) {
+	buttonHeight: 38px;
+}
+mainMenuRadius: 16px;

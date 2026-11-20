@@ -139,6 +139,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/ui/dialogs_video_userpic.h"
 #include "styles/style_chat.h"
 #include "styles/style_menu_icons.h"
+#include "extera/extera_plugins.h"
 
 #include <QtGui/QClipboard>
 #include <QtWidgets/QApplication>
@@ -2932,6 +2933,17 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 		}
 	}
 
+	if (const auto menuItem = _dragStateItem
+			? _dragStateItem
+			: Element::Moused()
+			? Element::Moused()->data().get()
+			: nullptr) {
+		if (Extera::Plugins::InterceptClientEvent(
+				u"message_menu"_q,
+				menuItem)) {
+			return;
+		}
+	}
 	const auto link = ClickHandler::getActive();
 	if (_controller->showFrozenError()) {
 		return;
@@ -4244,6 +4256,20 @@ void HistoryInner::saveContextGif(FullMsgId itemId) {
 void HistoryInner::copyContextText(FullMsgId itemId) {
 	if (const auto item = session().data().message(itemId)) {
 		if (!showCopyRestriction(item)) {
+			if (Extera::Plugins::HasUiHook(u"copy_text"_q)) {
+				const auto original = HistoryItemText(item);
+				if (const auto replaced = Extera::Plugins::UiHookText(
+						u"copy_text"_q,
+						item,
+						nullptr,
+						original.expanded)) {
+					if (*replaced != original.expanded) {
+						TextUtilities::SetClipboardText(
+							TextForMimeData::Simple(*replaced));
+						return;
+					}
+				}
+			}
 			if (const auto group = session().data().groups().find(item)) {
 				TextUtilities::SetClipboardText(HistoryGroupText(group));
 			} else {

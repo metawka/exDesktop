@@ -86,18 +86,29 @@ bool DarkTasbarValueValid/* = false*/;
 	return use;
 }
 
-[[nodiscard]] QImage MonochromeWithDot(QImage image, style::color color) {
+[[nodiscard]] QImage MonochromeWithBadge(
+		QImage image,
+		int,
+		style::color bg,
+		style::color) {
+	image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+	const auto size = image.width();
+	const auto diameter = size * 0.42;
+	const auto ring = std::max(size / 12., 1.);
+	const auto dot = QRectF(
+		size - diameter,
+		size - diameter,
+		diameter,
+		diameter);
 	auto p = QPainter(&image);
 	auto hq = PainterHighQualityEnabler(p);
-	const auto xm = image.width() / 16.;
-	const auto ym = image.height() / 16.;
-	p.setBrush(color);
 	p.setPen(Qt::NoPen);
-	p.drawEllipse(QRectF( // cx=3.9, cy=12.7, r=2.2
-		1.7 * xm,
-		10.5 * ym,
-		4.4 * xm,
-		4.4 * ym));
+	p.setCompositionMode(QPainter::CompositionMode_Clear);
+	p.setBrush(Qt::black);
+	p.drawEllipse(dot.marginsAdded({ ring, ring, ring, ring }));
+	p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+	p.setBrush(bg);
+	p.drawEllipse(dot);
 	return image;
 }
 
@@ -141,7 +152,11 @@ bool DarkTasbarValueValid/* = false*/;
 		return result;
 	} else if (smallIcon) {
 		if (monochrome && darkMode) {
-			return MonochromeWithDot(std::move(result), args.bg);
+			return MonochromeWithBadge(
+				std::move(result),
+				args.count,
+				args.bg,
+				args.fg);
 		}
 		return Window::WithSmallCounter(std::move(result), std::move(args));
 	}

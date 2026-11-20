@@ -39,6 +39,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/vertical_list.h"
 #include "ui/widgets/box_content_divider.h"
 #include "ui/widgets/buttons.h"
+#include "ui/style/style_core.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
@@ -189,6 +190,9 @@ FilterRowButton::FilterRowButton(
 , _state(description.isEmpty() ? State::Normal : State::Suggested) {
 	_restore.setFullRadius(true);
 	_add.setFullRadius(true);
+	if (style::Md3Grouped()) {
+		setProperty("md3GroupedRow", true);
+	}
 	setup(filter, description.isEmpty()
 		? ComputeCountString(session, filter)
 		: description);
@@ -287,10 +291,22 @@ void FilterRowButton::paintEvent(QPaintEvent *e) {
 
 	const auto over = isOver() || isDown();
 	if (_state == State::Normal) {
-		if (over) {
-			p.fillRect(e->rect(), st::windowBgOver);
+		if (style::Md3Grouped()) {
+			const auto path = Ui::PaintGroupedRow(
+				p,
+				this,
+				st::windowBg->c,
+				over);
+			p.save();
+			p.setClipPath(path);
+			RippleButton::paintRipple(p, 0, 0);
+			p.restore();
+		} else {
+			if (over) {
+				p.fillRect(e->rect(), st::windowBgOver);
+			}
+			RippleButton::paintRipple(p, 0, 0);
 		}
-		RippleButton::paintRipple(p, 0, 0);
 
 		if (_colorIndex) {
 			p.setPen(Qt::NoPen);
@@ -305,10 +321,15 @@ void FilterRowButton::paintEvent(QPaintEvent *e) {
 			p.drawEllipse(rect - Margins((1. - _colorIndexProgress) * w / 2));
 		}
 	} else if (_state == State::Removed) {
+		if (style::Md3Grouped()) {
+			Ui::PaintGroupedRow(p, this, st::windowBg->c, false);
+		}
 		p.setOpacity(st::stickersRowDisabledOpacity);
+	} else if (style::Md3Grouped()) {
+		Ui::PaintGroupedRow(p, this, st::windowBg->c, false);
 	}
 
-	const auto left = (_state == State::Suggested)
+	const auto left = (_state == State::Suggested && !style::Md3Grouped())
 		? st::defaultSubsectionTitlePadding.left()
 		: st::settingsButtonActive.padding.left();
 	const auto buttonsLeft = std::min(
@@ -1113,7 +1134,7 @@ void BuildViewSection(SectionBuilder &builder) {
 		const auto group = std::make_shared<Ui::RadioenumGroup<bool>>(
 			Core::App().settings().chatFiltersHorizontal());
 		const auto addSend = [&](bool value, const QString &text) {
-			content->add(
+			const auto exdRow = content->add(
 				object_ptr<Ui::Radioenum<bool>>(
 					content,
 					group,
@@ -1121,6 +1142,7 @@ void BuildViewSection(SectionBuilder &builder) {
 					text,
 					st::settingsSendType),
 				st::settingsSendTypePadding);
+			Ui::SetupGroupedRowBackground(exdRow, st::settingsSendTypePadding);
 		};
 		addSend(false, tr::lng_filters_vertical(tr::now));
 		addSend(true, tr::lng_filters_horizontal(tr::now));
@@ -1143,6 +1165,9 @@ void BuildViewSection(SectionBuilder &builder) {
 		const auto content = ctx.container;
 
 		Ui::AddSkip(content);
+		if (style::Md3Grouped()) {
+			Ui::AddSkip(content, st::settingsCheckboxesSkip);
+		}
 		Ui::AddSubsectionTitle(
 			content,
 			tr::lng_filters_tabs_subtitle());
@@ -1151,7 +1176,7 @@ void BuildViewSection(SectionBuilder &builder) {
 		const auto modeGroup = std::make_shared<Ui::RadioenumGroup<Mode>>(
 			Core::App().settings().chatFiltersTabsMode());
 		const auto addMode = [&](Mode value, const QString &text) {
-			content->add(
+			const auto exdRow = content->add(
 				object_ptr<Ui::Radioenum<Mode>>(
 					content,
 					modeGroup,
@@ -1159,6 +1184,7 @@ void BuildViewSection(SectionBuilder &builder) {
 					text,
 					st::settingsSendType),
 				st::settingsSendTypePadding);
+			Ui::SetupGroupedRowBackground(exdRow, st::settingsSendTypePadding);
 		};
 		addMode(Mode::Default, tr::lng_filters_tabs_default(tr::now));
 		addMode(Mode::TextOnly, tr::lng_filters_tabs_text(tr::now));

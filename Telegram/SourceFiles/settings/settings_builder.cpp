@@ -450,7 +450,7 @@ Ui::Checkbox *SectionBuilder::addCheckbox(CheckboxArgs &&args) {
 			args.checked,
 			st::settingsCheckbox);
 	};
-	return static_cast<Ui::Checkbox*>(addControl({
+	const auto result = static_cast<Ui::Checkbox*>(addControl({
 		.factory = factory,
 		.id = std::move(args.id),
 		.title = rpl::duplicate(args.title),
@@ -462,6 +462,21 @@ Ui::Checkbox *SectionBuilder::addCheckbox(CheckboxArgs &&args) {
 			? SearchEntryCheckIcon::Checked
 			: SearchEntryCheckIcon::Unchecked),
 	}));
+	const auto layout = container();
+	if (result && layout) {
+		auto row = static_cast<QWidget*>(result);
+		while (row->parentWidget() && row->parentWidget() != layout) {
+			row = row->parentWidget();
+		}
+		if (const auto rp = dynamic_cast<Ui::RpWidget*>(row)) {
+			Ui::SetupGroupedRowBackground(
+				rp,
+				(row == result)
+					? st::settingsCheckboxPadding
+					: style::margins());
+		}
+	}
+	return result;
 }
 
 void SectionBuilder::addSubsectionTitle(SubsectionTitleArgs &&args) {

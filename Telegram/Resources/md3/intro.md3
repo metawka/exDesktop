@@ -1,0 +1,17 @@
+group material;
+introNextButton: RoundButton(introNextButton) {
+	fullRadius: true;
+}
+introCountry: InputField(introCountry) {
+	textBg: transparent;
+	textMargins: margins(14px, 27px, 14px, 6px);
+}
+introCountryCode: InputField(introCountry) {
+	width: 64px;
+	textAlign: align(top);
+	textMargins: margins(3px, 27px, 3px, 6px);
+}
+introPhone: InputField(introCountry) {
+	textMargins: margins(12px, 27px, 12px, 6px);
+	width: 225px;
+}

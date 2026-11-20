@@ -36,6 +36,8 @@ SignupWidget::SignupWidget(
 , _last(this, st::introName, tr::lng_signup_lastname())
 , _invertOrder(langFirstNameGoesSecond()) {
 	_photo->showCustomOnChosen();
+	ExdSetupFieldCard(_first.data());
+	ExdSetupFieldCard(_last.data());
 
 	Lang::Updated(
 	) | rpl::on_next([=] {

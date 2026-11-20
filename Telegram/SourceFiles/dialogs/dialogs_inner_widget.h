@@ -688,6 +688,9 @@ private:
 	int _collapsedPressed = -1;
 	bool _skipTopDialog = false;
 	Row *_selected = nullptr;
+	Row *_exdHoverFrom = nullptr;
+	Row *_exdHoverTo = nullptr;
+	Ui::Animations::Simple _exdHoverAnimation;
 	Row *_pressed = nullptr;
 	MsgId _pressedTopicJumpRootId;
 	PeerId _pressedSublistJumpPeerId;

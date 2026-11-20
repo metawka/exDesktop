@@ -1368,36 +1368,24 @@ mac:
         --enable-muxer=webm
     }
 
-    configureFFmpeg arm64
-    make $MAKE_THREADS_CNT
-
-    mkdir out.arm64
-    mv libavfilter/libavfilter.a out.arm64
-    mv libavformat/libavformat.a out.arm64
-    mv libavcodec/libavcodec.a out.arm64
-    mv libswresample/libswresample.a out.arm64
-    mv libswscale/libswscale.a out.arm64
-    mv libavutil/libavutil.a out.arm64
-
-    make clean
-
-    configureFFmpeg x86_64
-    make $MAKE_THREADS_CNT
-
-    mkdir out.x86_64
-    mv libavfilter/libavfilter.a out.x86_64
-    mv libavformat/libavformat.a out.x86_64
-    mv libavcodec/libavcodec.a out.x86_64
-    mv libswresample/libswresample.a out.x86_64
-    mv libswscale/libswscale.a out.x86_64
-    mv libavutil/libavutil.a out.x86_64
-
-    lipo -create out.arm64/libavfilter.a out.x86_64/libavfilter.a -output libavfilter/libavfilter.a
-    lipo -create out.arm64/libavformat.a out.x86_64/libavformat.a -output libavformat/libavformat.a
-    lipo -create out.arm64/libavcodec.a out.x86_64/libavcodec.a -output libavcodec/libavcodec.a
-    lipo -create out.arm64/libswresample.a out.x86_64/libswresample.a -output libswresample/libswresample.a
-    lipo -create out.arm64/libswscale.a out.x86_64/libswscale.a -output libswscale/libswscale.a
-    lipo -create out.arm64/libavutil.a out.x86_64/libavutil.a -output libavutil/libavutil.a
+    ffmpegLibs="libavfilter libavformat libavcodec libswresample libswscale libavutil"
+    ffmpegArchs=$(echo "$MAC_ARCHS" | tr ';' ' ')
+    ffmpegFirst=1
+    for arch in $ffmpegArchs; do
+        if [ $ffmpegFirst -eq 0 ]; then
+            make clean
+        fi
+        ffmpegFirst=0
+        configureFFmpeg $arch
+        make $MAKE_THREADS_CNT
+        mkdir out.$arch
+        for lib in $ffmpegLibs; do
+            mv $lib/$lib.a out.$arch
+        done
+    done
+    for lib in $ffmpegLibs; do
+        lipo -create out.*/$lib.a -output $lib/$lib.a
+    done
 
     make install
 """)

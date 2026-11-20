@@ -134,6 +134,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_window.h"
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
+#include "extera/extera_plugins.h"
 
 #include <limits>
 #include <QtCore/QMimeData>
@@ -496,6 +497,7 @@ ChatWidget::ChatWidget(
 
 	refreshTopBarActiveChat();
 
+	_topBar->setExdFloating(true);
 	_topBar->move(0, 0);
 	_topBar->resizeToWidth(width());
 	_topBar->show();
@@ -4255,6 +4257,11 @@ bool ChatWidget::confirmSendingFiles(
 }
 
 void ChatWidget::replyToMessage(FullReplyTo id) {
+	if (const auto item = _history->owner().message(id.messageId)) {
+		if (Extera::Plugins::InterceptClientEvent(u"reply"_q, item)) {
+			return;
+		}
+	}
 	_composeControls->replyToMessage(std::move(id));
 	refreshTopBarActiveChat();
 }
@@ -4545,7 +4552,9 @@ void ChatWidget::updateControlsGeometry() {
 		? base::make_optional(takeTopDelta() + _scrollTopDelta)
 		: 0;
 	_topBar->resizeToWidth(contentWidth);
-	_topBarShadow->resize(contentWidth, st::lineWidth);
+	_topBarShadow->resize(
+		contentWidth,
+		_topBar->exdFloating() ? 0 : st::lineWidth);
 	const auto tabsLeftSkip = _subsectionTabs
 		? _subsectionTabs->leftSkip()
 		: 0;
@@ -4677,7 +4686,9 @@ void ChatWidget::paintEvent(QPaintEvent *e) {
 		return;
 	}
 
-	const auto aboveHeight = _topBar->height();
+	const auto aboveHeight = _topBar->exdFloating()
+		? 0
+		: _topBar->height();
 	const auto bg = e->rect().intersected(
 		QRect(0, aboveHeight, width(), height() - aboveHeight));
 	SectionWidget::PaintBackground(controller(), _theme.get(), this, bg);
@@ -5004,9 +5015,25 @@ void ChatWidget::showInfoTooltip(
 		std::move(hiddenCallback));
 }
 
+bool ChatWidget::exdContentLoaded() const {
+	return _loaded;
+}
+
+bool ChatWidget::exdShowReady() const {
+	return _loaded && !_topControls->exdPinnedPending();
+}
+
+void ChatWidget::exdBeforeShowGrab() {
+	_topControls->finishAnimating();
+	updateControlsGeometry();
+}
+
 void ChatWidget::markLoaded() {
 	if (!_loaded) {
 		_loaded = true;
+		crl::on_main(this, [=] {
+			exdShowReadyChanged();
+		});
 		crl::on_main(this, [=] {
 			updatePinnedVisibility();
 		});

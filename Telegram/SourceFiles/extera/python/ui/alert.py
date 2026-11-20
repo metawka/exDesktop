@@ -37,6 +37,10 @@ class AlertDialogBuilder:
         self._progress = None
         self._shown = False
         self._exd_extra = None
+        self._red = set()
+        self._view = None
+        self._view_height = -2
+        self._context = context
 
     def set_title(self, text):
         self._title = str(text or "")
@@ -64,22 +68,38 @@ class AlertDialogBuilder:
         self._buttons[self.BUTTON_NEUTRAL] = (str(text or ""), listener)
         return self
 
-    def make_button_red(self, which):
+    def make_button_red(self, button_type):
+        self._red.add(int(button_type))
         return self
 
     def set_cancelable(self, cancelable):
         self._cancelable = bool(cancelable)
+        self._update({"cancelable": self._cancelable})
         return self
 
     def set_canceled_on_touch_outside(self, cancel):
         self._canceled_on_touch_outside = bool(cancel)
+        self._update({"outside": self._canceled_on_touch_outside})
         return self
 
     def set_progress(self, progress):
-        self._progress = int(progress)
+        self._progress = max(0, min(100, int(progress)))
+        self._update({"progress": self._progress})
         return self
 
+    def _update(self, values):
+        if not self._shown or self._id not in _builders:
+            return
+        data = {"id": self._id}
+        data.update(values)
+        try:
+            _extera.update_alert(json.dumps(data))
+        except Exception:
+            pass
+
     def set_view(self, view, height=-2):
+        self._view = view
+        self._view_height = height
         return self
 
     def set_top_animation(self, res_id, size, auto_repeat, background_color):
@@ -107,7 +127,10 @@ class AlertDialogBuilder:
         return self
 
     def get_context(self):
-        return None
+        if self._context is not None:
+            return self._context
+        import _compat
+        return _compat.SHIMS.get("org.telegram.messenger", {}).get("ApplicationLoader").applicationContext
 
     def set_on_dismiss_listener(self, listener):
         self._on_dismiss = listener
@@ -122,13 +145,30 @@ class AlertDialogBuilder:
         return self
 
     def _payload(self):
+        payload = self._base_payload()
+        if self._view is not None:
+            import android_views
+            tree = android_views._node(self._view)
+            with android_views._lock:
+                android_views._ids[0] += 1
+                view_id = android_views._ids[0]
+            android_views._mark_live(self._view, view_id)
+            payload["view"] = tree
+            payload["view_id"] = view_id
+        return payload
+
+    def _base_payload(self):
         return {
             "id": self._id,
             "title": self._title,
             "message": self._message,
             "alert_type": self._alert_type,
             "items": self._items,
-            "cancelable": self._cancelable,
+            "cancelable": True if self._cancelable is None else self._cancelable,
+            "outside": self._canceled_on_touch_outside if self._canceled_on_touch_outside is not None
+            else (True if self._cancelable is None else self._cancelable),
+            "progress": -1 if self._progress is None else self._progress,
+            "red": sorted(self._red),
             "exd": self._exd_extra,
             "buttons": [
                 {"which": which, "text": text}
@@ -140,6 +180,12 @@ class AlertDialogBuilder:
         return self
 
     def show(self):
+        if self._view is not None:
+            import exd_webview
+            web = exd_webview.find_webview(self._view)
+            if web is not None:
+                web.open(self._title)
+                return self
         _builders[self._id] = self
         try:
             import extera_host
@@ -151,20 +197,50 @@ class AlertDialogBuilder:
         return self
 
     def dismiss(self):
-        if _builders.pop(self._id, None) is not None:
-            _dispatch_dismiss(self._id, "dismiss")
-        return self
+        if self._id in _builders:
+            self._update({"dismiss": True})
+            if self._id in _builders:
+                _dispatch_dismiss(self._id, "dismiss")
+        return None
 
     def get_dialog(self):
         return self
 
-    def get_button(self, which):
+    def getContainerView(self):
+        if self._view is None:
+            import android_views
+            self._view = android_views.FrameLayout(None)
+        return self._view
+
+    def get_button(self, button_type):
+        entry = self._buttons.get(int(button_type))
+        if entry is None:
+            return None
+        return _ButtonView(self, int(button_type))
+
+
+class _ButtonView:
+    def __init__(self, builder, which):
+        self._builder = builder
+        self._which = which
+
+    def setText(self, text):
+        label, listener = self._builder._buttons[self._which]
+        self._builder._buttons[self._which] = (str(text), listener)
+
+    def getText(self):
+        return self._builder._buttons[self._which][0]
+
+    def performClick(self):
+        dispatch(self._builder._id, self._which)
+        return True
+
+    def setEnabled(self, enabled):
         return None
 
-    def __getattr__(self, item):
-        if item.startswith("__"):
-            raise AttributeError(item)
-        return lambda *args, **kwargs: self
+    def setTextColor(self, color):
+        if isinstance(color, int) and (color & 0xFFFFFF) and ((color >> 16) & 0xFF) > 0xC0                 and ((color >> 8) & 0xFF) < 0x70:
+            self._builder._red.add(self._which)
 
 
 def _scope(builder_id):
