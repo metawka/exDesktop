@@ -101,7 +101,6 @@ jobs:
           python3 -m pip install --disable-pip-version-check --target pkgdeps/site-packages \
             --platform manylinux2014_x86_64 --python-version 3.11 --implementation cp --abi cp311 --abi abi3 --abi none \
             --only-binary=:all: requests==2.32.3 beautifulsoup4==4.12.3 lxml==5.3.0 pillow==11.0.0 PyYAML==6.0.2 packaging==24.2
-          python3 -m pip install --disable-pip-version-check --target pkgdeps/tools patchelf==0.17.2.1
 
       - name: Package
         run: |
@@ -137,11 +136,6 @@ jobs:
               cp -r pkgdeps/site-packages/. "$PKG/python/site-packages/"
               cp -r Telegram/SourceFiles/extera/tgws/. "$PKG/python/tgws/"
               find "$PKG/python" -name "__pycache__" -type d -prune -exec rm -rf {} +
-              PATCHELF=$(find pkgdeps/tools -type f -name patchelf | head -1)
-              if [ -n "$PATCHELF" ]; then
-                chmod +x "$PATCHELF"
-                "$PATCHELF" --set-rpath "\$ORIGIN/lib" "$PKG/exDesktop-bin"
-              fi
               cat > "$PKG/exDesktop" <<SH
           #!/bin/sh
           DIR="\$(cd "\$(dirname "\$0")" && pwd)"
