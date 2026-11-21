@@ -15,6 +15,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "extera/extera_plugins.h"
 #include "extera/extera_config.h"
 #include "extera/extera_streamer.h"
+#include "extera/extera_badges.h"
+#include "info/stories/info_stories_widget.h"
+#include "settings.h"
+#include <QtCore/QDir>
+#include "extera/exd_update_box.h"
 
 #include "core/deep_links/deep_links_router.h"
 #include "api/api_confirm_phone.h"
@@ -1955,6 +1960,66 @@ bool ShowExteraSupport(
 	return true;
 }
 
+bool ShowExdUpdate(
+		Window::SessionController *controller,
+		const Match &match,
+		const QVariant &context) {
+	if (!controller) {
+		return false;
+	}
+	Exd::ShowUpdateBox(controller);
+	return true;
+}
+
+bool ShowExdTestBox(
+		Window::SessionController *controller,
+		const Match &match,
+		const QVariant &context) {
+	if (!controller) {
+		return false;
+	}
+	if (match->captured(1) == u"profile"_q) {
+		controller->showSection(
+			Info::Stories::MakeMyProfile(controller->session().user()));
+		return true;
+	}
+	const auto folder = QDir(cWorkingDir() + u"tdata/exd_test"_q);
+	const auto files = folder.entryList({ u"*.plugin"_q }, QDir::Files);
+	if (files.isEmpty()) {
+		return true;
+	}
+	const auto path = folder.absoluteFilePath(files.front());
+	if (match->captured(1) == u"port"_q) {
+		Extera::Plugins::ShowPortSetupBox(controller, path);
+	} else {
+		Extera::Plugins::ShowInstallBox(controller, path, true);
+	}
+	return true;
+}
+
+bool ShowExdBadge(
+		Window::SessionController *controller,
+		const Match &match,
+		const QVariant &context) {
+	if (!controller) {
+		return false;
+	}
+	const auto id = match->captured(1).toULongLong();
+	const auto session = &controller->session();
+	const auto loaded = id
+		? session->data().peerLoaded(peerFromUser(UserId(id)))
+		: nullptr;
+	const auto peer = loaded
+		? not_null<PeerData*>(loaded)
+		: not_null<PeerData*>(session->user());
+	::Settings::ShowExteraBadgeBox(
+		controller,
+		peer,
+		Extera::BadgeCustomText(peer),
+		false);
+	return true;
+}
+
 bool ToggleExdMode(
 		Window::SessionController *controller,
 		const Match &match,
@@ -2036,6 +2101,18 @@ const std::vector<LocalUrlHandler> &LocalUrlHandlers() {
 		{
 			u"^exd_toggle/?\\?mode=(streamer|ghost)(&|$)"_q,
 			ToggleExdMode
+		},
+		{
+			u"^exd_badge/?\\?id=([0-9]+)(&|$)"_q,
+			ShowExdBadge
+		},
+		{
+			u"^exd_test_box/?\\?kind=(install|port|profile)(&|$)"_q,
+			ShowExdTestBox
+		},
+		{
+			u"^exd_update/?(\\?.*)?$"_q,
+			ShowExdUpdate
 		},
 		{
 			u"^chat/?\\?id=(-?[0-9]+)(&|$)"_q,

@@ -787,7 +787,9 @@ void Instance::updatePluralRules() {
 		Extera::ApplyRussian([&](
 				const QByteArray &key,
 				const QByteArray &value) {
-			if (!_nonDefaultValues.contains(key)) {
+			if (!_nonDefaultValues.contains(key)
+				|| key.startsWith("lng_exd_")
+				|| key.startsWith("lng_extera_")) {
 				applyValue(key, value);
 			}
 		});

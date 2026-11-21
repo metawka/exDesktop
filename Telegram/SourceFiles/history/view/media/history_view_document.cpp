@@ -41,6 +41,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_file_click_handler.h"
 #include "api/api_transcribes.h"
 #include "apiwrap.h"
+#include "extera/extera_config.h"
+#include "ui/text/text_options.h"
 #include "styles/style_chat.h"
 #include "styles/style_chat_style.h"
 #include "styles/style_dialogs.h"
@@ -210,6 +212,73 @@ void FillThumbnailOverlay(
 		result.append(from, end - from);
 	}
 	return result;
+}
+
+constexpr auto kExdPreviewMaxSize = int64(512 * 1024);
+constexpr auto kExdPreviewRead = 16 * 1024;
+constexpr auto kExdPreviewLines = 15;
+constexpr auto kExdPreviewChars = 2000;
+
+[[nodiscard]] std::optional<QString> ExdPreviewLanguage(const QString &name) {
+	const auto dot = name.lastIndexOf('.');
+	if (dot < 0) {
+		return std::nullopt;
+	}
+	const auto ext = name.mid(dot + 1).toLower();
+	static const auto map = base::flat_map<QString, QString>{
+		{ u"txt"_q, QString() },
+		{ u"log"_q, QString() },
+		{ u"md"_q, u"markdown"_q },
+		{ u"markdown"_q, u"markdown"_q },
+		{ u"py"_q, u"python"_q },
+		{ u"js"_q, u"javascript"_q },
+		{ u"mjs"_q, u"javascript"_q },
+		{ u"ts"_q, u"typescript"_q },
+		{ u"tsx"_q, u"tsx"_q },
+		{ u"jsx"_q, u"jsx"_q },
+		{ u"json"_q, u"json"_q },
+		{ u"c"_q, u"c"_q },
+		{ u"h"_q, u"cpp"_q },
+		{ u"cpp"_q, u"cpp"_q },
+		{ u"cc"_q, u"cpp"_q },
+		{ u"hpp"_q, u"cpp"_q },
+		{ u"cs"_q, u"csharp"_q },
+		{ u"java"_q, u"java"_q },
+		{ u"kt"_q, u"kotlin"_q },
+		{ u"go"_q, u"go"_q },
+		{ u"rs"_q, u"rust"_q },
+		{ u"swift"_q, u"swift"_q },
+		{ u"rb"_q, u"ruby"_q },
+		{ u"php"_q, u"php"_q },
+		{ u"lua"_q, u"lua"_q },
+		{ u"sh"_q, u"bash"_q },
+		{ u"ps1"_q, u"powershell"_q },
+		{ u"bat"_q, u"batch"_q },
+		{ u"cmd"_q, u"batch"_q },
+		{ u"html"_q, u"html"_q },
+		{ u"xml"_q, u"xml"_q },
+		{ u"css"_q, u"css"_q },
+		{ u"scss"_q, u"scss"_q },
+		{ u"sql"_q, u"sql"_q },
+		{ u"yml"_q, u"yaml"_q },
+		{ u"yaml"_q, u"yaml"_q },
+		{ u"toml"_q, u"toml"_q },
+		{ u"ini"_q, u"ini"_q },
+		{ u"cfg"_q, u"ini"_q },
+		{ u"conf"_q, u"ini"_q },
+		{ u"csv"_q, QString() },
+		{ u"diff"_q, u"diff"_q },
+		{ u"patch"_q, u"diff"_q },
+		{ u"cmake"_q, u"cmake"_q },
+		{ u"gradle"_q, u"groovy"_q },
+		{ u"dart"_q, u"dart"_q },
+		{ u"vue"_q, u"html"_q },
+	};
+	const auto i = map.find(ext);
+	if (i == end(map)) {
+		return std::nullopt;
+	}
+	return i->second;
 }
 
 void FillWaveform(VoiceData *roundData) {
@@ -491,6 +560,91 @@ void Document::fillNamedFromData(not_null<HistoryDocumentNamed*> named) {
 		CleanTagSymbols(Ui::Text::FormatSongNameFor(_data).string()));
 }
 
+bool Document::hasTextPreview() const {
+	validateTextPreview();
+	return !_textPreview.isEmpty();
+}
+
+void Document::validateTextPreview() const {
+	if (_textPreviewChecked) {
+		return;
+	}
+	const auto language = (_data->isVoiceMessage() || _transcribedRound)
+		? std::nullopt
+		: ExdPreviewLanguage(_data->filename());
+	if (!language
+		|| !Extera::Bool(u"exd_text_preview"_q)
+		|| _data->size <= 0
+		|| _data->size > kExdPreviewMaxSize) {
+		_textPreviewChecked = true;
+		return;
+	}
+	ensureDataMediaCreated();
+	if (!_dataMedia->loaded()) {
+		if (!_textPreviewRequested
+			&& !_data->loading()
+			&& !_data->uploading()) {
+			_textPreviewRequested = true;
+			_data->forceToCache(true);
+			_data->save(_realParent->fullId(), QString());
+		}
+		return;
+	}
+	_textPreviewChecked = true;
+	auto bytes = _dataMedia->bytes();
+	if (bytes.isEmpty()) {
+		auto file = QFile(_data->filepath(true));
+		if (file.open(QIODevice::ReadOnly)) {
+			bytes = file.read(kExdPreviewRead);
+		}
+	}
+	auto text = QString::fromUtf8(bytes.left(kExdPreviewRead));
+	if (text.contains(QChar(0)) || text.contains(QChar(0xFFFD))) {
+		return;
+	}
+	if (*language == u"python"_q
+		&& (text.contains(u"__id__"_q)
+			|| text.contains(u"BasePlugin"_q)
+			|| text.contains(u"__min_version__"_q))) {
+		return;
+	}
+	text.replace(u"\r\n"_q, u"\n"_q);
+	auto truncated = false;
+	auto lines = 0;
+	for (auto i = 0; i < text.size(); ++i) {
+		if (text[i] == '\n' && ++lines >= kExdPreviewLines) {
+			text = text.left(i);
+			truncated = true;
+			break;
+		}
+	}
+	if (text.size() > kExdPreviewChars) {
+		text = text.left(kExdPreviewChars);
+		truncated = true;
+	}
+	while (!text.isEmpty() && text.back().isSpace()) {
+		text.chop(1);
+	}
+	if (text.isEmpty()) {
+		return;
+	}
+	if (truncated || bytes.size() >= kExdPreviewRead) {
+		text.append(u"\n..."_q);
+	}
+	auto marked = TextWithEntities{ text };
+	marked.entities.push_back(
+		EntityInText(EntityType::Pre, 0, text.size(), *language));
+	_textPreview = Ui::Text::String(st::msgMinWidth);
+	_textPreview.setMarkedText(
+		st::messageTextStyle,
+		marked,
+		Ui::ItemTextDefaultOptions());
+	const auto parent = _parent;
+	crl::on_main(this, [=] {
+		parent->history()->owner().requestViewResize(parent);
+	});
+}
+
 QSize Document::countOptimalSize() {
 	auto hasTranscribe = false;
 	const auto voice = Get<HistoryDocumentVoice>();
@@ -643,6 +797,22 @@ QSize Document::countOptimalSize() {
 			minHeight += st::msgPadding.bottom();
 		}
 	}
+	if (hasTextPreview()) {
+		accumulate_max(
+			maxWidth,
+			std::min(
+				int(st::msgMaxWidth),
+				_textPreview.maxWidth()
+					+ st::msgPadding.left()
+					+ st::msgPadding.right()));
+		auto previeww = maxWidth
+			- st::msgPadding.left()
+			- st::msgPadding.right();
+		minHeight += _textPreview.countHeight(previeww, true);
+		if (isBubbleBottom() && !hasTranscribe) {
+			minHeight += st::msgPadding.bottom();
+		}
+	}
 	return { maxWidth, minHeight };
 }
 
@@ -653,7 +823,8 @@ QSize Document::countCurrentSize(int newWidth) {
 	const auto thumbed = Get<HistoryDocumentThumbed>();
 	const auto &st = thumbed ? st::msgFileThumbLayout : st::msgFileLayout;
 	const auto hostedInstantView = IsHostedInstantViewMedia(_parent);
-	if (!captioned && !hasTranscribe) {
+	const auto preview = hasTextPreview();
+	if (!captioned && !hasTranscribe && !preview) {
 		auto result = File::countCurrentSize(newWidth);
 		if (hostedInstantView) {
 			result.setWidth(std::max(newWidth, result.width()));
@@ -694,6 +865,14 @@ QSize Document::countCurrentSize(int newWidth) {
 		newHeight -= st::msgFileTopMinus;
 	}
 	auto captionw = newWidth - st::msgPadding.left() - st::msgPadding.right();
+	if (preview) {
+		newHeight += _textPreview.countHeight(captionw, true);
+		if (captioned || hasTranscribe) {
+			newHeight += st::mediaCaptionSkip;
+		} else if (isBubbleBottom()) {
+			newHeight += st::msgPadding.bottom();
+		}
+	}
 	if (hasTranscribe) {
 		newHeight += voice->transcribeText.countHeight(captionw);
 		if (captioned) {
@@ -725,6 +904,7 @@ void Document::draw(
 	if (width < st::msgPadding.left() + st::msgPadding.right() + 1) return;
 
 	ensureDataMediaCreated();
+	validateTextPreview();
 
 	const auto cornerDownload = downloadInCorner();
 	const auto mediaEditor = (_parent->context() == Context::MediaEditor);
@@ -1084,6 +1264,23 @@ void Document::draw(
 
 	auto selection = context.selection;
 	auto captiontop = bottom;
+	if (mode == LayoutMode::Full && !_textPreview.isEmpty()) {
+		p.setPen(stm->historyTextFg);
+		_textPreview.draw(p, {
+			.position = { st::msgPadding.left(), captiontop },
+			.availableWidth = captionw,
+			.palette = &stm->textPalette,
+			.pre = stm->preCache.get(),
+			.blockquote = context.quoteCache(
+				parent()->contentColorCollectible(),
+				parent()->contentColorIndex()),
+			.colors = context.st->highlightColors(),
+			.now = context.now,
+			.useFullWidth = true,
+		});
+		captiontop += _textPreview.countHeight(captionw, true)
+			+ st::mediaCaptionSkip;
+	}
 	if (voice && !voice->transcribeText.isEmpty()) {
 		p.setPen(stm->historyTextFg);
 		voice->transcribeText.draw(p, st::msgPadding.left(), bottom, captionw, style::al_left, 0, -1, selection);
@@ -1427,6 +1624,31 @@ TextState Document::textState(
 		}
 	}
 
+	if (mode == LayoutMode::Full && !_textPreview.isEmpty()) {
+		const auto previeww = width
+			- st::msgPadding.left()
+			- st::msgPadding.right();
+		const auto previewHeight = _textPreview.countHeight(previeww, true);
+		if (point.y() >= bottom && point.y() < bottom + previewHeight) {
+			const auto inner = _textPreview.getState(
+				point - QPoint(st::msgPadding.left(), bottom),
+				previeww,
+				request.forText());
+			result = TextState(_parent, inner);
+			if (!result.link) {
+				result.link = _openl;
+			}
+			return result;
+		}
+		painth -= previewHeight;
+		bottom += previewHeight;
+		if (Get<HistoryDocumentCaptioned>()) {
+			painth -= st::mediaCaptionSkip;
+			bottom += st::mediaCaptionSkip;
+		} else if (isBubbleBottom()) {
+			painth -= st::msgPadding.bottom();
+		}
+	}
 	if (const auto captioned = Get<HistoryDocumentCaptioned>()) {
 		if (point.y() >= bottom) {
 			result.symbol += transcribeLength;

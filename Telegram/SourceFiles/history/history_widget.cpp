@@ -6705,6 +6705,11 @@ void HistoryWidget::finishAnimating() {
 	_topShadow->setVisible(_peer != nullptr);
 	_topBar->setVisible(_peer != nullptr);
 	_cornerButtons.finishAnimations();
+	if (_peer) {
+		_topBar->setAnimatingMode(false);
+		updateControlsVisibility();
+		updateControlsGeometry();
+	}
 }
 
 void HistoryWidget::chooseAttach(

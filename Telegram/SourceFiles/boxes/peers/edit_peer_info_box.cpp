@@ -1101,7 +1101,7 @@ void Controller::fillPrivacyTypeButton() {
 		.usernamesOrder = (_peer->isChannel()
 			? _peer->asChannel()->usernames()
 			: std::vector<QString>()),
-		.noForwards = !_peer->allowsForwarding(),
+		.noForwards = !_peer->allowsForwardingRaw(),
 		.joinToWrite = (_peer->isMegagroup()
 			&& _peer->asChannel()->joinToWrite()),
 		.requestToJoin = (_peer->isChannel()
@@ -2977,7 +2977,7 @@ void Controller::saveSignatures() {
 
 void Controller::saveForwards() {
 	if (!_savingData.noForwards
-		|| *_savingData.noForwards != _peer->allowsForwarding()) {
+		|| *_savingData.noForwards != _peer->allowsForwardingRaw()) {
 		return continueSave();
 	}
 	using Flag = MTPmessages_ToggleNoForwards::Flag;

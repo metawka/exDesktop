@@ -39,23 +39,27 @@ def current_plugin_id():
     return _plugin_stack[-1] if _plugin_stack else None
 
 
+_sbx_push = getattr(_extera, "sbx_push", None)
+_sbx_pop = getattr(_extera, "sbx_pop", None)
+_sbx_owner = getattr(_extera, "sbx_owner", None)
+
+
 @contextlib.contextmanager
 def _plugin_context(plugin_id):
     _plugin_stack.append(plugin_id)
     token = None
-    push = getattr(_extera, "sbx_push", None)
-    if push is not None and plugin_id:
-        token = push(str(plugin_id))
+    if _sbx_push is not None and plugin_id:
+        token = _sbx_push(str(plugin_id))
     try:
         yield
     finally:
-        if token is not None:
-            _extera.sbx_pop(token)
+        if token is not None and _sbx_pop is not None:
+            _sbx_pop(token)
         _plugin_stack.pop()
 
 
 def owner_now():
-    owner = getattr(_extera, "sbx_owner", None)
+    owner = _sbx_owner
     if owner is None:
         return current_plugin_id() or ""
     try:
@@ -1697,7 +1701,8 @@ def _init(args):
             SETTINGS_DIR,
             os.path.dirname(PLUGINS_DIR),
             os.path.join(os.path.dirname(PLUGINS_DIR), "plugin_deps"),
-            interactive=bool(args.get("sandbox_prompts", True)))
+            interactive=bool(args.get("sandbox_prompts", True)),
+            level=int(args.get("sandbox_level", 0) or 0))
         sys.modules.pop("exd_sandbox", None)
     load_all()
     return [r.info() for r in _records.values()]

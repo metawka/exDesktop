@@ -980,5 +980,5 @@ dialogsFilterIconLeft: 0px;
 dialogsFilterIcon: icon {{ "box_search", placeholderFg }};
 
 exdDialogsHoverDuration: 140;
-exdArchiveTopBarMargins: margins(14px, 9px, 15px, 10px);
+exdArchiveTopBarMargins: margins(10px, 6px, 10px, 6px);
 exdStoriesSearchInset: 6px;

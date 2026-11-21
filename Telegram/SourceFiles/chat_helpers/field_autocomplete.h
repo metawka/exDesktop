@@ -153,6 +153,7 @@ private:
 
 	void updateFiltered(bool resetScroll = false);
 	void recount(bool resetScroll = false);
+	[[nodiscard]] QRect exdIslandRect() const;
 	[[nodiscard]] StickerRows getStickerSuggestions();
 	void createEphemeralHint(QRect rect);
 	void ephemeralIconHovered(QRect iconRect);

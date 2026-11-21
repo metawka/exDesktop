@@ -559,6 +559,12 @@ void FillJournal(
 			text = tr::lng_exd_plugin_journal_native(tr::now);
 		} else if (key.startsWith(u"process:"_q)) {
 			text = tr::lng_exd_plugin_journal_process(tr::now);
+		} else if (key == u"msg_send"_q) {
+			text = tr::lng_exd_plugin_perm_msg_send(tr::now);
+		} else if (key == u"msg_edit"_q) {
+			text = tr::lng_exd_plugin_perm_msg_edit(tr::now);
+		} else if (key == u"msg_delete"_q) {
+			text = tr::lng_exd_plugin_perm_msg_delete(tr::now);
 		}
 		Settings::AddButtonWithLabel(
 			container,
@@ -605,6 +611,45 @@ void FillPermissions(
 				u"net"_q,
 				enabled ? u"*="_q : u"*=deny"_q);
 		});
+	const auto level = Extera::Int(u"plugins_guard_level"_q);
+	const auto addDenyToggle = [&](
+			rpl::producer<QString> title,
+			const QString &key) {
+		AddPermissionToggle(
+			container,
+			std::move(title),
+			extra[key] != u"deny"_q,
+			[=](bool enabled) {
+				setExtra(key, enabled ? QString() : u"deny"_q);
+			});
+	};
+	addDenyToggle(tr::lng_exd_plugin_perm_files_read(), u"files_read"_q);
+	addDenyToggle(tr::lng_exd_plugin_perm_files_write(), u"files_write"_q);
+	addDenyToggle(tr::lng_exd_plugin_perm_msg_send(), u"msg_send"_q);
+	addDenyToggle(tr::lng_exd_plugin_perm_msg_edit(), u"msg_edit"_q);
+	addDenyToggle(tr::lng_exd_plugin_perm_msg_delete(), u"msg_delete"_q);
+	const auto addLevelToggle = [&](
+			rpl::producer<QString> title,
+			const QString &key,
+			int minimum) {
+		if (level < minimum) {
+			Settings::AddButtonWithLabel(
+				container,
+				std::move(title),
+				tr::lng_exd_plugin_perm_level_locked(),
+				st::settingsButtonNoIcon);
+			return;
+		}
+		AddPermissionToggle(
+			container,
+			std::move(title),
+			extra[key] == u"allow"_q,
+			[=](bool enabled) {
+				setExtra(key, enabled ? u"allow"_q : u"deny"_q);
+			});
+	};
+	addLevelToggle(tr::lng_exd_plugin_perm_process(), u"process"_q, 1);
+	addLevelToggle(tr::lng_exd_plugin_perm_native(), u"native"_q, 2);
 	AddPermissionToggle(
 		container,
 		tr::lng_exd_plugin_perm_clipboard(),
@@ -1135,6 +1180,21 @@ void SetupPluginIcon(
 			widget->update();
 		}
 	}).send();
+}
+
+void AddInstallIconTo(
+		not_null<Ui::VerticalLayout*> container,
+		not_null<Window::SessionController*> controller,
+		const QString &icon) {
+	const auto widget = container->add(
+		object_ptr<Ui::AbstractButton>(container),
+		st::exteraInstallIconPadding);
+	SetupPluginIcon(
+		widget,
+		controller,
+		icon,
+		st::exteraInstallIcon,
+		st::exteraInstallBadge);
 }
 
 void AddInstallIcon(
@@ -1697,6 +1757,16 @@ void PaintCardBackground(not_null<Ui::RpWidget*> card) {
 	return card;
 }
 
+[[nodiscard]] not_null<Ui::VerticalLayout*> AddCardTo(
+		not_null<Ui::VerticalLayout*> container) {
+	const auto card = container->add(
+		object_ptr<Ui::VerticalLayout>(container),
+		st::exdInstallColumnCardMargin,
+		style::al_justify);
+	PaintCardBackground(card);
+	return card;
+}
+
 class ThreatRow final : public Ui::AbstractButton {
 public:
 	ThreatRow(
@@ -2108,7 +2178,8 @@ void AddThreatsSummary(
 		not_null<Ui::GenericBox*> box,
 		not_null<Window::SessionController*> controller,
 		const QString &path,
-		std::vector<Threat> threats) {
+		std::vector<Threat> threats,
+		Ui::VerticalLayout *container = nullptr) {
 	auto danger = 0;
 	auto attention = 0;
 	for (const auto &threat : threats) {
@@ -2144,7 +2215,7 @@ void AddThreatsSummary(
 			tr::now,
 			lt_amount,
 			QString::number(threats.size()));
-	const auto card = AddCard(box);
+	const auto card = container ? AddCardTo(container) : AddCard(box);
 	const auto row = card->add(object_ptr<ThreatRow>(
 		card,
 		color,
@@ -2179,8 +2250,9 @@ void AddThreatsSummary(
 void AddDescription(
 		not_null<Ui::GenericBox*> box,
 		const TextWithEntities &text,
-		const Ui::Text::MarkedContext &context) {
-	const auto card = AddCard(box);
+		const Ui::Text::MarkedContext &context,
+		Ui::VerticalLayout *container = nullptr) {
+	const auto card = container ? AddCardTo(container) : AddCard(box);
 	const auto clamped = card->add(
 		object_ptr<ClampedText>(card, st::exteraInstallDescription),
 		st::exteraInstallCardPadding);
@@ -2203,10 +2275,21 @@ Fn<void(Fn<void()>)> AddTopActions(
 		not_null<Ui::GenericBox*> box,
 		not_null<Window::SessionController*> controller,
 		const QString &path,
-		const QString &description) {
+		const QString &description,
+		Ui::VerticalLayout *container = nullptr) {
 	const auto size = st::exteraTopActionSize;
 	const auto count = description.isEmpty() ? 1 : 2;
-	const auto actions = Ui::CreateChild<Ui::RpWidget>(box.get());
+	const auto row = container
+		? container->add(
+			object_ptr<Ui::RpWidget>(container),
+			st::exdInstallActionsMargin)
+		: nullptr;
+	if (row) {
+		row->resize(row->width(), size);
+	}
+	const auto actions = row
+		? Ui::CreateChild<Ui::RpWidget>(row)
+		: Ui::CreateChild<Ui::RpWidget>(box.get());
 	actions->resize(size * count, size);
 	actions->paintRequest() | rpl::on_next([=] {
 		auto p = QPainter(actions);
@@ -2241,14 +2324,20 @@ Fn<void(Fn<void()>)> AddTopActions(
 	addButton(index, st::exteraTopActionCode, [=] {
 		ShowSourceBox(controller, path);
 	});
-	box->widthValue() | rpl::on_next([=](int width) {
-		const auto &margin = st::exteraTopActionsMargin;
-		actions->moveToLeft(
-			width - margin.right() - actions->width(),
-			margin.top(),
-			width);
-		actions->raise();
-	}, actions->lifetime());
+	if (row) {
+		row->widthValue() | rpl::on_next([=](int width) {
+			actions->moveToLeft((width - actions->width()) / 2, 0, width);
+		}, actions->lifetime());
+	} else {
+		box->widthValue() | rpl::on_next([=](int width) {
+			const auto &margin = st::exteraTopActionsMargin;
+			actions->moveToLeft(
+				width - margin.right() - actions->width(),
+				margin.top(),
+				width);
+			actions->raise();
+		}, actions->lifetime());
+	}
 	crl::on_main(actions, [=] { actions->raise(); });
 	const auto reported = actions->lifetime().make_state<bool>(false);
 	const auto weak = base::make_weak(actions);
@@ -2259,18 +2348,74 @@ Fn<void(Fn<void()>)> AddTopActions(
 		*reported = true;
 		actions->resize(size * (count + 1), size);
 		addButton(count, st::exteraTopActionReport, std::move(report));
-		const auto width = box->width();
-		const auto &margin = st::exteraTopActionsMargin;
-		actions->moveToLeft(
-			width - margin.right() - actions->width(),
-			margin.top(),
-			width);
+		if (row) {
+			const auto width = row->width();
+			actions->moveToLeft((width - actions->width()) / 2, 0, width);
+		} else {
+			const auto width = box->width();
+			const auto &margin = st::exteraTopActionsMargin;
+			actions->moveToLeft(
+				width - margin.right() - actions->width(),
+				margin.top(),
+				width);
+		}
 		actions->update();
 		actions->raise();
 	};
 }
 
 } // namespace
+
+void AddDesktopPillTo(
+		not_null<Ui::VerticalLayout*> container,
+		QString ported) {
+	const auto text = tr::lng_exd_plugin_desktop(tr::now);
+	const auto &font = st::exteraInstallPillFont;
+	const auto &icon = st::exteraInstallPuzzle;
+	const auto padding = st::exteraInstallPillPadding;
+	const auto width = padding.left()
+		+ icon.width()
+		+ st::exteraInstallPillSkip
+		+ font->width(text)
+		+ padding.right();
+	const auto widget = container->add(
+		object_ptr<Ui::RpWidget>(container),
+		st::exteraInstallPillMargin);
+	widget->resize(width, st::exteraInstallPillHeight);
+	widget->paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(widget);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto color = st::boxTextFgGood->c;
+		auto bg = color;
+		bg.setAlphaF(0.16);
+		const auto left = (widget->width() - width) / 2;
+		const auto rect = QRect(left, 0, width, widget->height());
+		p.setPen(Qt::NoPen);
+		p.setBrush(bg);
+		p.drawRoundedRect(rect, rect.height() / 2., rect.height() / 2.);
+		const auto iconLeft = left + padding.left();
+		icon.paint(
+			p,
+			QPoint(iconLeft, (rect.height() - icon.height()) / 2),
+			widget->width(),
+			color);
+		p.setPen(color);
+		p.setFont(font);
+		p.drawText(
+			iconLeft + icon.width() + st::exteraInstallPillSkip,
+			(rect.height() - font->height) / 2 + font->ascent,
+			text);
+	}, widget->lifetime());
+	if (!ported.isEmpty()) {
+		container->add(
+			object_ptr<Ui::FlatLabel>(
+				container,
+				rpl::single(ported),
+				st::exteraInstallVersion),
+			st::exteraInstallVersionPadding,
+			style::al_top);
+	}
+}
 
 void AddDesktopPill(not_null<Ui::GenericBox*> box, QString ported) {
 	const auto text = tr::lng_exd_plugin_desktop(tr::now);
@@ -2324,7 +2469,8 @@ void AddDesktopPill(not_null<Ui::GenericBox*> box, QString ported) {
 void AddSourcePill(
 		not_null<Ui::GenericBox*> box,
 		not_null<Window::SessionController*> controller,
-		bool trusted) {
+		bool trusted,
+		Ui::VerticalLayout *container = nullptr) {
 	const auto text = trusted
 		? tr::lng_extera_plugins_trusted_source(tr::now)
 		: tr::lng_extera_plugins_unknown_source(tr::now);
@@ -2338,9 +2484,13 @@ void AddSourcePill(
 		+ st::exteraInstallPillSkip
 		+ font->width(text)
 		+ padding.right();
-	const auto widget = box->addRow(
-		object_ptr<Ui::AbstractButton>(box),
-		st::exteraInstallPillMargin);
+	const auto widget = container
+		? container->add(
+			object_ptr<Ui::AbstractButton>(container),
+			st::exteraInstallPillMargin)
+		: box->addRow(
+			object_ptr<Ui::AbstractButton>(box),
+			st::exteraInstallPillMargin);
 	widget->resize(width, st::exteraInstallPillHeight);
 	widget->paintRequest() | rpl::on_next([=] {
 		auto p = QPainter(widget);
@@ -2823,9 +2973,11 @@ void FillGuardSummary(
 		Fn<void()> startManual) {
 	using namespace Exd::PluginGuard;
 	container->clear();
+	const auto column = container->property("exdColumn").toBool();
 	const auto card = container->add(
 		object_ptr<Ui::VerticalLayout>(container),
-		st::exteraInstallCardMargin);
+		column ? st::exdInstallColumnCardMargin : st::exteraInstallCardMargin,
+		column ? style::al_justify : style::al_left);
 	PaintCardBackground(card);
 	if (!report) {
 		const auto row = card->add(object_ptr<ThreatRow>(
@@ -2922,12 +3074,35 @@ void ShowInstallBoxResolved(
 		const auto context = Core::TextContext({
 			.session = &controller->session(),
 		});
-		AddInstallIcon(box, controller, meta.value(u"icon"_q).toString());
-		box->addRow(
+		const auto columns = box->addRow(
+			object_ptr<Ui::VerticalLayout>(box),
+			st::exdInstallColumnsPadding,
+			style::al_justify);
+		const auto leftWidth = st::exdInstallLeftWidth;
+		const auto right = columns->add(
+			object_ptr<Ui::VerticalLayout>(columns),
+			style::margins(leftWidth, st::exdInstallRightTop, 0, 0),
+			style::al_justify);
+		const auto spacer = columns->add(object_ptr<Ui::RpWidget>(columns));
+		const auto left = Ui::CreateChild<Ui::VerticalLayout>(
+			columns);
+		left->resizeToWidth(leftWidth);
+		left->moveToLeft(0, 0);
+		rpl::combine(
+			left->heightValue(),
+			right->heightValue()
+		) | rpl::on_next([=](int leftHeight, int rightHeight) {
+			const auto rightFull = rightHeight + st::exdInstallRightTop;
+			spacer->resize(
+				spacer->width(),
+				std::max(leftHeight - rightFull, 0));
+		}, spacer->lifetime());
+		AddInstallIconTo(left, controller, meta.value(u"icon"_q).toString());
+		left->add(
 			object_ptr<Ui::FlatLabel>(
-				box,
+				left,
 				rpl::single(meta.value(u"name"_q).toString()),
-				st::exteraInstallName),
+				st::exdInstallSideName),
 			st::exteraInstallNamePadding,
 			style::al_top);
 
@@ -2952,40 +3127,50 @@ void ShowInstallBoxResolved(
 			line.append(WithLinks(author));
 		}
 		if (!line.empty()) {
-			const auto label = box->addRow(
-				object_ptr<Ui::FlatLabel>(box, st::exteraInstallVersion),
+			const auto label = left->add(
+				object_ptr<Ui::FlatLabel>(left, st::exdInstallSideVersion),
 				st::exteraInstallVersionPadding,
-			style::al_top);
+				style::al_top);
 			label->setMarkedText(line, context);
 			SetupLinks(label, box);
 		}
-		if (meta.value(u"ported_from"_q).toString().isEmpty()) {
-			AddSourcePill(box, controller, trusted);
-		}
+		AddSourcePill(box, controller, trusted, left);
 		if (meta.value(u"desktop"_q).toBool()) {
-			AddDesktopPill(
-				box,
+			AddDesktopPillTo(
+				left,
 				meta.value(u"ported_from"_q).toString().isEmpty()
 					? QString()
 					: PortedLabel(meta));
 		}
+		left->resizeToWidth(leftWidth);
 
 		const auto description = meta.value(u"description"_q).toString();
-		const auto addReport = AddTopActions(box, controller, path, description);
+		const auto addReport = AddTopActions(
+			box,
+			controller,
+			path,
+			description,
+			left);
+		left->resizeToWidth(leftWidth);
 		if (!description.isEmpty()) {
-			AddDescription(box, WithLinks(description), context);
+			AddDescription(box, WithLinks(description), context, right);
 		}
 		AddThreatsSummary(
 			box,
 			controller,
 			path,
-			CollectThreats(meta.value(u"capabilities"_q).toObject()));
+			CollectThreats(meta.value(u"capabilities"_q).toObject()),
+			right);
 		const auto guardMode = Exd::PluginGuard::Mode();
 		const auto guardBox = (guardMode == 2)
 			? nullptr
-			: box->addRow(
-				object_ptr<Ui::VerticalLayout>(box),
-				style::margins());
+			: right->add(
+				object_ptr<Ui::VerticalLayout>(right),
+				style::margins(),
+				style::al_justify);
+		if (guardBox) {
+			guardBox->setProperty("exdColumn", true);
+		}
 		const auto installText = box->lifetime().make_state<
 			rpl::variable<QString>>(exists
 				? tr::lng_extera_plugins_update(tr::now)
@@ -3084,27 +3269,30 @@ void ShowInstallBoxResolved(
 			}
 			return;
 		}
-		const auto install = box->addRow(
-			object_ptr<Ui::RoundButton>(
+		const auto buttons = box->addRow(
+			object_ptr<Ui::FixedHeightWidget>(
 				box,
-				installText->value(),
-				st::exteraInstallButton),
-			st::exteraInstallButtonMargin);
-		*installButton = install;
+				st::exteraInstallButton.height),
+			style::margins(
+				st::exteraInstallButtonMargin.left(),
+				st::exteraInstallButtonMargin.top(),
+				st::exteraInstallButtonMargin.right(),
+				st::exteraInstallCancelMargin.bottom()));
+		const auto cancel = Ui::CreateChild<Ui::RoundButton>(
+			buttons,
+			tr::lng_cancel(),
+			st::exteraInstallCancel);
 		const auto port = Exd::PluginPorter::Suggested(meta)
-			? box->addRow(
-				object_ptr<Ui::RoundButton>(
-					box,
-					tr::lng_exd_port_action(),
-					st::exteraInstallCancel),
-				st::exteraInstallCancelMargin)
+			? Ui::CreateChild<Ui::RoundButton>(
+				buttons,
+				tr::lng_exd_port_action(),
+				st::exteraInstallCancel)
 			: nullptr;
-		const auto cancel = box->addRow(
-			object_ptr<Ui::RoundButton>(
-				box,
-				tr::lng_cancel(),
-				st::exteraInstallCancel),
-			st::exteraInstallCancelMargin);
+		const auto install = Ui::CreateChild<Ui::RoundButton>(
+			buttons,
+			installText->value(),
+			st::exteraInstallButton);
+		*installButton = install;
 		for (const auto button : { install, cancel }) {
 			button->setFullRadius(true);
 			button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
@@ -3123,15 +3311,20 @@ void ShowInstallBoxResolved(
 				box->closeBox();
 			});
 		}
-		box->widthValue() | rpl::on_next([=](int width) {
-			const auto margin = st::exteraInstallButtonMargin;
-			const auto full = width - margin.left() - margin.right();
-			install->setFullWidth(full);
-			cancel->setFullWidth(full);
-			if (port) {
-				port->setFullWidth(full);
+		buttons->widthValue() | rpl::on_next([=](int width) {
+			const auto gap = st::exteraInstallCancelMargin.top();
+			const auto count = port ? 3 : 2;
+			const auto each = (width - gap * (count - 1)) / count;
+			auto left = 0;
+			for (const auto button : { cancel, port, install }) {
+				if (!button) {
+					continue;
+				}
+				button->setFullWidth(each);
+				button->moveToLeft(left, 0);
+				left += each + gap;
 			}
-		}, install->lifetime());
+		}, buttons->lifetime());
 		cancel->setClickedCallback([=] { box->closeBox(); });
 		if (guardBox && runGuard) {
 			(*startGuard)();
@@ -3327,6 +3520,194 @@ void ShowUnknownSourcesWarning(
 	}));
 }
 
+void ShowGuardLevelConfirm(
+		not_null<Window::SessionController*> controller,
+		int level) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		struct State {
+			rpl::variable<int> left = 30;
+			base::Timer timer;
+			Ui::Animations::Simple shake;
+			int baseX = 0;
+		};
+		const auto state = box->lifetime().make_state<State>();
+		const auto bullet = QString::fromUtf8("\xE2\x80\xA2 ");
+		box->setStyle(st::exteraInstallBox);
+		box->setWidth(st::exteraInstallWidth);
+		box->setNoContentMargin(true);
+		const auto circle = st::exteraGuardLevelCircle;
+		const auto icon = box->addRow(
+			object_ptr<Ui::FixedHeightWidget>(box, circle),
+			QMargins(22, 28, 22, 0));
+		icon->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(icon);
+			PainterHighQualityEnabler hq(p);
+			auto color = st::attentionButtonFg->c;
+			const auto rect = QRect(
+				(icon->width() - circle) / 2,
+				0,
+				circle,
+				circle);
+			color.setAlphaF(0.16);
+			p.setPen(Qt::NoPen);
+			p.setBrush(color);
+			p.drawEllipse(rect);
+			const auto &glyph = st::exteraGuardLevelIcon;
+			glyph.paint(
+				p,
+				rect.x() + (circle - glyph.width()) / 2,
+				rect.y() + (circle - glyph.height()) / 2,
+				icon->width(),
+				st::attentionButtonFg->c);
+		}, icon->lifetime());
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_guard_lower_title(),
+				st::exteraInstallName),
+			QMargins(22, 14, 22, 0),
+			style::al_top);
+		AddColorPill(
+			box,
+			(level == 2)
+				? tr::lng_exd_guard_level_optimal(tr::now)
+				: tr::lng_exd_guard_level_standard(tr::now),
+			st::exteraInstallShield,
+			[] { return st::historyPeer1UserpicBg->c; });
+		auto allowed = QStringList{
+			bullet + tr::lng_exd_guard_item_process_ask(tr::now),
+		};
+		const auto same = QStringList{
+			bullet + tr::lng_exd_guard_item_telegram(tr::now),
+			bullet + tr::lng_exd_guard_item_own_files(tr::now),
+			bullet + tr::lng_exd_guard_item_folders(tr::now),
+		};
+		auto denied = QStringList();
+		if (level == 2) {
+			allowed.push_back(bullet + tr::lng_exd_guard_item_native_ask(tr::now));
+		} else {
+			denied.push_back(bullet + tr::lng_exd_guard_item_native_off(tr::now));
+		}
+		denied.push_back(bullet + tr::lng_exd_guard_item_secrets(tr::now));
+		denied.push_back(bullet + tr::lng_exd_guard_item_malware(tr::now));
+		auto risks = QStringList{ tr::lng_exd_guard_risk_process(tr::now) };
+		if (level == 2) {
+			risks.push_back(tr::lng_exd_guard_risk_native(tr::now));
+		}
+		risks.push_back(tr::lng_exd_guard_risk_prompt(tr::now));
+		AddGuardCard(
+			box,
+			tr::lng_exd_guard_lower_allowed(tr::now),
+			QString(),
+			st::boxTextFgGood->c,
+			allowed);
+		AddGuardCard(
+			box,
+			tr::lng_exd_guard_lower_denied(tr::now),
+			QString(),
+			st::attentionButtonFg->c,
+			denied);
+		AddGuardCard(
+			box,
+			tr::lng_exd_guard_lower_same(tr::now),
+			QString(),
+			st::windowSubTextFg->c,
+			same);
+		AddGuardCard(
+			box,
+			tr::lng_exd_guard_lower_risk(tr::now),
+			QString(),
+			st::historyPeer1UserpicBg->c,
+			risks);
+		const auto confirm = AddPortButton(
+			box,
+			state->left.value() | rpl::map([](int left) {
+				return (left > 0)
+					? tr::lng_exd_guard_lower_wait(
+						tr::now,
+						lt_seconds,
+						QString::number(left))
+					: tr::lng_exd_guard_lower_confirm(tr::now);
+			}),
+			true,
+			false);
+		confirm->setClickedCallback([=] {
+			if (state->left.current() > 0) {
+				if (!state->shake.animating()) {
+					state->baseX = confirm->x();
+					state->shake.start([=] {
+						const auto progress = state->shake.value(1.);
+						const auto offset = std::sin(progress * 3.14159265 * 6.)
+							* (1. - progress)
+							* style::ConvertScale(10);
+						confirm->move(
+							state->baseX + int(offset),
+							confirm->y());
+					}, 0., 1., 500);
+				}
+				return;
+			}
+			Extera::Config::Instance().setInt(u"plugins_guard_level"_q, level);
+			box->closeBox();
+		});
+		AddPortButton(box, tr::lng_cancel(), false, true)->setClickedCallback([=] {
+			box->closeBox();
+		});
+		state->timer.setCallback([=] {
+			const auto left = state->left.current() - 1;
+			state->left = std::max(left, 0);
+			if (left <= 0) {
+				state->timer.cancel();
+			}
+		});
+		state->timer.callEach(1000);
+	}));
+}
+
+void ShowGuardLevelBox(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		const auto current = Extera::Int(u"plugins_guard_level"_q);
+		SingleChoiceBox(box, {
+			.title = tr::lng_exd_guard_level_title(),
+			.options = {
+				tr::lng_exd_guard_level_max(tr::now),
+				tr::lng_exd_guard_level_standard(tr::now),
+				tr::lng_exd_guard_level_optimal(tr::now),
+			},
+			.initialSelection = std::clamp(current, 0, 2),
+			.callback = [=](int index) {
+				if (index <= Extera::Int(u"plugins_guard_level"_q)) {
+					Extera::Config::Instance().setInt(
+						u"plugins_guard_level"_q,
+						index);
+					return;
+				}
+				crl::on_main(controller, [=] {
+					ShowGuardLevelConfirm(controller, index);
+				});
+			},
+		});
+		box->addRow(
+			object_ptr<Ui::FlatLabel>(
+				box,
+				rpl::single(tr::lng_exd_guard_level_max(tr::now)
+					+ u": "_q
+					+ tr::lng_exd_guard_level_max_about(tr::now)
+					+ u"\n"_q
+					+ tr::lng_exd_guard_level_standard(tr::now)
+					+ u": "_q
+					+ tr::lng_exd_guard_level_standard_about(tr::now)
+					+ u"\n"_q
+					+ tr::lng_exd_guard_level_optimal(tr::now)
+					+ u": "_q
+					+ tr::lng_exd_guard_level_optimal_about(tr::now)
+					+ u"\n\n"_q
+					+ tr::lng_exd_guard_level_about(tr::now)),
+				st::exteraAbout),
+			st::boxRowPadding);
+	}));
+}
+
 void ShowGuarded(
 		not_null<Window::SessionController*> controller,
 		const QString &path,
@@ -3389,7 +3770,7 @@ void ShowInstallBox(
 			ShowInstallBoxResolved(
 				strong,
 				path,
-				false,
+				trusted,
 				tr::lng_exd_guard_blocked_before(tr::now));
 		});
 		return;
@@ -3406,7 +3787,7 @@ void ShowInstallBox(
 		ShowInstallBoxResolved(
 			controller,
 			path,
-			false,
+			trusted,
 			tr::lng_exd_plugin_danger_text(tr::now),
 			true);
 		return;
@@ -3572,9 +3953,19 @@ void AddColorPill(
 		+ st::exteraInstallPillSkip
 		+ font->width(text)
 		+ padding.right();
-	const auto widget = box->addRow(
-		object_ptr<Ui::RpWidget>(box),
-		st::exteraInstallPillMargin);
+	const auto target = dynamic_cast<Ui::VerticalLayout*>(
+		qvariant_cast<QObject*>(box->property("exdPillTarget")));
+	box->setProperty("exdPillTarget", QVariant());
+	const auto widget = target
+		? target->add(
+			object_ptr<Ui::RpWidget>(target),
+			style::margins(0, st::exdPortHeaderPillSkip, 0, 0))
+		: box->addRow(
+			object_ptr<Ui::RpWidget>(box),
+			st::exteraInstallPillMargin);
+	if (target) {
+		widget->setNaturalWidth(width);
+	}
 	widget->resize(width, st::exteraInstallPillHeight);
 	widget->paintRequest() | rpl::on_next([=, &icon] {
 		auto p = QPainter(widget);
@@ -3609,14 +4000,61 @@ void AddPortHeader(
 	box->setStyle(st::exteraInstallBox);
 	box->setWidth(st::exteraInstallWidth);
 	box->setNoContentMargin(true);
-	AddInstallIcon(box, controller, meta.value(u"icon"_q).toString());
-	box->addRow(
+	const auto header = box->addRow(
+		object_ptr<Ui::RpWidget>(box),
+		st::exdPortHeaderPadding,
+		style::al_justify);
+	const auto icon = Ui::CreateChild<Ui::AbstractButton>(header);
+	SetupPluginIcon(
+		icon,
+		controller,
+		meta.value(u"icon"_q).toString(),
+		st::exdPortHeaderIcon,
+		st::exdPortHeaderBadge);
+	icon->resize(
+		st::exdPortHeaderIcon + 2 * (st::exdPortHeaderBadge / 3),
+		icon->height());
+	const auto text = Ui::CreateChild<Ui::VerticalLayout>(header);
+	box->setProperty(
+		"exdPillTarget",
+		QVariant::fromValue(static_cast<QObject*>(text)));
+	const auto layout = [=] {
+		const auto width = header->width();
+		if (width <= 0) {
+			return;
+		}
+		const auto skip = st::exdPortHeaderIconSkip;
+		const auto available = std::max(width - icon->width() - skip, 1);
+		const auto natural = text->naturalWidth();
+		const auto textWidth = (natural > 0)
+			? std::min(natural, available)
+			: available;
+		if (text->width() != textWidth) {
+			text->resizeToWidth(textWidth);
+		}
+		const auto group = icon->width() + skip + textWidth;
+		const auto left = std::max((width - group) / 2, 0);
+		const auto height = std::max(icon->height(), text->height());
+		icon->moveToLeft(left, (height - icon->height()) / 2, width);
+		text->moveToLeft(
+			left + icon->width() + skip,
+			(height - text->height()) / 2,
+			width);
+		if (header->height() != height) {
+			header->resize(width, height);
+		}
+	};
+	rpl::merge(
+		header->widthValue() | rpl::to_empty,
+		text->naturalWidthValue() | rpl::to_empty,
+		text->heightValue() | rpl::to_empty
+	) | rpl::on_next(layout, header->lifetime());
+	text->add(
 		object_ptr<Ui::FlatLabel>(
-			box,
+			text,
 			rpl::single(meta.value(u"name"_q).toString()),
-			st::exteraInstallName),
-		st::exteraInstallNamePadding,
-		style::al_top);
+			st::exdSideTitle),
+		style::margins());
 	auto line = QStringList();
 	if (const auto version = meta.value(u"version"_q).toString();
 		!version.isEmpty()) {
@@ -3629,13 +4067,12 @@ void AddPortHeader(
 		line.push_back(author);
 	}
 	if (!line.isEmpty()) {
-		box->addRow(
+		text->add(
 			object_ptr<Ui::FlatLabel>(
-				box,
+				text,
 				rpl::single(line.join(QString::fromUtf8(" \xE2\x80\xA2 "))),
-				st::exteraInstallVersion),
-			st::exteraInstallVersionPadding,
-			style::al_top);
+				st::exdSideSubtitle),
+			style::margins(0, st::exdSideSubtitleSkip, 0, 0));
 	}
 }
 
@@ -3933,10 +4370,15 @@ void ShowPortResult(
 				true,
 				false);
 			const auto saved = progress.path;
+			const auto sourceTrusted = Call(u"is_trusted"_q, QJsonObject{
+				{ u"path"_q, path },
+			}).toBool();
 			install->setClickedCallback([=] {
 				const auto target = saved;
 				const auto weakController = base::make_weak(controller);
-				Call(u"trust"_q, QJsonObject{ { u"path"_q, target } });
+				if (sourceTrusted) {
+					Call(u"trust"_q, QJsonObject{ { u"path"_q, target } });
+				}
 				crl::on_main([=] {
 					if (const auto strong = weakController.get()) {
 						ShowInstallBox(strong, target, false);
@@ -4537,7 +4979,7 @@ void ShowPortSetupBox(
 			provider->value() | rpl::map([](int value) {
 				return value ? PortServiceName(value) : tr::lng_exd_port_provider_none(tr::now);
 			}),
-			st::settingsButtonNoIcon);
+			st::exdCardSettingsButton);
 		serviceButton->setClickedCallback([=] {
 			controller->show(Box([=](not_null<Ui::GenericBox*> inner) {
 				SingleChoiceBox(inner, {
@@ -4567,7 +5009,7 @@ void ShowPortSetupBox(
 					? fallback
 					: tr::lng_exd_port_setup_model_none(tr::now);
 			}),
-			st::settingsButtonNoIcon);
+			st::exdCardSettingsButton);
 		modelButton->setClickedCallback([=] {
 			const auto current = model->current().isEmpty()
 				? Exd::PluginPorter::DefaultModel(provider->current())
@@ -4592,7 +5034,7 @@ void ShowPortSetupBox(
 					? tr::lng_exd_port_setup_key_empty(tr::now)
 					: tr::lng_exd_port_setup_key_set(tr::now);
 			}),
-			st::settingsButtonNoIcon);
+			st::exdCardSettingsButton);
 		keyButton->setClickedCallback([=] {
 			ShowInput(
 				controller,
@@ -4604,7 +5046,7 @@ void ShowPortSetupBox(
 		const auto modeButton = service->add(object_ptr<Ui::SettingsButton>(
 			service,
 			tr::lng_exd_port_setup_agent(),
-			st::settingsButtonNoIcon));
+			st::exdCardSettingsButton));
 		modeButton->toggleOn(rpl::single(agent->current()));
 		modeButton->toggledChanges(
 		) | rpl::on_next([=](bool value) {
@@ -4660,6 +5102,8 @@ void ShowPermissionAlert(
 	const auto kind = extra.value(u"kind"_q).toString();
 	const auto net = (kind == u"net"_q) || (kind == u"udp"_q);
 	const auto leak = (kind == u"leak"_q);
+	const auto process = (kind == u"process"_q);
+	const auto system = process || (kind == u"native"_q);
 	const auto plugin = extra.value(u"plugin"_q).toString();
 	const auto target = extra.value(u"target"_q).toString();
 	const auto leakCategory = target.section('|', 0, 0);
@@ -4691,7 +5135,7 @@ void ShowPermissionAlert(
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		AddPortHeader(box, controller, meta);
 		const auto color = [=] {
-			return leak
+			return (leak || system)
 				? st::attentionButtonFg->c
 				: net
 				? st::windowActiveTextFg->c
@@ -4701,6 +5145,10 @@ void ShowPermissionAlert(
 			box,
 			leak
 				? tr::lng_exd_perm_request_leak(tr::now)
+				: process
+				? tr::lng_exd_perm_request_process(tr::now)
+				: system
+				? tr::lng_exd_perm_request_native(tr::now)
 				: (kind == u"udp"_q)
 				? tr::lng_exd_perm_request_udp(tr::now)
 				: net
@@ -4714,6 +5162,10 @@ void ShowPermissionAlert(
 			card,
 			leak
 				? LeakCategoryTitle(leakCategory)
+				: process
+				? tr::lng_exd_plugin_perm_process(tr::now)
+				: system
+				? tr::lng_exd_plugin_perm_native(tr::now)
 				: net
 				? tr::lng_exd_perm_device(tr::now)
 				: tr::lng_exd_perm_folder(tr::now),
@@ -4721,7 +5173,9 @@ void ShowPermissionAlert(
 				? tr::lng_exd_perm_leak_chip(tr::now)
 				: tr::lng_exd_perm_chip(tr::now),
 			color(),
-			{
+			system
+				? QStringList{ message }
+				: QStringList{
 				leak
 					? leakTarget
 					: net

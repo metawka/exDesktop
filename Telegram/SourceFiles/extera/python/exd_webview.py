@@ -1,5 +1,6 @@
 import sys
 import itertools
+import secrets
 import json
 import threading
 
@@ -45,7 +46,7 @@ def _log(text):
 class WebApp:
     def __init__(self, title="", html=None, url=None, width=420, height=640, on_message=None, on_close=None,
                  on_load=None, on_navigate=None, base_url=None):
-        self.id = next(_counter)
+        self.id = secrets.randbits(52) or next(_counter)
         self.title = str(title or "")
         self.html = html
         self.url = url

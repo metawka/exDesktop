@@ -50,6 +50,7 @@ private:
 
 };
 
+void InstallCrashDumps(const QString &folder);
 [[nodiscard]] bool Bool(const QString &key);
 [[nodiscard]] bool IsBoolKey(const QString &key);
 [[nodiscard]] int Int(const QString &key);

@@ -142,7 +142,20 @@ void Badge::setContent(Content content) {
 					_customStatusLoopsLimit);
 			}
 		}
-		const auto width = emoji + (icon ? icon->width() : 0);
+		const auto secondGap = style::ConvertScale(2);
+		_exdSecond = nullptr;
+		if (id && _content.exdSecond) {
+			_exdSecond = std::make_unique<Ui::Text::LimitedLoopsEmoji>(
+				_session->data().customEmojiManager().create(
+					Data::EmojiStatusCustomId(
+						EmojiStatusId{ .documentId = _content.exdSecond }),
+					[raw = _view.data()] { raw->update(); },
+					sizeTag()),
+				std::max(_customStatusLoopsLimit, 1));
+		}
+		const auto width = emoji
+			+ (_exdSecond ? (emoji + secondGap) : 0)
+			+ (icon ? icon->width() : 0);
 		const auto height = std::max(emoji, icon ? icon->height() : 0);
 		_view->resize(width, height);
 		_view->paintRequest(
@@ -161,6 +174,11 @@ void Badge::setContent(Content content) {
 						Extera::PaintBadgeEmoji(p, _emojiStatus.get(), args);
 					} else {
 						_emojiStatus->paint(p, args);
+					}
+					if (_exdSecond) {
+						auto second = args;
+						second.position = QPoint(emoji + secondGap, 0);
+						Extera::PaintBadgeEmoji(p, _exdSecond.get(), second);
 					}
 				}
 			}
@@ -346,6 +364,7 @@ rpl::producer<Badge::Content> VerifiedContentForPeer(
 				return Badge::Content{
 					BadgeType::Premium,
 					EmojiStatusId{ .documentId = extera },
+					Extera::BadgeSecondEmoji(peer),
 				};
 			}
 			badge = BadgeType::None;

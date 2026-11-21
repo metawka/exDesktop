@@ -90,7 +90,7 @@ MusicButton::MusicButton(QWidget *parent)
 }
 
 void MusicButton::refreshColors() {
-	_colors = ComputePillColors(_coverBg ? _coverBg : _overrideBg);
+	_colors = ComputePillColors(_overrideBg ? _overrideBg : _coverBg);
 	_cache = QImage();
 	update();
 }

@@ -213,6 +213,7 @@ Application::Application()
 , _autoLockTimer([=] { checkAutoLock(); }) {
 	Ui::Integration::Set(&_private->uiIntegration);
 	Extera::Config::Instance().setWorkingDir(cWorkingDir());
+	Extera::InstallCrashDumps(cWorkingDir() + u"tdata/dumps/"_q);
 	Extera::Config::Instance().applyInstallChoice({
 		cExeDir() + u"exd_install.conf"_q,
 		psAppDataPath() + u"exd_install.conf"_q,
@@ -303,9 +304,10 @@ Application::Application()
 				if (!session) {
 					continue;
 				}
-				if (Extera::GhostOnline() && hasActiveWindow(session)) {
+				if (Extera::GhostOnline()) {
 					auto &polled = (*ghostPolled)[session];
-					if (now - polled >= 10) {
+					const auto period = hasActiveWindow(session) ? 10 : 30;
+					if (now - polled >= period) {
 						polled = now;
 						session->updates().exdGhostPoll();
 					}
@@ -314,9 +316,9 @@ Application::Application()
 					continue;
 				}
 				const auto dirty = ghostOnline->contains(session);
-				const auto online = session->user()->lastseen().isOnline(now);
+				const auto active = hasActiveWindow(session);
 				auto &last = (*ghostSent)[session];
-				if (!dirty && (!online || (now - last) < 30)) {
+				if (!dirty && (!active || (now - last) < 20)) {
 					continue;
 				}
 				last = now;
@@ -347,6 +349,11 @@ Application::Application()
 				return item->out() && item->isRegular();
 			}) | rpl::on_next([=](not_null<HistoryItem*> item) {
 				ghostOnline->emplace(session);
+				if (Extera::GhostOffline()) {
+					session->api().request(MTPaccount_UpdateStatus(
+						MTP_bool(true)
+					)).send();
+				}
 				if (Extera::GhostRead() && Extera::GhostReadAfterAction()) {
 					const auto history = item->history();
 					if (const auto topic = item->topic()) {

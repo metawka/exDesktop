@@ -52,6 +52,7 @@ public:
 	struct Content {
 		BadgeType badge = BadgeType::None;
 		EmojiStatusId emojiStatusId;
+		DocumentId exdSecond = 0;
 
 		friend inline bool operator==(Content, Content) = default;
 	};
@@ -88,6 +89,7 @@ private:
 	EmojiStatusPanel *_emojiStatusPanel = nullptr;
 	const int _customStatusLoopsLimit = 0;
 	std::unique_ptr<Ui::Text::CustomEmoji> _emojiStatus;
+	std::unique_ptr<Ui::Text::CustomEmoji> _exdSecond;
 	base::flags<BadgeType> _allowed;
 	Content _content;
 	Fn<void()> _premiumClickCallback;

@@ -111,7 +111,7 @@ settingsUpdate: SettingsButton(infoMainButton, settingsButtonNoIcon) {
 }
 settingsUpdateStatePosition: point(22px, 29px);
 
-settingsIconInterfaceScale: icon {{ "settings/interface_scale", settingsIconFg }};
+settingsIconInterfaceScale: icon {{ "settings/interface_scale", menuIconColor }};
 exteraIconLogo: icon {{ "extera/logo", menuIconColor }};
 exteraIconGeneral: icon {{ "extera/media", menuIconColor }};
 exteraIconAppearance: icon {{ "extera/theme", menuIconColor }};
@@ -865,7 +865,79 @@ detailedSettingsButtonStyle: DetailedSettingsButtonStyle {
 
 settingsToastStarIcon: icon {{ "toast/star", toastFg }};
 
-exteraInstallWidth: 420px;
+exteraInstallWidth: 600px;
+exdInstallLeftWidth: 210px;
+exdInstallRightTop: 28px;
+exdInstallColumnsPadding: margins(0px, 0px, 8px, 0px);
+exdInstallColumnCardMargin: margins(0px, 0px, 8px, 10px);
+exdInstallSideName: FlatLabel(defaultFlatLabel) {
+	align: align(top);
+	minWidth: 100px;
+	textFg: windowBoldFg;
+	style: TextStyle(defaultTextStyle) {
+		font: font(20px semibold);
+	}
+}
+exdInstallSideVersion: FlatLabel(defaultFlatLabel) {
+	align: align(top);
+	minWidth: 100px;
+	textFg: windowSubTextFg;
+	style: TextStyle(defaultTextStyle) {
+		font: font(14px);
+	}
+}
+exdPortHeaderPadding: margins(22px, 24px, 22px, 4px);
+exdPortHeaderIcon: 64px;
+exdPortHeaderBadge: 24px;
+exdPortHeaderIconSkip: 16px;
+exdPortHeaderPillSkip: 8px;
+exdInstallActionsMargin: margins(0px, 12px, 0px, 0px);
+exdCardSettingsButton: SettingsButton(settingsButtonNoIcon) {
+	textBg: transparent;
+}
+exdPortHeaderTextTop: 2px;
+exdSideTitle: FlatLabel(defaultFlatLabel) {
+	minWidth: 100px;
+	textFg: windowBoldFg;
+	style: TextStyle(defaultTextStyle) {
+		font: font(20px semibold);
+	}
+}
+exdSideSubtitle: FlatLabel(defaultFlatLabel) {
+	minWidth: 100px;
+	textFg: windowSubTextFg;
+	style: TextStyle(defaultTextStyle) {
+		font: font(14px);
+	}
+}
+exdSideSubtitleSkip: 4px;
+exdUpdateHeaderPadding: margins(24px, 28px, 24px, 16px);
+exdUpdateLogoSize: 72px;
+exdUpdateLogoSkip: 18px;
+exdUpdateHeaderTextTop: 12px;
+exdUpdateCardRadius: 18px;
+exdUpdateCardMargin: margins(10px, 0px, 10px, 10px);
+exdUpdateCardPadding: margins(16px, 12px, 16px, 0px);
+exdUpdateCardTextPadding: margins(16px, 4px, 16px, 12px);
+exdUpdateCardSinglePadding: margins(16px, 12px, 16px, 12px);
+exdUpdateCardLinkPadding: margins(16px, 0px, 16px, 12px);
+exdUpdateCardTitle: FlatLabel(defaultFlatLabel) {
+	minWidth: 100px;
+	textFg: windowBoldFg;
+	style: semiboldTextStyle;
+}
+exdUpdateCardText: FlatLabel(defaultFlatLabel) {
+	minWidth: 100px;
+	textFg: windowSubTextFg;
+}
+exdUpdateNotes: FlatLabel(defaultFlatLabel) {
+	minWidth: 100px;
+	maxHeight: 320px;
+}
+exdUpdateProgressMargin: margins(10px, 0px, 10px, 10px);
+exdUpdateProgressHeight: 4px;
+exdUpdateBetaAboutPadding: margins(22px, 0px, 22px, 8px);
+exdUpdateButtonsPadding: margins(10px, 8px, 10px, 16px);
 exteraInstallBox: Box(defaultBox) {
 	buttonPadding: margins(0px, 0px, 0px, 0px);
 	buttonHeight: 0px;
@@ -940,10 +1012,16 @@ exteraInstallCancel: RoundButton(defaultLightButton) {
 }
 exteraInstallCancelMargin: margins(16px, 8px, 16px, 16px);
 menuIconExdPuzzle: icon {{ "menu/exd_puzzle", menuIconColor }};
+menuIconExdShield: icon {{ "menu/exd_shield_ok", menuIconColor }};
+menuIconExdCode: icon {{ "menu/exd_code", menuIconColor }};
+menuIconExdAi: icon {{ "menu/exd_ai", menuIconColor }};
+menuIconExdWarning: icon {{ "menu/exd_warning", menuIconColor }};
+menuIconExdTune: icon {{ "menu/exd_tune", menuIconColor }};
+menuIconExdDisable: icon {{ "menu/disable", menuIconColor }};
 exteraDescriptionLines: 5;
 exteraDescriptionMore: margins(16px, 0px, 16px, 12px);
 exteraTopActionSize: 36px;
-exteraTopActionsMargin: margins(0px, 14px, 14px, 0px);
+exteraTopActionsMargin: margins(0px, 14px, 16px, 0px);
 exteraTopActionTranslate: icon {{ "menu/translate", windowSubTextFg }};
 exteraTopActionCode: icon {{ "menu/exd_code", windowSubTextFg }};
 exteraTopActionReport: icon {{ "menu/report", windowSubTextFg }};
@@ -985,6 +1063,15 @@ exteraThreatSectionTitle: FlatLabel(defaultFlatLabel) {
 exteraThreatSectionPadding: margins(22px, 16px, 22px, 8px);
 exteraThreatAlert: icon {{ "menu/exd_alert-24x24", windowFg }};
 exteraThreatOk: icon {{ "menu/exd_shield_ok-24x24", windowFg }};
+exteraGuardLevelIcon: icon {{ "menu/exd_shield_ok-40x40", windowFg }};
+exteraIconsNoMd3StdFolder: icon {{ "menu/show_in_folder", windowFg }};
+exteraIconsNoMd3StdChats: icon {{ "menu/chats", windowFg }};
+exteraIconsNoMd3StdSend: icon {{ "menu/send", windowFg }};
+exteraIconsNoMd3MgFolder: icon {{ "mg/menu/show_in_folder", windowFg }};
+exteraIconsNoMd3MgChats: icon {{ "mg/menu/chats", windowFg }};
+exteraIconsNoMd3MgSend: icon {{ "mg/menu/send", windowFg }};
+exteraIconsCardHeight: 72px;
+exteraGuardLevelCircle: 72px;
 exteraThreatCode: icon {{ "menu/exd_code-24x24", windowFg }};
 exteraThreatGlobe: icon {{ "menu/exd_globe-24x24", windowFg }};
 exteraThreatFile: icon {{ "menu/exd_file-24x24", windowFg }};
@@ -1085,6 +1172,17 @@ exteraBadgeTitle: FlatLabel(defaultFlatLabel) {
 	align: align(top);
 }
 exteraBadgeTitlePadding: margins(24px, 0px, 24px, 8px);
+exdBadgeInfoPadding: margins(24px, 28px, 24px, 8px);
+exdBadgeInfoTitle: FlatLabel(defaultFlatLabel) {
+	style: TextStyle(defaultTextStyle) {
+		font: font(20px semibold);
+	}
+}
+exdBadgeInfoText: FlatLabel(defaultFlatLabel) {
+	minWidth: 100px;
+}
+exdBadgeInfoSkip: 6px;
+exdBadgeInfoLineSkip: 12px;
 exteraBadgeText: FlatLabel(defaultFlatLabel) {
 	minWidth: 100px;
 	align: align(top);

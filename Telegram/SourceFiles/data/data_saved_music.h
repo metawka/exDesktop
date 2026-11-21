@@ -31,6 +31,7 @@ public:
 	[[nodiscard]] const std::vector<not_null<HistoryItem*>> &list(
 		PeerId peerId) const;
 	void loadMore(PeerId peerId);
+	void reload(PeerId peerId);
 
 	[[nodiscard]] rpl::producer<PeerId> changed() const;
 

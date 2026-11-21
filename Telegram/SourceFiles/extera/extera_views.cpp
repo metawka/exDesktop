@@ -901,7 +901,7 @@ void DismissSheet(int64 id) {
 }
 
 void RenderCanvas(int64 id, int width, int height, const QString &ops) {
-	if (width <= 0 || height <= 0) {
+	if (width <= 0 || height <= 0 || width > 8192 || height > 8192) {
 		return;
 	}
 	auto image = QImage(width, height, QImage::Format_ARGB32_Premultiplied);

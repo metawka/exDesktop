@@ -210,14 +210,20 @@ def start_for_result(intent, request_code, owner=None):
     multiple = bool(getattr(intent, "_extras", {}).get("android.intent.extra.ALLOW_MULTIPLE"))
     mime = getattr(intent, "_type", None)
 
+    try:
+        import extera_host
+        requester = extera_host.current_plugin_id()
+    except Exception:
+        requester = None
+
     def done(paths):
-        _deliver_result(int(request_code or 0), paths, owner)
+        _deliver_result(int(request_code or 0), paths, owner, requester)
 
     pick(done, "", _filter_for(mime), multiple)
     return True
 
 
-def _deliver_result(request_code, paths, owner):
+def _deliver_result(request_code, paths, owner, requester=None):
     import _compat
     import base_plugin
     import extera_host
@@ -230,6 +236,8 @@ def _deliver_result(request_code, paths, owner):
     for record in list(extera_host._records.values()):
         instance = record.instance
         if instance is None:
+            continue
+        if requester and record.id != requester:
             continue
         handlers = list(instance.__dict__.get("_exd_virtual_activity_result") or ())
         for handler in handlers:

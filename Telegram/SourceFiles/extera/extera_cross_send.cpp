@@ -376,11 +376,25 @@ void CopyFromAccount(
 			} else if (const auto document = media->document()) {
 				part.document = document;
 				if (document->filepath(true).isEmpty()) {
-					auto name = document->filename();
+					auto name = QString();
+					for (const auto ch : QString(document->filename())) {
+						const auto code = ch.unicode();
+						const auto bad = (code < 0x20)
+							|| QStringLiteral("<>:\"/\\|?*").contains(ch);
+						name.append(bad ? QChar('_') : ch);
+					}
+					while (name.startsWith('.') || name.startsWith(' ')) {
+						name.remove(0, 1);
+					}
 					if (name.isEmpty()) {
 						name = u"file"_q;
 					}
-					document->save(id, TempFolder() + '/' + name);
+					const auto folder = QDir(TempFolder()).absolutePath();
+					const auto target = QDir(folder).absoluteFilePath(name);
+					if (!target.startsWith(folder + '/')) {
+						continue;
+					}
+					document->save(id, target);
 				}
 			}
 		}

@@ -5,7 +5,7 @@ import tempfile
 import urllib.parse
 import zipfile
 
-_MAX_SOURCE = 160000
+_MAX_SOURCE = 8 * 1024 * 1024
 _OS_NAMES = {"windows": "Windows", "linux": "Linux", "macos": "macOS"}
 _MISSING_ON = {
     "windows": {"termios", "pwd", "grp", "resource", "posix"},
@@ -744,7 +744,10 @@ def fix_prompt(errors):
 
 def save(code, prepared, out_dir):
     os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, prepared["target_id"] + ".plugin")
+    name = re.sub(r"[^A-Za-z0-9_.-]", "_", str(prepared.get("target_id") or "")).lstrip(".") or "ported"
+    path = os.path.join(out_dir, name + ".plugin")
+    if os.path.dirname(os.path.abspath(path)) != os.path.abspath(out_dir):
+        raise ValueError("invalid plugin id")
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(code)
     return path

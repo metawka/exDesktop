@@ -1920,4 +1920,7 @@ historyComposePillRadius: 0px;
 historyComposePillBg: historyComposeAreaBg;
 historyComposePillMargins: margins(0px, 0px, 0px, 0px);
 exdPinnedPlaqueMargins: margins(8px, 2px, 8px, 4px);
+exdAutocompleteIslandMargins: margins(4px, 0px, 4px, 6px);
+exdAutocompleteIslandPadding: 6px;
+exdAutocompleteIslandRadius: 18px;
 exdPinnedPlaqueRadius: 18px;

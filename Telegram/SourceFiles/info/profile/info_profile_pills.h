@@ -22,6 +22,11 @@ namespace Info::Profile {
 class BalancePill;
 class MusicButton;
 
+[[nodiscard]] object_ptr<Ui::RpWidget> CreateProfileMusicCard(
+	not_null<Ui::RpWidget*> parent,
+	not_null<UserData*> user,
+	Fn<void()> showSavedMusic);
+
 class PillsRow final {
 public:
 	PillsRow(

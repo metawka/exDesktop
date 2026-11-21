@@ -621,7 +621,7 @@ style::margins TopBarWidget::exdPlaqueMargins() const {
 }
 
 bool TopBarWidget::exdFloating() const {
-	return _exdFloating && style::Md3Enabled();
+	return _exdFloating && style::Md3Enabled() && style::Md3Floating();
 }
 
 void TopBarWidget::paintTopBar(Painter &p) {

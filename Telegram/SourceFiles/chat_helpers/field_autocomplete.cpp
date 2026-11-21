@@ -382,7 +382,21 @@ void FieldAutocomplete::paintEvent(QPaintEvent *e) {
 		return;
 	}
 
-	p.fillRect(rect(), _st.bg);
+	if (!style::Md3Floating()) {
+		p.fillRect(rect(), _st.bg);
+		return;
+	}
+	const auto island = exdIslandRect();
+	auto hq = PainterHighQualityEnabler(p);
+	p.setPen(Qt::NoPen);
+	p.setBrush(_st.bg);
+	const auto radius = st::exdAutocompleteIslandRadius;
+	p.drawRoundedRect(island, radius, radius);
+}
+
+QRect FieldAutocomplete::exdIslandRect() const {
+	const auto &margins = st::exdAutocompleteIslandMargins;
+	return rect().marginsRemoved(margins);
 }
 
 void FieldAutocomplete::showFiltered(
@@ -983,12 +997,23 @@ void FieldAutocomplete::setBoundings(QRect boundings) {
 
 void FieldAutocomplete::recount(bool resetScroll) {
 	const auto oldScrollTop = _scroll->scrollTop();
+	const auto floating = style::Md3Floating();
+	const auto &islandMargins = floating
+		? st::exdAutocompleteIslandMargins
+		: style::margins();
+	const auto pad = floating ? st::exdAutocompleteIslandPadding : 0;
+	const auto innerWidth = std::max(
+		_boundings.width()
+			- islandMargins.left()
+			- islandMargins.right()
+			- 2 * pad,
+		1);
 	const auto maxHeight = int(4.5 * st::mentionHeight);
 	auto height = 0;
 	if (!_srows.empty()) {
 		const auto stickersPerRow = std::max(
 			1,
-			(_boundings.width() - 2 * st::stickerPanPadding)
+			(innerWidth - 2 * st::stickerPanPadding)
 				/ st::stickerPanSize.width());
 		const auto rows = rowscount(_srows.size(), stickersPerRow);
 		height = st::stickerPanPadding + rows * st::stickerPanSize.height();
@@ -1001,17 +1026,30 @@ void FieldAutocomplete::recount(bool resetScroll) {
 	}
 	height += _st.autocompleteBottomSkip;
 
-	if (_inner->width() != _boundings.width()
+	if (_inner->width() != innerWidth
 		|| _inner->height() != height) {
-		_inner->resize(_boundings.width(), height);
+		_inner->resize(innerWidth, height);
 	}
-	height = std::min({ height, _boundings.height(), maxHeight });
+	const auto extra = islandMargins.top()
+		+ islandMargins.bottom()
+		+ 2 * pad;
+	const auto scrollHeight = std::max(
+		std::min({ height, _boundings.height() - extra, maxHeight }),
+		0);
+	height = scrollHeight + extra;
 	const auto top = _boundings.y() + _boundings.height() - height;
+	const auto scrollGeometry = QRect(
+		islandMargins.left() + pad,
+		islandMargins.top() + pad,
+		innerWidth,
+		scrollHeight);
 	if (width() != _boundings.width() || RpWidget::height() != height) {
 		setGeometry(_boundings.x(), top, _boundings.width(), height);
-		_scroll->resize(_boundings.width(), height);
 	} else if (x() != _boundings.x() || y() != top) {
 		move(_boundings.x(), top);
+	}
+	if (_scroll->geometry() != scrollGeometry) {
+		_scroll->setGeometry(scrollGeometry);
 	}
 	const auto scrollTop = resetScroll ? 0 : oldScrollTop;
 	if (scrollTop != oldScrollTop) {
@@ -1080,7 +1118,7 @@ void FieldAutocomplete::animationCallback() {
 	update();
 	if (!_opacityAnimation.animating()) {
 		_cache = QPixmap();
-		setAttribute(Qt::WA_OpaquePaintEvent);
+		setAttribute(Qt::WA_OpaquePaintEvent, !style::Md3Floating());
 		if (_hiding) {
 			hideFinish();
 		} else {

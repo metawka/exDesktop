@@ -1,5 +1,7 @@
 #include "extera/exd_plugin_webview.h"
 
+#include "base/platform/base_platform_info.h"
+
 #include "extera/extera_plugins.h"
 #include "core/application.h"
 #include "main/main_session.h"
@@ -24,6 +26,7 @@ namespace {
 struct Entry {
 	std::unique_ptr<Ui::SeparatePanel> panel;
 	std::unique_ptr<Webview::Window> webview;
+	QString owner;
 	bool closing = false;
 };
 
@@ -94,7 +97,11 @@ void Open(const QString &payload) {
 	const auto title = data.value(u"title"_q).toString();
 	const auto html = data.value(u"html"_q).toString();
 	const auto url = data.value(u"url"_q).toString();
-	const auto baseUrl = data.value(u"base_url"_q).toString(u"https://plugin.exdesktop.local/"_q);
+	const auto netOffPrefetch = data.value(u"net_off"_q).toBool(true);
+	const auto requestedBase = data.value(u"base_url"_q).toString();
+	const auto baseUrl = (!netOffPrefetch && requestedBase.startsWith(u"https://"_q))
+		? requestedBase
+		: u"https://plugin.exdesktop.local/"_q;
 	const auto width = std::clamp(data.value(u"width"_q).toInt(420), 240, 1600);
 	const auto height = std::clamp(data.value(u"height"_q).toInt(640), 200, 1200);
 	const auto interfaces = data.value(u"interfaces"_q).toArray();
@@ -108,6 +115,7 @@ void Open(const QString &payload) {
 		return;
 	}
 	auto entry = std::make_unique<Entry>();
+	entry->owner = data.value(u"owner"_q).toString();
 	const auto raw = entry.get();
 	raw->panel = std::make_unique<Ui::SeparatePanel>();
 	const auto panel = raw->panel.get();
@@ -180,17 +188,23 @@ void Open(const QString &payload) {
 	} else {
 		const auto connect = netOff ? u"'none'"_q : u"https: wss:"_q;
 		const auto remote = netOff ? QString() : u" https:"_q;
-		const auto policy = u"default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval'; "_q
+		const auto policy = u"default-src data: blob: 'unsafe-inline' 'unsafe-eval'"_q + remote
+			+ u"; object-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'; "_q
+			+ u"worker-src data: blob:"_q + remote + u"; "_q
 			+ u"img-src data: blob:"_q + remote + u"; media-src data: blob:"_q + remote
 			+ u"; font-src data:"_q + remote + u"; style-src 'unsafe-inline' data:"_q + remote
 			+ u"; script-src 'unsafe-inline' 'unsafe-eval' data: blob:"_q + remote
 			+ u"; connect-src "_q + connect + u"; frame-src data: blob:"_q + remote + u";"_q;
-		webview->loadHtml(
-			u"<meta http-equiv=\"Content-Security-Policy\" content=\""_q
-				+ policy
-				+ u"\">"_q
-				+ html,
-			baseUrl);
+		const auto document = u"<meta http-equiv=\"Content-Security-Policy\" content=\""_q
+			+ policy
+			+ u"\">"_q
+			+ html;
+		if (Platform::IsLinux()) {
+			webview->loadHtml(document, baseUrl);
+		} else {
+			webview->navigate(u"data:text/html;charset=utf-8;base64,"_q
+				+ QString::fromLatin1(document.toUtf8().toBase64()));
+		}
 	}
 	const auto parent = controller->widget()->geometry();
 	panel->move(
@@ -198,6 +212,14 @@ void Open(const QString &payload) {
 		parent.y() + (parent.height() - panel->height()) / 2);
 	panel->showAndActivate();
 	Entries.emplace(id, std::move(entry));
+}
+
+bool Owns(int64 id, const QString &owner) {
+	const auto it = Entries.find(id);
+	if (it == Entries.end()) {
+		return false;
+	}
+	return owner.isEmpty() || it->second->owner == owner;
 }
 
 void Eval(int64 id, const QString &script) {

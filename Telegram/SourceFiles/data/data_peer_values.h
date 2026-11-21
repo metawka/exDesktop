@@ -148,6 +148,8 @@ inline auto PeerFullFlagValue(
 	not_null<PeerData*> peer);
 [[nodiscard]] rpl::producer<bool> CanManageGroupCallValue(
 	not_null<PeerData*> peer);
+[[nodiscard]] rpl::producer<bool> AllowsForwardingRawValue(
+	not_null<PeerData*> peer);
 [[nodiscard]] rpl::producer<bool> AllowsForwardingValue(
 	not_null<PeerData*> peer);
 [[nodiscard]] rpl::producer<bool> PeerPremiumValue(not_null<PeerData*> peer);

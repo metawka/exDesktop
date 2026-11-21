@@ -246,6 +246,10 @@ int SavedMusic::count(PeerId peerId) const {
 	return entry ? std::max(entry->total, 0) : 0;
 }
 
+void SavedMusic::reload(PeerId peerId) {
+	loadMore(peerId, true);
+}
+
 bool SavedMusic::fullyLoaded(PeerId peerId) const {
 	if (!Supported(peerId)) {
 		return true;

@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/popup_menu.h"
 #include "styles/style_menu_icons.h"
 #include "extera/extera_update.h"
+#include "extera/exd_update_box.h"
 
 #include "extera/extera_config.h"
 
@@ -527,8 +528,8 @@ Widget::Widget(
 				st::dialogsInstallUpdateOver,
 				true);
 			_updateTelegram->show();
-			_updateTelegram->setClickedCallback([] {
-				Extera::Update::Install();
+			_updateTelegram->setClickedCallback([=] {
+				Exd::ShowUpdateBox(controller);
 			});
 			if (_connecting) {
 				_connecting->raise();

@@ -251,6 +251,7 @@ private:
 	void updateControlsGeometry();
 	void exdHoldThirdSection();
 	void exdRevealThirdSection();
+	void exdSlideOutThirdSection();
 	void updateMainSectionShown();
 	void updateDialogsWidthAnimated();
 	void updateThirdColumnToCurrentChat(
@@ -364,6 +365,11 @@ private:
 	object_ptr<Ui::PlainShadow> _thirdShadow = { nullptr };
 	base::unique_qptr<Ui::RpWidget> _exdThirdCover;
 	Ui::Animations::Simple _exdThirdFade;
+	Ui::Animations::Simple _exdThirdSlide;
+	bool _exdNoThirdSlide = false;
+	bool _exdNoThirdRestore = false;
+	bool _exdFocusHistory = false;
+	base::unique_qptr<Ui::RpWidget> _exdThirdGap;
 	object_ptr<Ui::ResizeArea> _firstColumnResizeArea = { nullptr };
 	object_ptr<Ui::ResizeArea> _thirdColumnResizeArea = { nullptr };
 

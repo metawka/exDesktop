@@ -1707,7 +1707,9 @@ void PeerListContent::paintEvent(QPaintEvent *e) {
 	const auto yFrom = clip.y() - rowsTopCached;
 	const auto yTo = clip.y() + clip.height() - rowsTopCached;
 	const auto count = shownRowsCount();
-	if (_mode != Mode::Custom) {
+	const auto exdGrouped = style::Md3Grouped()
+		&& property("exdGroupedList").toBool();
+	if (_mode != Mode::Custom && !exdGrouped) {
 		auto fill = QRegion(clip);
 		if (count > 0 && !sectionsShown()) {
 			const auto [from, to] = Ui::RowsInRange(
@@ -2156,7 +2158,9 @@ crl::time PeerListContent::paintRow(
 		&& !row->elementsAnimating()
 		&& width() > 0
 		&& row->opacity() == 1.
-		&& st.button.textBg->c.alpha() == 255) {
+		&& st.button.textBg->c.alpha() == 255
+		&& !(style::Md3Grouped()
+			&& property("exdGroupedList").toBool())) {
 		const auto ratio = style::DevicePixelRatio();
 		_rowsScrollCache.paintRow(
 			p,
@@ -2209,7 +2213,19 @@ void PeerListContent::paintRowContent(
 		}
 	});
 
-	p.fillRect(0, 0, outerWidth, _rowHeight, bg);
+	if (!(style::Md3Grouped()
+			&& property("exdGroupedList").toBool())) {
+		p.fillRect(0, 0, outerWidth, _rowHeight, bg);
+	} else if (selected) {
+		auto hq = PainterHighQualityEnabler(p);
+		const auto radius = style::ConvertScale(12);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st.button.textBgOver);
+		p.drawRoundedRect(
+			QRect(0, 0, outerWidth, _rowHeight),
+			radius,
+			radius);
+	}
 	row->paintRipple(p, st, 0, 0, outerWidth);
 	row->paintUserpic(
 		p,

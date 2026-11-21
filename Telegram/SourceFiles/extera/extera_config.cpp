@@ -5,6 +5,11 @@
 #include <set>
 #include <QtCore/QFile>
 #include <QtCore/QSaveFile>
+#include <QtCore/QDir>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <DbgHelp.h>
+#endif
 #include <rpl/combine.h>
 
 namespace Extera {
@@ -58,6 +63,7 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"guard_model_version"_q, QString() },
 		{ u"plugins_guard_blocked"_q, QString() },
 		{ u"ayu_save_bots"_q, true },
+		{ u"ayu_bypass_protection"_q, true },
 		{ u"deleted_mark"_q, 2 },
 		{ u"translucent_deleted"_q, false },
 		{ u"disable_colorful_replies"_q, false },
@@ -133,6 +139,7 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"capture_protection"_q, false },
 		{ u"sbx_leak_tokens"_q, false },
 		{ u"profile_music_cover"_q, true },
+		{ u"exd_profile_music_card"_q, true },
 		{ u"keep_locally_peers"_q, QString() },
 		{ u"chars_counter"_q, true },
 		{ u"select_service"_q, true },
@@ -170,11 +177,20 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"md3"_q, true },
 		{ u"md3_google_sans"_q, true },
 		{ u"md3_grouped"_q, true },
+		{ u"md3_icons"_q, true },
+		{ u"smooth_scroll"_q, true },
+		{ u"exd_text_preview"_q, true },
 		{ u"md3_intro_shown"_q, false },
 		{ u"md3_rounded_selection"_q, true },
 		{ u"md3_floating_field"_q, true },
 		{ u"md3_drawer_corners"_q, true },
 		{ u"md3_expressive"_q, true },
+		{ u"exd_sync_auto"_q, false },
+		{ u"exd_sync_keys"_q, false },
+		{ u"exd_sync_date"_q, 0 },
+		{ u"exd_presets_changed"_q, 0 },
+		{ u"exd_update_beta"_q, false },
+		{ u"exd_update_skip"_q, QString() },
 		{ u"custom_chat_themes"_q, true },
 		{ u"app_icon"_q, QString() },
 		{ u"app_icon_square"_q, false },
@@ -203,6 +219,7 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"premium_wizard_shown"_q, false },
 		{ u"poll_results_before_voting"_q, true },
 		{ u"bottom_button"_q, 0 },
+		{ u"exd_round_size"_q, 0 },
 		{ u"wide_posts"_q, false },
 		{ u"ai_chat_key"_q, QString() },
 		{ u"ai_chat_model"_q, 0 },
@@ -216,6 +233,7 @@ constexpr auto kSaveDelay = crl::time(1000);
 		{ u"plugins_compact_view"_q, false },
 		{ u"plugins_unknown_sources"_q, false },
 		{ u"plugins_safe_mode"_q, false },
+		{ u"plugins_guard_level"_q, 0 },
 	};
 	return result;
 }
@@ -455,6 +473,91 @@ void Config::saveNow() {
 bool IsBoolKey(const QString &key) {
 	return Defaults().value(key).isBool();
 }
+
+#ifdef Q_OS_WIN
+namespace {
+
+using MiniDumpWriteDumpType = BOOL(WINAPI*)(
+	HANDLE,
+	DWORD,
+	HANDLE,
+	MINIDUMP_TYPE,
+	PMINIDUMP_EXCEPTION_INFORMATION,
+	PMINIDUMP_USER_STREAM_INFORMATION,
+	PMINIDUMP_CALLBACK_INFORMATION);
+
+wchar_t DumpFolder[MAX_PATH] = { 0 };
+MiniDumpWriteDumpType DumpWriter = nullptr;
+LPTOP_LEVEL_EXCEPTION_FILTER PreviousFilter = nullptr;
+
+LONG WINAPI WriteCrashDump(EXCEPTION_POINTERS *info) {
+	static volatile LONG entered = 0;
+	if (DumpWriter && !InterlockedExchange(&entered, 1)) {
+		SYSTEMTIME time;
+		GetLocalTime(&time);
+		wchar_t path[MAX_PATH + 64] = { 0 };
+		swprintf_s(
+			path,
+			L"%sexd-%04d%02d%02d-%02d%02d%02d.dmp",
+			DumpFolder,
+			time.wYear,
+			time.wMonth,
+			time.wDay,
+			time.wHour,
+			time.wMinute,
+			time.wSecond);
+		const auto file = CreateFileW(
+			path,
+			GENERIC_WRITE,
+			0,
+			nullptr,
+			CREATE_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL,
+			nullptr);
+		if (file != INVALID_HANDLE_VALUE) {
+			auto exception = MINIDUMP_EXCEPTION_INFORMATION();
+			exception.ThreadId = GetCurrentThreadId();
+			exception.ExceptionPointers = info;
+			exception.ClientPointers = FALSE;
+			DumpWriter(
+				GetCurrentProcess(),
+				GetCurrentProcessId(),
+				file,
+				MINIDUMP_TYPE(MiniDumpWithIndirectlyReferencedMemory
+					| MiniDumpWithThreadInfo
+					| MiniDumpWithUnloadedModules),
+				info ? &exception : nullptr,
+				nullptr,
+				nullptr);
+			CloseHandle(file);
+		}
+	}
+	return PreviousFilter
+		? PreviousFilter(info)
+		: EXCEPTION_CONTINUE_SEARCH;
+}
+
+} // namespace
+
+void InstallCrashDumps(const QString &folder) {
+	QDir().mkpath(folder);
+	const auto native = QDir::toNativeSeparators(folder).toStdWString();
+	if (native.size() + 1 >= MAX_PATH) {
+		return;
+	}
+	wcscpy_s(DumpFolder, native.c_str());
+	if (const auto library = LoadLibraryW(L"dbghelp.dll")) {
+		DumpWriter = reinterpret_cast<MiniDumpWriteDumpType>(
+			GetProcAddress(library, "MiniDumpWriteDump"));
+	}
+	if (DumpWriter) {
+		PreviousFilter = SetUnhandledExceptionFilter(WriteCrashDump);
+	}
+}
+#else
+void InstallCrashDumps(const QString &folder) {
+}
+#endif
 
 bool Bool(const QString &key) {
 	return Config::Instance().boolValue(key);

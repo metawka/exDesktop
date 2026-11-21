@@ -76,5 +76,3 @@ settings.local.json
 /docs/changelog/
 /tests/test_extera_plugins
 bin/
-
-.project-status.md

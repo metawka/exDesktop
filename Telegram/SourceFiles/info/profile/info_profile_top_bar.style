@@ -118,6 +118,7 @@ infoProfileBalancePillArrow: icon{{ "dialogs/dialogs_topic_arrow", windowBoldFg 
 infoProfileBalancePillColoredIconTint: 0.5;
 infoProfileTopBarPillsSkip: 10px;
 infoProfileTopBarPillsGap: 6px;
+infoProfileMusicCardPadding: margins(10px, 0px, 10px, 0px);
 // The row below the buttons takes over their bottom padding,
 // leaving the same skip below it as above.
 infoProfileTopBarPillsReserve: infoProfileTopBarPillsSkip

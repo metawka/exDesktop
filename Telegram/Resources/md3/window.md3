@@ -2,4 +2,5 @@ group material;
 mainMenuButton: SettingsButton(mainMenuButton) {
 	style: defaultTextStyle;
 	textBg: transparent;
+	padding: margins(61px, 13px, 20px, 11px);
 }

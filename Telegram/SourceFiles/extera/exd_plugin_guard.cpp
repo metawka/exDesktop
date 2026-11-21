@@ -435,9 +435,8 @@ void Score(Report &report, const VectorStats &stats, const QString &entropy) {
 		0,
 		100);
 	if (stats.dangerous >= 2) {
-		report.level = u"high"_q;
-		report.similarityBlock = true;
-		report.score = std::min(report.score, 30);
+		report.level = u"medium"_q;
+		report.score = std::min(report.score, 45);
 		return;
 	} else if (stats.malware >= 3) {
 		report.score = std::min(report.score, 45);
@@ -806,15 +805,15 @@ void Scan(const QString &path, Fn<void(Report)> done) {
 							return rule == u"DECODED_OBFUSCATION"_q
 								|| rule == u"DYNAMIC_CODE_EXECUTION"_q
 								|| rule == u"DYNAMIC_CODE_COMPILATION"_q
-								|| rule == u"HIGH_ENTROPY_LITERAL_DETECTED"_q;
+								|| rule == u"HIGH_ENTROPY_LITERAL_DETECTED"_q
+								|| rule == u"SUSPICIOUS_SIGNATURE_MATCH"_q;
 						};
-						const auto risky = result.malwareChunks > 0
-							|| ranges::any_of(result.findings, [&](
+						const auto risky = ranges::any_of(result.findings, [&](
 									const Finding &finding) {
 								return finding.level != u"INFO"_q
 									&& !inherent(finding.rule);
 							});
-						if (risky || !result.decodedApproved) {
+						if (risky) {
 							result.level = u"high"_q;
 							result.score = std::min(result.score, 20);
 						} else {

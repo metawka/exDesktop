@@ -1,3 +1,32 @@
+7.4.4.1 (21.11.26)
+- Updated to Telegram Desktop 7.4.4 and TG WS Proxy 1.11.4.
+- New update window: release notes translated into the app language, download progress, beta channel and skipping a version. Opens from settings, from the update bar and by clicking the logo in exDesktop settings.
+- Settings sync between devices through the Telegram cloud, with auto sync and optional API keys.
+- Settings presets: save, apply and delete named sets of settings. Presets sync together with the settings.
+- Preview of .txt, .md and code files in chats with syntax highlighting.
+- Three sizes of video messages.
+- Saving protected content: copying, saving and screenshots.
+- Music card in the profile with colors from the cover, also in My Profile.
+- Choice between standard and Material icons.
+- Smooth scrolling with the mouse wheel.
+- Floating panels also control the island in the chat header.
+- The right panel slides in and out smoothly.
+- Community and Add to contacts in profiles are separate cards.
+- Message field suggestions are shown as a floating island.
+- Wide posts in the feed stretch photos, videos and albums too.
+- Chat and topic lists show time without seconds.
+- Three protection levels: Maximum (default), Standard and Optimal. Lowering the level requires a 30 second confirmation with the consequences listed.
+- Per-plugin permissions: reading and changing files, sending, editing and deleting messages, starting programs and system access on request.
+- Session keys, login codes and the phone number cannot be sent without a request.
+- New plugin install window in two columns, wider porting and analysis windows.
+- AI porting keeps a full log of every port and accepts files up to 8 MB. The port button is available for all plugins except elyx.
+- Trusted sources are detected correctly, including ported plugins.
+- HTML plugin windows open again on Windows and macOS.
+- Opening a chat with the right panel open no longer moves focus to search.
+- The message field no longer disappears after an interrupted chat transition.
+- Ghost mode receives updates in the background and goes offline right after your message.
+- Security fixes in the plugin sandbox, file sending and updates.
+
 7.4.3.2 (17.11.26)
 - Material 3 Expressive design: Material Symbols icons, Google Sans font, settings and profile in cards, floating message field, animated transitions. Can be turned off in settings.
 - New plugin hooks: message menu, reactions, notifications, chat header, chat list, player and profile rows.

@@ -5,6 +5,7 @@
 #include "extera/extera_plugins.h"
 #include "extera/extera_plugins_ui.h"
 #include "lang/lang_keys.h"
+#include "settings.h"
 #include "ui/layers/generic_box.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/labels.h"
@@ -13,6 +14,10 @@
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 
+#include <QtCore/QDateTime>
+#include <QtCore/QDir>
+#include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
@@ -275,7 +280,64 @@ struct Job {
 	crl::time requested = 0;
 	int needRounds = 0;
 	bool canceled = false;
+	QJsonObject log;
+	QString logPath;
 };
+
+void Log(
+		const std::shared_ptr<Job> &job,
+		const QString &type,
+		QJsonObject data = {}) {
+	if (!job || job->logPath.isEmpty()) {
+		return;
+	}
+	data.insert(u"type"_q, type);
+	data.insert(
+		u"time"_q,
+		QDateTime::currentDateTime().toString(Qt::ISODateWithMs));
+	auto events = job->log.value(u"events"_q).toArray();
+	events.push_back(data);
+	job->log.insert(u"events"_q, events);
+	auto file = QFile(job->logPath);
+	if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+		file.write(QJsonDocument(job->log).toJson(QJsonDocument::Indented));
+	}
+}
+
+void StartLog(const std::shared_ptr<Job> &job, const QString &path) {
+	const auto folder = cWorkingDir() + u"tdata/exd_port_logs/"_q;
+	QDir().mkpath(folder);
+	const auto stamp = QDateTime::currentDateTime().toString(
+		u"yyyyMMdd-HHmmss"_q);
+	job->logPath = folder + stamp + u"_"_q
+		+ QFileInfo(path).completeBaseName() + u".json"_q;
+	auto source = QString();
+	auto file = QFile(path);
+	if (file.open(QIODevice::ReadOnly)) {
+		source = QString::fromUtf8(file.readAll());
+	}
+	job->log = QJsonObject{
+		{ u"plugin"_q, path },
+		{ u"provider"_q, ProviderIndex() },
+		{ u"model"_q, job->settings.provider.model },
+		{ u"endpoint"_q, job->settings.provider.endpoint },
+		{ u"agent"_q, job->settings.agent },
+		{ u"source"_q, source },
+		{ u"system"_q, job->system },
+		{ u"prepared"_q, job->prepared },
+		{ u"events"_q, QJsonArray() },
+	};
+	Log(job, u"start"_q);
+}
+
+[[nodiscard]] QString StageName(Progress::Stage stage) {
+	switch (stage) {
+	case Progress::Stage::Done: return u"done"_q;
+	case Progress::Stage::Failed: return u"failed"_q;
+	case Progress::Stage::Nothing: return u"nothing"_q;
+	default: return u"other"_q;
+	}
+}
 
 Info CurrentInfo() {
 	const auto index = ProviderIndex();
@@ -302,15 +364,7 @@ bool Configured() {
 }
 
 bool Suggested(const QJsonObject &info) {
-	if (info.value(u"desktop"_q).toBool()
-		|| info.value(u"format"_q).toString() == u"elyx"_q) {
-		return false;
-	}
-	const auto capabilities = info.value(u"capabilities"_q).toObject();
-	return !info.value(u"unsupported"_q).toArray().isEmpty()
-		|| capabilities.contains(u"hooks"_q)
-		|| capabilities.contains(u"dex"_q)
-		|| !info.value(u"error"_q).toString().isEmpty();
+	return info.value(u"format"_q).toString() != u"elyx"_q;
 }
 
 std::shared_ptr<Job> Run(
@@ -346,6 +400,7 @@ std::shared_ptr<Job> Run(
 	job->progress.library = stripped.value(u"library"_q).toBool();
 	job->update = std::move(update);
 	job->started = crl::now();
+	StartLog(job, path);
 	const auto weak = std::weak_ptr<Job>(job);
 	const auto notify = [=] {
 		if (const auto strong = weak.lock()) {
@@ -359,6 +414,14 @@ std::shared_ptr<Job> Run(
 	const auto finish = [=](Progress::Stage stage) {
 		if (const auto strong = weak.lock()) {
 			strong->progress.stage = stage;
+			Log(strong, u"finish"_q, QJsonObject{
+				{ u"stage"_q, StageName(stage) },
+				{ u"error"_q, strong->progress.error },
+				{ u"errors"_q, QJsonArray::fromStringList(
+					strong->progress.errors) },
+				{ u"path"_q, strong->progress.path },
+				{ u"total_ms"_q, int(crl::now() - strong->started) },
+			});
 			notify();
 			strong->request = nullptr;
 		}
@@ -373,6 +436,10 @@ std::shared_ptr<Job> Run(
 			? Progress::Stage::Fixing
 			: Progress::Stage::Requesting;
 		strong->requested = crl::now();
+		Log(strong, u"request"_q, QJsonObject{
+			{ u"attempt"_q, strong->progress.attempt },
+			{ u"messages"_q, strong->messages },
+		});
 		notify();
 		const auto reply = Send(
 			strong->settings,
@@ -392,6 +459,17 @@ std::shared_ptr<Job> Run(
 				data,
 				job->settings.provider.anthropic,
 				&error);
+			Log(job, u"response"_q, QJsonObject{
+				{ u"http"_q, reply->attribute(
+					QNetworkRequest::HttpStatusCodeAttribute).toInt() },
+				{ u"network_error"_q, (reply->error() != QNetworkReply::NoError)
+					? reply->errorString()
+					: QString() },
+				{ u"elapsed_ms"_q, job->progress.elapsed },
+				{ u"raw"_q, QString::fromUtf8(data) },
+				{ u"answer"_q, answer },
+				{ u"parse_error"_q, error },
+			});
 			if (answer.isEmpty()) {
 				if (error.isEmpty()) {
 					error = (reply->error() != QNetworkReply::NoError)
@@ -411,6 +489,7 @@ std::shared_ptr<Job> Run(
 				{ u"answer"_q, answer },
 				{ u"prepared"_q, job->prepared },
 			}).toObject();
+			Log(job, u"check"_q, checked);
 			if (checked.isEmpty()) {
 				job->progress.error = tr::lng_exd_port_error_empty(tr::now);
 				finish(Progress::Stage::Failed);
@@ -487,6 +566,7 @@ void Cancel(const std::shared_ptr<Job> &job) {
 	if (!job) {
 		return;
 	}
+	Log(job, u"canceled"_q);
 	job->canceled = true;
 	job->update = nullptr;
 	job->request = nullptr;

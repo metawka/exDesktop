@@ -1784,6 +1784,10 @@ void PeerData::processTopics(const MTPVector<MTPForumTopic> &topics) {
 }
 
 bool PeerData::allowsForwarding() const {
+	return Extera::Bool(u"ayu_bypass_protection"_q) || allowsForwardingRaw();
+}
+
+bool PeerData::allowsForwardingRaw() const {
 	if (const auto user = asUser()) {
 		return user->allowsForwarding();
 	} else if (const auto channel = asChannel()) {

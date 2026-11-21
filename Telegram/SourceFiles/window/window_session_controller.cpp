@@ -80,6 +80,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/click_handler_types.h"
 #include "core/file_utilities.h"
 #include "extera/extera_plugins.h"
+#include "extera/exd_settings_sync.h"
 #include "core/ui_integration.h"
 #include "base/options.h"
 #include "base/unixtime.h"
@@ -1760,6 +1761,7 @@ SessionController::SessionController(
 
 	_chatStyleTheme = _defaultChatTheme;
 	_chatStyle->apply(_defaultChatTheme.get());
+	Exd::SettingsSync::Start(session);
 
 	pushDefaultChatBackground();
 	Theme::Background()->updates(

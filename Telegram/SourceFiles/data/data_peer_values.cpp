@@ -376,6 +376,18 @@ rpl::producer<bool> CanPinMessagesValue(not_null<PeerData*> peer) {
 }
 
 rpl::producer<bool> AllowsForwardingValue(not_null<PeerData*> peer) {
+	return rpl::combine(
+		AllowsForwardingRawValue(peer),
+		rpl::single(
+			Extera::Bool(u"ayu_bypass_protection"_q)
+		) | rpl::then(Extera::Config::Instance().boolChanges(
+			u"ayu_bypass_protection"_q))
+	) | rpl::map([](bool allows, bool bypass) {
+		return allows || bypass;
+	});
+}
+
+rpl::producer<bool> AllowsForwardingRawValue(not_null<PeerData*> peer) {
 	if (const auto user = peer->asUser()) {
 		return rpl::combine(
 			PeerFlagValue(user, UserDataFlag::NoForwardsMyEnabled),

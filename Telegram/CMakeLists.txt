@@ -1992,6 +1992,10 @@ PRIVATE
     extera/extera_update.cpp
     extera/exd_md3.cpp
     extera/exd_md3.h
+    extera/exd_settings_sync.cpp
+    extera/exd_settings_sync.h
+    extera/exd_update_box.cpp
+    extera/exd_update_box.h
     extera/extera_changelog.cpp
     extera/extera_changelog.h
     extera/extera_cross_send.cpp

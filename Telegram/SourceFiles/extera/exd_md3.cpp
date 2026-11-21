@@ -66,7 +66,10 @@ struct PreviewState {
 void RequestRestart(not_null<Window::SessionController*> controller) {
 	controller->show(Ui::MakeConfirmBox({
 		.text = tr::lng_exd_md3_restart(),
-		.confirmed = [] { Core::Restart(); },
+		.confirmed = [] {
+			Config::Instance().saveNow();
+			Core::Restart();
+		},
 		.confirmText = tr::lng_extera_restart(),
 	}));
 }
@@ -261,6 +264,16 @@ void ApplyBeforeStyles() {
 	const auto on = Enabled();
 	style::SetMd3(on, on ? 1 : 0, false);
 	style::SetMd3Grouped(on && Bool(u"md3_grouped"_q));
+	style::SetMd3Icons(Bool(u"md3_icons"_q));
+	Ui::SetSmoothScroll(Bool(u"smooth_scroll"_q));
+	static auto smoothLifetime = rpl::lifetime();
+	if (!smoothLifetime) {
+		Config::Instance().boolChanges(
+			u"smooth_scroll"_q
+		) | rpl::on_next([](bool enabled) {
+			Ui::SetSmoothScroll(enabled);
+		}, smoothLifetime);
+	}
 	style::SetMd3Floating(on && Bool(u"md3_floating_field"_q));
 	anim::SetExpressive(on && Bool(u"md3_expressive"_q));
 	if (on
@@ -366,6 +379,88 @@ void ShowSettingsBox(not_null<Window::SessionController*> controller) {
 				});
 			}));
 		});
+		Ui::AddSkip(content);
+		Ui::AddSubsectionTitle(content, tr::lng_exd_md3_icons());
+		const auto cardHeight = st::exteraIconsCardHeight;
+		const auto labelSkip = style::ConvertScale(8);
+		const auto labelHeight = st::semiboldFont->height;
+		const auto picker = content->add(
+			object_ptr<Ui::FixedHeightWidget>(
+				content,
+				cardHeight + labelSkip + labelHeight + style::ConvertScale(6)),
+			st::boxRowPadding);
+		const auto selected = picker->lifetime().make_state<
+			rpl::variable<bool>>(Bool(u"md3_icons"_q));
+		for (auto i = 0; i != 2; ++i) {
+			const auto md3 = (i == 1);
+			const auto button = Ui::CreateChild<Ui::AbstractButton>(picker);
+			picker->sizeValue(
+			) | rpl::on_next([=](QSize size) {
+				const auto gap = style::ConvertScale(12);
+				const auto width = (size.width() - gap) / 2;
+				button->setGeometry(i * (width + gap), 0, width, size.height());
+			}, button->lifetime());
+			button->paintRequest(
+			) | rpl::on_next([=] {
+				auto p = QPainter(button);
+				PainterHighQualityEnabler hq(p);
+				const auto active = (selected->current() == md3);
+				const auto accent = st::windowActiveTextFg->c;
+				const auto border = style::ConvertScale(2);
+				const auto card = QRectF(button->rect().left(), 0, button->width(), cardHeight)
+					.marginsRemoved(QMarginsF(border, border, border, border) / 2.);
+				const auto radius = card.height() / 2.;
+				p.setPen(active ? QPen(accent, border) : Qt::NoPen);
+				p.setBrush(active ? Mix(st::windowBgOver->c, accent, 0.12) : st::windowBgOver->c);
+				p.drawRoundedRect(card, radius, radius);
+				const auto icons = md3
+					? std::array{
+						&st::exteraIconsNoMd3MgFolder,
+						&st::exteraIconsNoMd3MgChats,
+						&st::exteraIconsNoMd3MgSend }
+					: std::array{
+						&st::exteraIconsNoMd3StdFolder,
+						&st::exteraIconsNoMd3StdChats,
+						&st::exteraIconsNoMd3StdSend };
+				const auto gap = style::ConvertScale(16);
+				auto total = gap * 2;
+				for (const auto icon : icons) {
+					total += icon->width();
+				}
+				auto x = int(card.center().x()) - total / 2;
+				const auto color = active ? accent : st::windowSubTextFg->c;
+				for (const auto icon : icons) {
+					icon->paint(
+						p,
+						x,
+						int(card.center().y()) - icon->height() / 2,
+						button->width(),
+						color);
+					x += icon->width() + gap;
+				}
+				p.setFont(st::semiboldFont);
+				p.setPen(active ? accent : st::windowFg->c);
+				p.drawText(
+					QRect(0, cardHeight + labelSkip, button->width(), labelHeight),
+					md3
+						? tr::lng_exd_md3_icons_material(tr::now)
+						: tr::lng_exd_md3_icons_standard(tr::now),
+					style::al_top);
+			}, button->lifetime());
+			selected->changes(
+			) | rpl::on_next([=] {
+				button->update();
+			}, button->lifetime());
+			button->setClickedCallback([=] {
+				if (selected->current() == md3) {
+					return;
+				}
+				*selected = md3;
+				Config::Instance().setBool(u"md3_icons"_q, md3);
+				*restart = true;
+			});
+		}
+		Ui::AddSkip(content);
 		AddOption(
 			content,
 			tr::lng_exd_md3_grouped(),
@@ -446,6 +541,7 @@ bool ShowIntroIfNeeded(not_null<Window::SessionController*> controller) {
 				close();
 				if (Enabled()) {
 					Config::Instance().setBool(u"md3"_q, false);
+					Config::Instance().saveNow();
 					Core::Restart();
 				}
 			},

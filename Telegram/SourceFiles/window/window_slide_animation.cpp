@@ -113,29 +113,33 @@ void SlideAnimation::paintContents(QPainter &p) const {
 			QRect(QPoint(), _cacheOver.size()));
 	} else if (anim::Expressive()) {
 		const auto shift = st::exdSlideAxisShift;
-		const auto size = _cacheOver.size() / retina;
+		const auto t = slideLeft ? (1. - progress) : progress;
+		const auto &oldCache = slideLeft ? _cacheOver : _cacheUnder;
+		const auto &newCache = slideLeft ? _cacheUnder : _cacheOver;
+		const auto sign = slideLeft ? -1 : 1;
+		const auto size = newCache.size() / retina;
 		p.fillRect(
 			QRect(0, _topSkip, size.width(), size.height() - _topSkip),
 			_topSkip ? st::boxBg : st::windowBg);
-		const auto out = std::clamp(progress / 0.35, 0., 1.);
-		const auto in = std::clamp((progress - 0.2) / 0.8, 0., 1.);
+		const auto out = std::clamp(t / 0.35, 0., 1.);
+		const auto in = std::clamp((t - 0.2) / 0.8, 0., 1.);
 		if (out < 1.) {
 			p.setOpacity(1. - out);
 			p.drawPixmap(
 				QRect(
-					QPoint(anim::interpolate(0, -shift, progress), 0),
-					_cacheUnder.size() / retina),
-				_cacheUnder,
-				QRect(QPoint(), _cacheUnder.size()));
+					QPoint(anim::interpolate(0, -shift * sign, t), 0),
+					oldCache.size() / retina),
+				oldCache,
+				QRect(QPoint(), oldCache.size()));
 		}
 		if (in > 0.) {
 			p.setOpacity(in);
 			p.drawPixmap(
 				QRect(
-					QPoint(anim::interpolate(shift, 0, progress), 0),
+					QPoint(anim::interpolate(shift * sign, 0, t), 0),
 					size),
-				_cacheOver,
-				QRect(QPoint(), _cacheOver.size()));
+				newCache,
+				QRect(QPoint(), newCache.size()));
 		}
 		p.setOpacity(1.);
 	} else {

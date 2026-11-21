@@ -43,6 +43,8 @@ struct OwnBadge {
 	QString type;
 	DocumentId documentId = 0;
 	QString text;
+	DocumentId secondDocumentId = 0;
+	QString secondText;
 };
 
 struct OwnLists {
@@ -147,12 +149,29 @@ bool Apply(const QByteArray &bytes) {
 		if (!id) {
 			continue;
 		}
-		result.emplace(id, OwnBadge{
+		const auto emoji = DocumentId(ReadId(object.value(u"emoji"_q)));
+		const auto text = object.value(u"text"_q).toString();
+		const auto existing = result.find(id);
+		if (existing != end(result)) {
+			if (!existing->second.secondDocumentId) {
+				existing->second.secondDocumentId = emoji;
+				existing->second.secondText = text;
+			}
+			continue;
+		}
+		auto badge = OwnBadge{
 			.number = number,
 			.type = object.value(u"type"_q).toString(),
-			.documentId = DocumentId(ReadId(object.value(u"emoji"_q))),
-			.text = object.value(u"text"_q).toString(),
-		});
+			.documentId = emoji,
+			.text = text,
+		};
+		const auto second = object.value(u"second"_q).toObject();
+		if (!second.isEmpty()) {
+			badge.secondDocumentId = DocumentId(
+				ReadId(second.value(u"emoji"_q)));
+			badge.secondText = second.value(u"text"_q).toString();
+		}
+		result.emplace(id, std::move(badge));
 	}
 	return result;
 }
@@ -259,7 +278,7 @@ void RefreshHashes(QNetworkAccessManager *manager, bool fresh = false) {
 	return result;
 }
 
-void RefreshOwn(QNetworkAccessManager *manager, bool fresh = false) {
+void RefreshOwnFromRepo(QNetworkAccessManager *manager, bool fresh) {
 	auto request = FileRequest(u"badges.json"_q, fresh);
 	const auto reply = manager->get(request);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
@@ -274,6 +293,30 @@ void RefreshOwn(QNetworkAccessManager *manager, bool fresh = false) {
 				file.write(bytes);
 			}
 		}
+	});
+}
+
+void RefreshOwn(QNetworkAccessManager *manager, bool fresh = false) {
+	auto request = QNetworkRequest(QUrl(u"https://exdesktop.xyz/api/badges"_q));
+	request.setRawHeader("User-Agent", "exDesktop");
+	request.setAttribute(
+		QNetworkRequest::CacheLoadControlAttribute,
+		QNetworkRequest::AlwaysNetwork);
+	request.setTransferTimeout(10000);
+	const auto reply = manager->get(request);
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		reply->deleteLater();
+		const auto bytes = (reply->error() == QNetworkReply::NoError)
+			? reply->readAll()
+			: QByteArray();
+		if (!bytes.isEmpty() && ApplyOwn(bytes)) {
+			auto file = QFile(OwnCachePath());
+			if (file.open(QIODevice::WriteOnly)) {
+				file.write(bytes);
+			}
+			return;
+		}
+		RefreshOwnFromRepo(manager, fresh);
 	});
 }
 
@@ -496,6 +539,22 @@ DocumentId BadgeEmoji(not_null<PeerData*> peer) {
 	return DocumentId();
 }
 
+DocumentId BadgeSecondEmoji(not_null<PeerData*> peer) {
+	if (const auto own = FindOwn(peer)) {
+		return (own->secondDocumentId != BadgeEmoji(peer))
+			? own->secondDocumentId
+			: DocumentId();
+	}
+	return DocumentId();
+}
+
+QString BadgeSecondText(not_null<PeerData*> peer) {
+	if (const auto own = FindOwn(peer)) {
+		return own->secondText;
+	}
+	return QString();
+}
+
 bool BadgeIsCustom(not_null<PeerData*> peer) {
 	if (const auto own = FindOwn(peer)) {
 		return (own->type == u"custom"_q) || (own->documentId != 0);
@@ -565,7 +624,7 @@ bool IsBadgeEmoji(DocumentId id) {
 	}
 	for (const auto map : { &Own().users, &Own().channels, &Own().bots }) {
 		for (const auto &[bare, badge] : *map) {
-			if (badge.documentId == id) {
+			if (badge.documentId == id || badge.secondDocumentId == id) {
 				return true;
 			}
 		}

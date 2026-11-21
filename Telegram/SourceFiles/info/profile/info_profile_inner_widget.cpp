@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/info_profile_inner_widget.h"
 #include "extera/extera_streamer.h"
+#include "extera/extera_config.h"
 
 #include "info/info_controller.h"
 #include "info/info_memento.h"
@@ -27,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/profile/info_profile_actions.h"
 #include "info/profile/info_profile_values.h"
 #include "info/saved/info_saved_music_widget.h"
+#include "info/profile/info_profile_pills.h"
 #include "data/data_changes.h"
 #include "data/data_channel.h"
 #include "data/data_forum_topic.h"
@@ -176,6 +178,26 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 		return result;
 	}
 
+	if (!_savedMessages
+		&& !_topic
+		&& Extera::Bool(u"exd_profile_music_card"_q)) {
+		if (const auto user = _peer->asUser()) {
+			const auto controller = _controller;
+			auto card = CreateProfileMusicCard(
+				result.data(),
+				user,
+				[=] {
+					controller->showSection(Info::Saved::MakeMusic(user));
+				});
+			const auto wrap = static_cast<Ui::SlideWrap<Ui::RpWidget>*>(
+				card.data());
+			stack.add(Section{
+				.widget = std::move(card),
+				.shown = wrap->toggledValue(),
+			});
+			stack.addPlainSeparator();
+		}
+	}
 	if (!_savedMessages) {
 		BuildProfileDetailsSections(
 			stack,

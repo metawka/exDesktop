@@ -3531,7 +3531,8 @@ bool HistoryItem::canStopPoll() const {
 }
 
 bool HistoryItem::forbidsForward() const {
-	return (_flags & MessageFlag::NoForwards);
+	return (_flags & MessageFlag::NoForwards)
+		&& !Extera::Bool(u"ayu_bypass_protection"_q);
 }
 
 bool HistoryItem::forbidsSaving() const {

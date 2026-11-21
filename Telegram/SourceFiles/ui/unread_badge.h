@@ -117,6 +117,7 @@ private:
 
 	std::unique_ptr<EmojiStatus> _emojiStatus;
 	std::unique_ptr<EmojiStatus> _exteraStatus;
+	std::unique_ptr<EmojiStatus> _exteraStatus2;
 	mutable std::unique_ptr<BotVerifiedData> _botVerifiedData;
 
 };

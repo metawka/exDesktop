@@ -212,7 +212,7 @@ QSize GroupedMedia::countOptimalSize() {
 
 QSize GroupedMedia::countCurrentSize(int newWidth) {
 	const auto item = _parent->data();
-	const auto widePost = Extera::Bool(u"wide_posts"_q)
+	const auto widePost = Extera::Bool((_parent->context() == Context::Pinned) ? u"feed_wide_posts"_q : u"wide_posts"_q)
 		&& item->isPost()
 		&& item->history()->peer->isBroadcast()
 		&& !_parent->hasOutLayout();

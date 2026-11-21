@@ -481,10 +481,6 @@ void ShowAlert(const QString &payload) {
 			{ u"which"_q, which },
 		});
 	};
-	if (data.value(u"exd"_q).isObject()) {
-		ShowPermissionAlert(controller, data, answer);
-		return;
-	}
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		OpenAlerts[id].box = box.get();
 		box->boxClosing() | rpl::on_next([=] {
@@ -1046,7 +1042,7 @@ void RefreshSecrets() {
 			const auto data = key->data();
 			const auto raw = QByteArray(
 				reinterpret_cast<const char*>(data.data()),
-				int(data.size()));
+				std::min(int(data.size()), 32));
 			keys.push_back(QString::fromLatin1(raw.toHex()));
 		}
 		const auto session = account->maybeSession();
@@ -1474,7 +1470,12 @@ PyObject *NativeWebviewEval(PyObject *self, PyObject *args) {
 		return nullptr;
 	}
 	const auto value = QString::fromUtf8(script);
-	crl::on_main([=] { Extera::PluginWeb::Eval(int64(id), value); });
+	const auto owner = SandboxOwnerNow();
+	crl::on_main([=] {
+		if (Extera::PluginWeb::Owns(int64(id), owner)) {
+			Extera::PluginWeb::Eval(int64(id), value);
+		}
+	});
 	return Py_BuildValue("");
 }
 
@@ -1483,7 +1484,12 @@ PyObject *NativeWebviewClose(PyObject *self, PyObject *args) {
 	if (!PyArg_ParseTuple(args, "L", &id)) {
 		return nullptr;
 	}
-	crl::on_main([=] { Extera::PluginWeb::Close(int64(id)); });
+	const auto owner = SandboxOwnerNow();
+	crl::on_main([=] {
+		if (Extera::PluginWeb::Owns(int64(id), owner)) {
+			Extera::PluginWeb::Close(int64(id));
+		}
+	});
 	return Py_BuildValue("");
 }
 
@@ -2493,8 +2499,14 @@ void Start() {
 		{ u"settings"_q, DataPath() + u"settings"_q },
 		{ u"safe_mode"_q, Extera::Bool(u"plugins_safe_mode"_q) },
 		{ u"unknown_sources"_q, Extera::Bool(u"plugins_unknown_sources"_q) },
+		{ u"sandbox_level"_q, Extera::Int(u"plugins_guard_level"_q) },
 		{ u"lang"_q, Lang::Id() },
 	});
+	Extera::Config::Instance().intChanges(
+		u"plugins_guard_level"_q
+	) | rpl::on_next([](int level) {
+		SandboxQuery(u"set_level"_q, QString::number(level));
+	}, state.lifetime);
 	Call(u"event"_q, QJsonObject{
 		{ u"type"_q, u"app"_q },
 		{ u"name"_q, u"app_start"_q },

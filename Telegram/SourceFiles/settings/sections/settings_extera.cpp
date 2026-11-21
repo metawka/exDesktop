@@ -42,6 +42,9 @@
 #include "extera/extera_plugins.h"
 #include "extera/extera_update.h"
 #include "lang/lang_keys.h"
+#include "extera/exd_settings_sync.h"
+#include "extera/exd_update_box.h"
+#include "base/unixtime.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "settings/sections/settings_main.h"
@@ -111,7 +114,8 @@ void AddToggle(
 		rpl::producer<QString> title,
 		QStringList keywords = {},
 		rpl::producer<QString> subtitle = nullptr,
-		bool longSubtitle = false) {
+		bool longSubtitle = false,
+		const style::icon *icon = nullptr) {
 	const auto withSubtitle = bool(subtitle);
 	const auto &subtitleSt = st::exteraButtonWithSubtitle;
 	const auto button = builder.addButton({
@@ -119,7 +123,10 @@ void AddToggle(
 		.title = std::move(title),
 		.st = (withSubtitle
 			? &subtitleSt
+			: icon
+			? nullptr
 			: &st::settingsButtonNoIcon),
+		.icon = { icon },
 		.toggled = rpl::single(Extera::Bool(key)),
 		.keywords = std::move(keywords),
 	});
@@ -170,13 +177,30 @@ void AddToggle(
 	}
 }
 
+void AddIconToggle(
+		SectionBuilder &builder,
+		const QString &key,
+		rpl::producer<QString> title,
+		const style::icon &icon,
+		QStringList keywords = {}) {
+	AddToggle(
+		builder,
+		key,
+		std::move(title),
+		std::move(keywords),
+		nullptr,
+		false,
+		&icon);
+}
+
 void AddChoice(
 		SectionBuilder &builder,
 		const QString &key,
 		const Phrase &title,
 		std::vector<const Phrase*> options,
 		QStringList keywords = {},
-		Fn<void(QPainter&, QRect, int)> paintOption = nullptr) {
+		Fn<void(QPainter&, QRect, int)> paintOption = nullptr,
+		const style::icon *icon = nullptr) {
 	const auto controller = builder.controller();
 	const auto optionText = [=](int index) {
 		return (index >= 0 && index < int(options.size()))
@@ -186,7 +210,8 @@ void AddChoice(
 	builder.addButton({
 		.id = u"extera/"_q + key,
 		.title = title(),
-		.st = &st::settingsButtonNoIcon,
+		.st = icon ? nullptr : &st::settingsButtonNoIcon,
+		.icon = { icon },
 		.label = Config().intChanges(key) | rpl::map(optionText),
 		.onClick = [=] {
 			auto texts = std::vector<QString>();
@@ -948,8 +973,8 @@ void AddSupportSteps(not_null<Ui::GenericBox*> box) {
 		tr::lng_exd_support_step1_text(
 			lt_link,
 			rpl::single(Ui::Text::Link(
-				tr::lng_exd_support_other(tr::now),
-				u"tg://settings/extera/other?highlight=extera/donate_card"_q)),
+				u"@exDesktop_bot"_q,
+				u"https://t.me/exDesktop_bot?start=support"_q)),
 			tr::marked));
 	step(
 		&st::menuIconPhoto,
@@ -957,8 +982,8 @@ void AddSupportSteps(not_null<Ui::GenericBox*> box) {
 		tr::lng_exd_support_step2_text(
 			lt_user,
 			rpl::single(Ui::Text::Link(
-				u"@metawka"_q,
-				u"https://t.me/metawka"_q)),
+				u"@exDesktop_bot"_q,
+				u"https://t.me/exDesktop_bot?start=support"_q)),
 			tr::marked));
 	step(
 		&st::menuIconPremium,
@@ -968,7 +993,7 @@ void AddSupportSteps(not_null<Ui::GenericBox*> box) {
 
 void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
-		box->setWidth(st::boxWideWidth);
+		box->setWidth(st::exteraInstallWidth);
 		box->setNoContentMargin(true);
 		box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); });
 		const auto session = &controller->session();
@@ -1065,7 +1090,8 @@ void ShowBadgeInfoBox(not_null<Window::SessionController*> controller) {
 		}, preview->lifetime());
 
 		box->addButton(tr::lng_exd_badge_contact(), [=] {
-			UrlClickHandler::Open(u"https://t.me/metawka"_q);
+			UrlClickHandler::Open(
+				u"https://t.me/exDesktop_bot?start=support"_q);
 			box->closeBox();
 		});
 	}));
@@ -1335,10 +1361,21 @@ void AddAbout(SectionBuilder &builder, rpl::producer<QString> text) {
 }
 
 void AddHeader(SectionBuilder &builder) {
+	const auto controller = builder.controller();
 	builder.addControl({
 		.factory = [=](not_null<Ui::VerticalLayout*> container) {
 			auto result = object_ptr<Ui::VerticalLayout>(container);
 			const auto raw = result.data();
+			if (controller) {
+				raw->setCursor(style::cur_pointer);
+				raw->events() | rpl::filter([](not_null<QEvent*> e) {
+					return (e->type() == QEvent::MouseButtonRelease)
+						&& (static_cast<QMouseEvent*>(e.get())->button()
+							== Qt::LeftButton);
+				}) | rpl::on_next([=] {
+					Exd::ShowUpdateBox(controller);
+				}, raw->lifetime());
+			}
 			const auto size = st::exteraHeaderLogoSize;
 			const auto logo = raw->add(
 				object_ptr<Ui::FixedHeightWidget>(raw, size),
@@ -1352,20 +1389,23 @@ void AddHeader(SectionBuilder &builder) {
 					QRect(left, 0, size, size),
 					Window::Logo());
 			}, logo->lifetime());
+			logo->setAttribute(Qt::WA_TransparentForMouseEvents);
 			raw->add(
 				object_ptr<Ui::FlatLabel>(
 					raw,
 					rpl::single(AppName.utf16()),
 					st::exteraHeaderTitle),
 				st::exteraHeaderTitlePadding,
-				style::al_top);
+				style::al_top
+			)->setAttribute(Qt::WA_TransparentForMouseEvents);
 			raw->add(
 				object_ptr<Ui::FlatLabel>(
 					raw,
 					rpl::single(Extera::Update::VersionText()),
 					st::exteraHeaderVersion),
 				st::exteraHeaderVersionPadding,
-				style::al_top);
+				style::al_top
+			)->setAttribute(Qt::WA_TransparentForMouseEvents);
 			return result;
 		},
 	});
@@ -1457,6 +1497,14 @@ void AddStreamerRow(SectionBuilder &builder) {
 		label->moveToLeft(
 			st.padding.left(),
 			st.padding.top() + st.height + st::exteraSubtitleSkip);
+		const auto extra = std::max(
+			label->height() - st::exteraSubtitle.style.font->height,
+			0);
+		auto padding = st.padding;
+		padding.setBottom(padding.bottom() + extra);
+		if (button->height() != padding.top() + st.height + padding.bottom()) {
+			button->setPaddingOverride(padding);
+		}
 	}, toggle->lifetime());
 }
 
@@ -1849,6 +1897,15 @@ void PartAppearance0(SectionBuilder &builder) {
 
 	builder.addSkip();
 	builder.card([&] {
+		AddToggle(
+			builder,
+			u"smooth_scroll"_q,
+			tr::lng_exd_smooth_scroll(),
+			{ u"scroll"_q, u"smooth"_q });
+	});
+
+	builder.addSkip();
+	builder.card([&] {
 		auto corners = std::vector<int>();
 		for (auto i = 0; i <= 28; ++i) {
 			corners.push_back(i);
@@ -1979,6 +2036,11 @@ void PartAppearance4(SectionBuilder &builder) {
 			builder,
 			u"custom_chat_themes"_q,
 			tr::lng_extera_custom_themes());
+		AddToggle(
+			builder,
+			u"exd_profile_music_card"_q,
+			tr::lng_exd_profile_music_card(),
+			{ u"music"_q, u"profile"_q, u"player"_q });
 	});
 	AddAbout(builder, tr::lng_extera_custom_themes_about());
 }
@@ -2198,6 +2260,15 @@ void PartChats4(SectionBuilder &builder) {
 				&tr::lng_extera_bottom_discuss,
 				&tr::lng_extera_bottom_hidden,
 			});
+		AddChoice(
+			builder,
+			u"exd_round_size"_q,
+			tr::lng_exd_round_size,
+			{
+				&tr::lng_exd_round_size_small,
+				&tr::lng_exd_round_size_medium,
+				&tr::lng_exd_round_size_large,
+			});
 		AddSwitchGroup(
 			builder,
 			u"wide_posts_group"_q,
@@ -2214,6 +2285,10 @@ void PartChats4(SectionBuilder &builder) {
 			builder,
 			u"disable_greeting_sticker"_q,
 			tr::lng_extera_disable_greeting());
+		AddToggle(
+			builder,
+			u"exd_text_preview"_q,
+			tr::lng_exd_text_preview());
 		AddToggle(
 			builder,
 			u"comma_after_mention"_q,
@@ -2426,6 +2501,69 @@ void ShowStringBox(
 	}));
 }
 
+void PartPluginsSecurity(SectionBuilder &builder) {
+	const auto controller = builder.controller();
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_plugins_security());
+	builder.card([&] {
+		builder.addButton({
+			.id = u"extera/plugins_guard_level"_q,
+			.title = tr::lng_exd_guard_level_title(),
+			.icon = { &st::menuIconLock },
+			.label = Config().intChanges(
+				u"plugins_guard_level"_q
+			) | rpl::map([](int level) {
+				return (level == 2)
+					? tr::lng_exd_guard_level_optimal(tr::now)
+					: (level == 1)
+					? tr::lng_exd_guard_level_standard(tr::now)
+					: tr::lng_exd_guard_level_max(tr::now);
+			}),
+			.onClick = [=] {
+				if (controller) {
+					Extera::Plugins::ShowGuardLevelBox(controller);
+				}
+			},
+			.keywords = { u"security"_q, u"sandbox"_q, u"protection"_q },
+		});
+		AddIconToggle(
+			builder,
+			u"plugins_dev_server"_q,
+			tr::lng_exd_plugins_dev_server(),
+			st::menuIconNetwork,
+			{ u"dev"_q, u"debug"_q, u"reload"_q });
+		AddIconToggle(
+			builder,
+			u"sbx_leak_tokens"_q,
+			tr::lng_exd_sbx_leak_tokens(),
+			st::menuIconPermissions,
+			{ u"token"_q, u"sandbox"_q });
+	});
+	AddAbout(builder, tr::lng_exd_guard_level_about());
+}
+
+void PartPluginsSdk(SectionBuilder &builder) {
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_plugins_sdk());
+	builder.card([&] {
+		builder.addButton({
+			.id = u"extera/plugins_sdk"_q,
+			.title = tr::lng_exd_plugins_sdk_version(),
+			.icon = { &st::menuIconInfo },
+			.label = rpl::single(QString::fromLatin1(Extera::Plugins::kSdkVersion)),
+		});
+		builder.addButton({
+			.id = u"extera/plugins_runtime"_q,
+			.title = tr::lng_exd_plugins_engine(),
+			.icon = { &st::menuIconPowerUsage },
+			.label = rpl::single(Extera::Plugins::Started()
+				? tr::lng_extera_plugins_runtime_running(tr::now)
+				: tr::lng_extera_plugins_runtime_stopped(tr::now)),
+		});
+	});
+	AddAbout(builder, tr::lng_extera_plugins_runtime_about());
+}
+
 void PartPluginsGuard(SectionBuilder &builder) {
 	const auto controller = builder.controller();
 	builder.addSkip();
@@ -2440,7 +2578,9 @@ void PartPluginsGuard(SectionBuilder &builder) {
 				&tr::lng_exd_guard_mode_manual,
 				&tr::lng_exd_guard_mode_off,
 			},
-			{ u"security"_q, u"guard"_q, u"plugins"_q });
+			{ u"security"_q, u"guard"_q, u"plugins"_q },
+			nullptr,
+			&st::menuIconFactcheck);
 		AddChoice(
 			builder,
 			u"guard_llm_provider"_q,
@@ -2453,11 +2593,13 @@ void PartPluginsGuard(SectionBuilder &builder) {
 				&tr::lng_exd_guard_llm_openai,
 				&tr::lng_exd_guard_llm_mistral,
 			},
-			{ u"ai"_q, u"llm"_q });
+			{ u"ai"_q, u"llm"_q },
+			nullptr,
+			&st::menuIconBot);
 		builder.addButton({
 			.id = u"extera/guard_llm_key"_q,
 			.title = tr::lng_exd_guard_llm_key(),
-			.st = &st::settingsButtonNoIcon,
+			.icon = { &st::menuIcon2SV },
 			.label = Config().stringChanges(
 				u"guard_llm_key"_q
 			) | rpl::map([](const QString &key) {
@@ -2478,7 +2620,7 @@ void PartPluginsGuard(SectionBuilder &builder) {
 		builder.addButton({
 			.id = u"extera/guard_llm_model"_q,
 			.title = tr::lng_exd_guard_llm_model(),
-			.st = &st::settingsButtonNoIcon,
+			.icon = { &st::menuIconCustomize },
 			.label = Config().stringChanges(
 				u"guard_llm_model"_q
 			) | rpl::map([](const QString &model) {
@@ -2521,11 +2663,13 @@ void PartPluginsPort(SectionBuilder &builder) {
 				&tr::lng_exd_port_provider_custom,
 				&tr::lng_exd_port_provider_gemini,
 			},
-			{ u"ai"_q, u"port"_q, u"llm"_q });
+			{ u"ai"_q, u"port"_q, u"llm"_q },
+			nullptr,
+			&st::menuIconBot);
 		builder.addButton({
 			.id = u"extera/port_llm_key"_q,
 			.title = tr::lng_exd_port_key(),
-			.st = &st::settingsButtonNoIcon,
+			.icon = { &st::menuIcon2SV },
 			.label = Config().stringChanges(
 				u"port_llm_key"_q
 			) | rpl::map([](const QString &key) {
@@ -2546,7 +2690,7 @@ void PartPluginsPort(SectionBuilder &builder) {
 		builder.addButton({
 			.id = u"extera/port_llm_model"_q,
 			.title = tr::lng_exd_port_model(),
-			.st = &st::settingsButtonNoIcon,
+			.icon = { &st::menuIconCustomize },
 			.label = Config().stringChanges(
 				u"port_llm_model"_q
 			) | rpl::map([](const QString &model) {
@@ -2567,7 +2711,7 @@ void PartPluginsPort(SectionBuilder &builder) {
 		builder.addButton({
 			.id = u"extera/port_llm_endpoint"_q,
 			.title = tr::lng_exd_port_endpoint(),
-			.st = &st::settingsButtonNoIcon,
+			.icon = { &st::menuIconLink },
 			.label = Config().stringChanges(
 				u"port_llm_endpoint"_q
 			) | rpl::map([](const QString &endpoint) {
@@ -2593,7 +2737,9 @@ void PartPluginsPort(SectionBuilder &builder) {
 				&tr::lng_exd_port_mode_agent,
 				&tr::lng_exd_port_mode_single,
 			},
-			{ u"ai"_q, u"port"_q });
+			{ u"ai"_q, u"port"_q },
+			nullptr,
+			&st::menuIconSelect);
 	});
 	AddAbout(builder, tr::lng_exd_port_about());
 }
@@ -2758,27 +2904,7 @@ void PartOther2(SectionBuilder &builder) {
 			.title = tr::lng_extera_check_updates(),
 			.icon = { &st::menuIconRestore },
 			.onClick = [=] {
-				using Result = Extera::Update::CheckResult;
-				const auto weak = base::make_weak(controller);
-				Extera::Update::CheckNow([=](Result result) {
-					const auto strong = weak.get();
-					if (!strong) {
-						return;
-					}
-					switch (result) {
-					case Result::Available:
-						Extera::Update::Install();
-						break;
-					case Result::Latest:
-						strong->showToast(
-							tr::lng_extera_updates_latest(tr::now));
-						break;
-					case Result::Failed:
-						strong->showToast(
-							tr::lng_extera_updates_failed(tr::now));
-						break;
-					}
-				});
+				Exd::ShowUpdateBox(controller);
 			},
 			.keywords = { u"update"_q, u"version"_q },
 		});
@@ -3634,19 +3760,21 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_plugins_settings());
 	builder.card([&] {
-		AddToggle(
+		AddIconToggle(
 			builder,
 			u"plugins_developer_mode"_q,
-			tr::lng_extera_plugins_developer());
-		AddToggle(
+			tr::lng_extera_plugins_developer(),
+			st::menuIconExperimental);
+		AddIconToggle(
 			builder,
 			u"plugins_compact_view"_q,
-			tr::lng_extera_plugins_compact());
+			tr::lng_extera_plugins_compact(),
+			st::menuIconCollapse);
 		const auto unknownStates = std::make_shared<rpl::event_stream<bool>>();
 		const auto unknown = builder.addButton({
 			.id = u"extera/plugins_unknown_sources"_q,
 			.title = tr::lng_extera_plugins_unknown(),
-			.st = &st::settingsButtonNoIcon,
+			.icon = { &st::menuIconDownload },
 			.toggled = unknownStates->events_starting_with(
 				Extera::Bool(u"plugins_unknown_sources"_q)),
 		});
@@ -3672,28 +3800,20 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 					});
 			}, unknown->lifetime());
 		}
-		AddToggle(
+		AddIconToggle(
 			builder,
 			u"plugins_safe_mode"_q,
-			tr::lng_extera_plugins_safe());
-		AddToggle(
+			tr::lng_extera_plugins_safe(),
+			st::menuIconExdDisable);
+		AddIconToggle(
 			builder,
 			u"plugins_no_auto_safe"_q,
-			tr::lng_exd_no_auto_safe());
-		AddToggle(
-			builder,
-			u"plugins_dev_server"_q,
-			tr::lng_exd_plugins_dev_server(),
-			{ u"dev"_q, u"debug"_q, u"reload"_q });
-		AddToggle(
-			builder,
-			u"sbx_leak_tokens"_q,
-			tr::lng_exd_sbx_leak_tokens(),
-			{ u"token"_q, u"sandbox"_q });
+			tr::lng_exd_no_auto_safe(),
+			st::menuIconRestore);
 		builder.addButton({
 			.id = u"extera/plugins_export"_q,
 			.title = tr::lng_exd_plugins_export(),
-			.st = &st::settingsButtonNoIcon,
+			.icon = { &st::menuIconExport },
 			.onClick = [=] {
 				FileDialog::GetFolder(
 					Core::App().getFileDialogParent(),
@@ -3712,26 +3832,11 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 	AddAbout(builder, tr::lng_extera_plugins_safe_about());
 
 
-	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_exd_plugins_sdk());
-	builder.card([&] {
-		builder.addButton({
-			.id = u"extera/plugins_sdk"_q,
-			.title = tr::lng_exd_plugins_sdk_version(),
-			.st = &st::settingsButtonNoIcon,
-			.label = rpl::single(QString::fromLatin1(Extera::Plugins::kSdkVersion)),
-		});
-		builder.addButton({
-			.id = u"extera/plugins_runtime"_q,
-			.title = tr::lng_exd_plugins_engine(),
-			.st = &st::settingsButtonNoIcon,
-			.label = rpl::single(Extera::Plugins::Started()
-				? tr::lng_extera_plugins_runtime_running(tr::now)
-				: tr::lng_extera_plugins_runtime_stopped(tr::now)),
-		});
-	});
-	AddAbout(builder, tr::lng_extera_plugins_runtime_about());
 
+	PartPluginsSecurity(builder);
+	PartPluginsGuard(builder);
+	PartPluginsSdk(builder);
+	PartPluginsPort(builder);
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_links());
 	builder.card([&] {
@@ -3743,6 +3848,13 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 			u"https://exdesktop.xyz/docs/"_q,
 			{ &st::menuIconFaq });
 		for (const auto &source : Extera::PluginTrust::Sources()) {
+			if (source.id == 2189715950ULL
+				|| source.id == 2562664432ULL
+				|| source.username.compare(
+					u"exteraPlugins"_q,
+					Qt::CaseInsensitive) == 0) {
+				continue;
+			}
 			const auto bare = source.id;
 			const auto username = source.username;
 			const auto channel = controller
@@ -3758,7 +3870,7 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 						tr::now,
 						lt_id,
 						QString::number(bare))),
-				.icon = { &st::menuIconExdPuzzle },
+				.icon = { &st::menuIconChannel },
 				.onClick = [=] {
 					if (channel) {
 						controller->showPeerHistory(
@@ -3771,9 +3883,7 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 			});
 		}
 	});
-	AddAbout(builder, tr::lng_exd_trusted_sources_about());
-	PartPluginsGuard(builder);
-	PartPluginsPort(builder);
+	builder.addSkip();
 }
 
 // AI Chat
@@ -4050,6 +4160,11 @@ void PartAyuInner(SectionBuilder &builder) {
 			tr::lng_exd_ayu_save_bots());
 		AddToggle(
 			builder,
+			u"ayu_bypass_protection"_q,
+			tr::lng_exd_ayu_bypass_protection(),
+			{ u"protected"_q, u"copy"_q, u"screenshot"_q });
+		AddToggle(
+			builder,
 			u"translucent_deleted"_q,
 			tr::lng_exd_translucent_deleted());
 		AddPreview(
@@ -4274,6 +4389,253 @@ void BuildSupport(SectionBuilder &builder) {
 	});
 }
 
+[[nodiscard]] QString ExdSyncDateText(TimeId date) {
+	return (date > 0)
+		? QLocale().toString(
+			base::unixtime::parse(date),
+			QLocale::ShortFormat)
+		: tr::lng_exd_sync_never(tr::now);
+}
+
+[[nodiscard]] QString ExdSyncError(const QString &error) {
+	return (error == u"NO_BACKUP"_q)
+		? tr::lng_exd_sync_empty(tr::now)
+		: tr::lng_exd_sync_failed(tr::now, lt_error, error);
+}
+
+void ShowPresetSaveBox(
+		not_null<Window::SessionController*> controller,
+		Fn<void()> saved) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(tr::lng_exd_presets_save());
+		const auto field = box->addRow(object_ptr<Ui::InputField>(
+			box,
+			st::defaultInputField,
+			tr::lng_exd_presets_name()));
+		field->setMaxLength(48);
+		box->setFocusCallback([=] { field->setFocusFast(); });
+		const auto submit = [=] {
+			const auto name = field->getLastText().trimmed();
+			if (name.isEmpty()) {
+				field->showError();
+				return;
+			}
+			Exd::SettingsSync::SavePreset(name);
+			controller->showToast(tr::lng_exd_presets_saved(tr::now));
+			box->closeBox();
+			if (saved) {
+				saved();
+			}
+		};
+		field->submits() | rpl::on_next(submit, field->lifetime());
+		box->addButton(tr::lng_settings_save(), submit);
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+	}));
+}
+
+void ShowPresetsBox(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(tr::lng_exd_presets());
+		box->setWidth(st::boxWideWidth);
+		const auto list = box->addRow(
+			object_ptr<Ui::VerticalLayout>(box),
+			style::margins());
+		const auto rebuild = std::make_shared<Fn<void()>>();
+		*rebuild = [=] {
+			while (list->count()) {
+				delete list->widgetAt(0);
+			}
+			const auto presets = Exd::SettingsSync::Presets();
+			if (presets.isEmpty()) {
+				list->add(
+					object_ptr<Ui::FlatLabel>(
+						list,
+						tr::lng_exd_presets_empty(),
+						st::boxLabel),
+					st::boxRowPadding);
+			}
+			for (const auto &name : presets) {
+				const auto button = list->add(object_ptr<Ui::SettingsButton>(
+					list,
+					rpl::single(name),
+					st::settingsButtonNoIcon));
+				button->setClickedCallback([=] {
+					controller->show(Box([=](not_null<Ui::GenericBox*> inner) {
+						inner->setTitle(rpl::single(name));
+						inner->addRow(
+							object_ptr<Ui::FlatLabel>(
+								inner,
+								tr::lng_exd_presets_apply_about(),
+								st::boxLabel),
+							st::boxRowPadding);
+						inner->addButton(tr::lng_exd_presets_apply(), [=] {
+							if (Exd::SettingsSync::ApplyPreset(name)) {
+								controller->showToast(
+									tr::lng_exd_presets_applied(
+										tr::now,
+										lt_name,
+										name));
+							}
+							inner->closeBox();
+						});
+						inner->addLeftButton(tr::lng_exd_presets_delete(), [=] {
+							Exd::SettingsSync::DeletePreset(name);
+							inner->closeBox();
+							(*rebuild)();
+						});
+						inner->addButton(tr::lng_cancel(), [=] {
+							inner->closeBox();
+						});
+					}));
+				});
+			}
+			list->resizeToWidth(list->width());
+		};
+		(*rebuild)();
+		box->addLeftButton(tr::lng_exd_presets_save(), [=] {
+			ShowPresetSaveBox(controller, [=] { (*rebuild)(); });
+		});
+		box->addButton(tr::lng_close(), [=] { box->closeBox(); });
+	}));
+}
+
+void PartOtherSync(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
+	if (!controller) {
+		return;
+	}
+	const auto session = &controller->session();
+	const auto local = std::make_shared<rpl::variable<QString>>(
+		ExdSyncDateText(Exd::SettingsSync::LocalDate()));
+	const auto cloud = std::make_shared<rpl::variable<QString>>(
+		tr::lng_exd_sync_checking(tr::now));
+	const auto refresh = [=] {
+		*local = ExdSyncDateText(Exd::SettingsSync::LocalDate());
+		Exd::SettingsSync::FetchCloudDate(session, [=](
+				TimeId date,
+				QString error) {
+			*cloud = error.isEmpty()
+				? ExdSyncDateText(date)
+				: tr::lng_exd_sync_unavailable(tr::now);
+		});
+	};
+	refresh();
+
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_sync_title());
+	builder.card([&] {
+		builder.addButton({
+			.id = u"extera/sync_local"_q,
+			.title = tr::lng_exd_sync_local(),
+			.st = &st::settingsButtonNoIcon,
+			.label = local->value(),
+		});
+		builder.addButton({
+			.id = u"extera/sync_cloud"_q,
+			.title = tr::lng_exd_sync_cloud(),
+			.st = &st::settingsButtonNoIcon,
+			.label = cloud->value(),
+			.onClick = refresh,
+		});
+	});
+	builder.addSkip();
+	builder.card([&] {
+		builder.addButton({
+			.id = u"extera/sync_upload"_q,
+			.title = tr::lng_exd_sync_upload(),
+			.icon = { &st::exteraIconExport },
+			.onClick = [=] {
+				Exd::SettingsSync::Upload(session, [=](QString error) {
+					controller->showToast(error.isEmpty()
+						? tr::lng_exd_sync_uploaded(tr::now)
+						: ExdSyncError(error));
+					refresh();
+				});
+			},
+			.keywords = { u"sync"_q, u"cloud"_q, u"backup"_q },
+		});
+		builder.addButton({
+			.id = u"extera/sync_restore"_q,
+			.title = tr::lng_exd_sync_restore(),
+			.icon = { &st::exteraIconImport },
+			.onClick = [=] {
+				controller->show(Ui::MakeConfirmBox({
+					.text = tr::lng_exd_sync_restore_sure(),
+					.confirmed = [=](Fn<void()> close) {
+						close();
+						Exd::SettingsSync::Restore(session, [=](
+								QString error) {
+							controller->showToast(error.isEmpty()
+								? tr::lng_exd_sync_restored(tr::now)
+								: ExdSyncError(error));
+							refresh();
+						});
+					},
+					.confirmText = tr::lng_exd_sync_restore(),
+				}));
+			},
+			.keywords = { u"sync"_q, u"cloud"_q, u"restore"_q },
+		});
+		builder.addButton({
+			.id = u"extera/sync_clear"_q,
+			.title = tr::lng_exd_sync_clear(),
+			.icon = { &st::exteraIconReset },
+			.onClick = [=] {
+				controller->show(Ui::MakeConfirmBox({
+					.text = tr::lng_exd_sync_clear_sure(),
+					.confirmed = [=](Fn<void()> close) {
+						close();
+						Exd::SettingsSync::Clear(session, [=](
+								QString error) {
+							controller->showToast(error.isEmpty()
+								? tr::lng_exd_sync_cleared(tr::now)
+								: ExdSyncError(error));
+							refresh();
+						});
+					},
+					.confirmText = tr::lng_exd_sync_clear(),
+					.confirmStyle = &st::attentionBoxButton,
+				}));
+			},
+			.keywords = { u"sync"_q, u"cloud"_q },
+		});
+	});
+	builder.addSkip();
+	builder.card([&] {
+		AddToggle(
+			builder,
+			u"exd_sync_auto"_q,
+			tr::lng_exd_sync_auto(),
+			{ u"sync"_q, u"cloud"_q });
+		AddToggle(
+			builder,
+			u"exd_sync_keys"_q,
+			tr::lng_exd_sync_keys(),
+			{ u"sync"_q, u"api"_q });
+	});
+	AddAbout(builder, tr::lng_exd_sync_about());
+
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_presets());
+	builder.card([&] {
+		builder.addButton({
+			.id = u"extera/presets"_q,
+			.title = tr::lng_exd_presets(),
+			.icon = { &st::exteraIconAppearance },
+			.onClick = [=] { ShowPresetsBox(controller); },
+			.keywords = { u"preset"_q, u"profile"_q },
+		});
+		builder.addButton({
+			.id = u"extera/presets_save"_q,
+			.title = tr::lng_exd_presets_save(),
+			.icon = { &st::exteraIconExport },
+			.onClick = [=] { ShowPresetSaveBox(controller, nullptr); },
+			.keywords = { u"preset"_q },
+		});
+	});
+	AddAbout(builder, tr::lng_exd_presets_about());
+}
+
 void BuildOther(SectionBuilder &builder) {
 	if (!builder.controller()) {
 		return;
@@ -4282,6 +4644,7 @@ void BuildOther(SectionBuilder &builder) {
 	PartOther1(builder);
 	PartOther2(builder);
 	PartOther3(builder);
+	PartOtherSync(builder);
 }
 
 void BuildMain(SectionBuilder &builder) {
@@ -4630,7 +4993,7 @@ void ShowExteraBadgeBox(
 		bool supporter) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setStyle(st::exteraInstallBox);
-		box->setWidth(st::boxWideWidth);
+		box->setWidth(st::exteraInstallWidth);
 		box->setNoContentMargin(true);
 		box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); });
 		const auto session = &controller->session();
@@ -4641,9 +5004,18 @@ void ShowExteraBadgeBox(
 		const auto emojiId = Extera::BadgeEmoji(peer);
 
 		const auto size = st::exteraBadgeLogoSize;
-		const auto badge = box->addRow(
-			object_ptr<Ui::FixedHeightWidget>(box, size),
-			st::exteraBadgeLogoPadding);
+		const auto top = box->addRow(
+			object_ptr<Ui::VerticalLayout>(box),
+			st::exdBadgeInfoPadding,
+			style::al_justify);
+		const auto infoGap = style::ConvertScale(20);
+		const auto info = top->add(
+			object_ptr<Ui::VerticalLayout>(top),
+			style::margins(size + infoGap, 0, 0, 0),
+			style::al_justify);
+		const auto spacer = top->add(object_ptr<Ui::RpWidget>(top));
+		const auto badge = Ui::CreateChild<Ui::RpWidget>(top);
+		badge->setGeometry(0, 0, size, size);
 		struct State {
 			std::unique_ptr<Ui::Text::CustomEmoji> emoji;
 		};
@@ -4658,73 +5030,130 @@ void ShowExteraBadgeBox(
 		badge->paintRequest() | rpl::on_next([=] {
 			auto p = QPainter(badge);
 			auto hq = PainterHighQualityEnabler(p);
-			const auto left = (badge->width() - size) / 2;
 			if (state->emoji && state->emoji->ready()) {
 				state->emoji->paint(p, {
 					.textColor = st::windowFg->c,
 					.now = crl::now(),
-					.position = QPoint(left, 0),
+					.position = QPoint(0, 0),
 				});
 			} else if (!state->emoji) {
 				static const auto image = QImage(u":/gui/art/logo_256.png"_q);
-				p.drawImage(QRect(left, 0, size, size), image);
+				p.drawImage(QRect(0, 0, size, size), image);
 			}
 		}, badge->lifetime());
 
-		box->addRow(
+		info->add(
 			object_ptr<Ui::FlatLabel>(
-				box,
+				info,
 				(number
 					? tr::lng_exd_badge_box_number(
 						lt_number,
 						rpl::single(QString::number(number)))
 					: tr::lng_exd_badge_box_plain()),
-				st::exteraBadgeTitle),
-			st::exteraBadgeTitlePadding,
-			style::al_top);
-		box->addRow(
-			object_ptr<Ui::FlatLabel>(
-				box,
-				rpl::single(text),
-				st::exteraBadgeText),
-			st::exteraBadgeTextPadding,
-			style::al_top);
-
-		if (holders > 0) {
-			box->addRow(
+				st::exdBadgeInfoTitle),
+			style::margins());
+		if (!text.isEmpty()) {
+			info->add(
 				object_ptr<Ui::FlatLabel>(
-					box,
-					(holders == 1)
-						? tr::lng_exd_badge_unique()
-						: tr::lng_exd_badge_holders(
-							lt_count_decimal,
-							rpl::single(float64(holders))),
-					st::exteraBadgeStepText),
-				st::exteraBadgeTextPadding,
-				style::al_top);
+					info,
+					rpl::single(text),
+					st::exdBadgeInfoText),
+				style::margins(0, st::exdBadgeInfoSkip, 0, 0));
 		}
+		const auto line = [&](QString value, rpl::producer<QString> label) {
+			if (value.isEmpty()) {
+				return;
+			}
+			info->add(
+				object_ptr<Ui::FlatLabel>(
+					info,
+					rpl::single(value),
+					st::exdBadgeInfoText),
+				style::margins(0, st::exdBadgeInfoLineSkip, 0, 0));
+			info->add(
+				object_ptr<Ui::FlatLabel>(
+					info,
+					std::move(label),
+					st::exteraBadgeStepText),
+				style::margins());
+		};
+		line(peer->name(), tr::lng_exd_badge_info_owner());
+		const auto kind = [&]() -> QString {
+			using Kind = Extera::BadgeKind;
+			switch (Extera::BadgeKindFor(peer)) {
+			case Kind::Porter:
+				return tr::lng_exd_badge_kind_porter(tr::now);
+			case Kind::PorterChannel:
+				return tr::lng_exd_badge_kind_official(tr::now);
+			case Kind::Developer:
+				return tr::lng_exd_badge_kind_developer(tr::now);
+			case Kind::OfficialChannel:
+				return tr::lng_exd_badge_kind_official(tr::now);
+			case Kind::Supporter:
+				return tr::lng_exd_badge_kind_supporter(tr::now);
+			case Kind::Custom:
+				return tr::lng_exd_badge_kind_custom(tr::now);
+			case Kind::Bughunter:
+				return tr::lng_exd_badge_kind_bughunter(tr::now);
+			case Kind::Helper:
+				return tr::lng_exd_badge_kind_helper(tr::now);
+			case Kind::Donor:
+				return tr::lng_exd_badge_kind_donor(tr::now);
+			case Kind::None:
+				break;
+			}
+			return QString();
+		}();
+		line(kind, tr::lng_exd_badge_info_type());
+		if (holders > 0) {
+			line(
+				(holders == 1)
+					? tr::lng_exd_badge_unique(tr::now)
+					: tr::lng_exd_badge_holders(
+						tr::now,
+						lt_count_decimal,
+						float64(holders)),
+				tr::lng_exd_badge_info_rarity());
+		}
+		line(Extera::BadgeSecondText(peer), tr::lng_exd_badge_info_second());
 
+		info->heightValue() | rpl::on_next([=](int height) {
+			spacer->resize(spacer->width(), std::max(size - height, 0));
+			badge->raise();
+		}, spacer->lifetime());
+
+		const auto buttons = box->addRow(
+			object_ptr<Ui::FixedHeightWidget>(
+				box,
+				st::exteraInstallButton.height),
+			style::margins(
+				st::exteraInstallButtonMargin.left(),
+				st::exteraInstallButtonMargin.top(),
+				st::exteraInstallButtonMargin.right(),
+				st::exteraInstallCancelMargin.bottom()));
+		auto list = std::vector<not_null<Ui::RoundButton*>>();
 		const auto add = [&](
 				rpl::producer<QString> title,
 				const style::RoundButton &st,
-				style::margins margin,
 				Fn<void()> callback) {
-			const auto button = box->addRow(
-				object_ptr<Ui::RoundButton>(box, std::move(title), st),
-				margin);
+			const auto button = Ui::CreateChild<Ui::RoundButton>(
+				buttons,
+				std::move(title),
+				st);
 			button->setFullRadius(true);
 			button->setTextTransform(
 				Ui::RoundButtonTextTransform::NoTransform);
 			button->setClickedCallback(std::move(callback));
-			box->widthValue() | rpl::on_next([=](int width) {
-				button->setFullWidth(width - margin.left() - margin.right());
-			}, button->lifetime());
+			list.push_back(button);
 		};
+		add(
+			tr::lng_close(),
+			st::exteraInstallCancel,
+			[=] { box->closeBox(); });
 		if (own && Extera::BadgeIsCustom(peer)) {
 			add(
 				tr::lng_exd_badge_box_change(),
 				st::exteraInstallButton,
-				st::exteraInstallButtonMargin,
 				[=] {
 					box->closeBox();
 					ShowBadgeEditBox(controller);
@@ -4732,20 +5161,28 @@ void ShowExteraBadgeBox(
 		} else if (!own) {
 			add(
 				(supporter
-					? tr::lng_exd_badge_invite_support()
-					: tr::lng_exd_badge_invite_get()),
+					? tr::lng_exd_badge_box_support()
+					: tr::lng_exd_badge_get()),
 				st::exteraInstallButton,
-				st::exteraInstallButtonMargin,
 				[=] {
 					box->closeBox();
-					UrlClickHandler::Open(u"tg://support"_q);
+					UrlClickHandler::Open(
+						u"https://t.me/exDesktop_bot?start=support"_q);
 				});
 		}
-		add(
-			tr::lng_close(),
-			st::exteraInstallCancel,
-			st::exteraInstallCancelMargin,
-			[=] { box->closeBox(); });
+		buttons->widthValue() | rpl::on_next([=](int width) {
+			const auto gap = st::exteraInstallCancelMargin.top();
+			if (list.size() == 1) {
+				list.front()->setFullWidth(width);
+				list.front()->moveToLeft(0, 0);
+				return;
+			}
+			const auto first = (width - gap) / 3;
+			list.front()->setFullWidth(first);
+			list.front()->moveToLeft(0, 0);
+			list.back()->setFullWidth(width - gap - first);
+			list.back()->moveToLeft(first + gap, 0);
+		}, buttons->lifetime());
 	}));
 }
 

@@ -26,6 +26,8 @@ void PaintPuzzle(QPainter &p, QRectF rect, QColor color);
 void ShowSourceBox(
 	not_null<Window::SessionController*> controller,
 	const QString &path);
+void ShowGuardLevelBox(not_null<Window::SessionController*> controller);
+
 void ShowUnknownSourcesWarning(
 	not_null<Window::SessionController*> controller,
 	Fn<void(bool)> done);

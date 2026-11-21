@@ -180,6 +180,12 @@ private:
 
 	mutable TooltipFilename _tooltipFilename;
 
+	void validateTextPreview() const;
+	[[nodiscard]] bool hasTextPreview() const;
+	mutable Ui::Text::String _textPreview;
+	mutable bool _textPreviewChecked = false;
+	mutable bool _textPreviewRequested = false;
+
 	TtlPaintCallback _drawTtl;
 
 	mutable float64 _voiceHoverProgress = -1;

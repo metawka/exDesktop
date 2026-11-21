@@ -1,5 +1,7 @@
 #include "extera/extera_navigation.h"
 
+#include "base/call_delayed.h"
+
 #include "extera/extera_config.h"
 #include "lang/lang_keys.h"
 #include "settings/settings_common.h"
@@ -158,21 +160,28 @@ void ApplyMenuLayout(
 		return -1;
 	};
 	auto position = first;
+	auto pendingDivider = false;
+	auto placed = 0;
 	for (const auto &id : Order()) {
 		if (id == kDivider) {
-			menu->insert(
-				position++,
-				MakeDivider(menu),
-				{ st::mainMenuDividerInset, st::mainMenuSkip, st::mainMenuDividerInset, st::mainMenuSkip });
+			pendingDivider = (placed > 0);
 			continue;
 		}
 		const auto i = tagged.find(id);
 		if (i == end(tagged)) {
 			continue;
 		}
+		if (pendingDivider) {
+			menu->insert(
+				position++,
+				MakeDivider(menu),
+				{ st::mainMenuDividerInset, st::mainMenuSkip, st::mainMenuDividerInset, st::mainMenuSkip });
+			pendingDivider = false;
+		}
 		const auto index = indexOf(i->second);
 		if (index >= 0) {
 			menu->reorderRows(index, position++);
+			++placed;
 		}
 		tagged.erase(i);
 	}
@@ -245,7 +254,7 @@ void FillSettings(not_null<Ui::VerticalLayout*> container) {
 				*dragging = true;
 				return;
 			}
-			crl::on_main(list, [=] {
+			base::call_delayed(crl::time(300), list, [=] {
 				*dragging = false;
 			});
 			if (data.state != State::Applied) {
@@ -257,6 +266,7 @@ void FillSettings(not_null<Ui::VerticalLayout*> container) {
 					list->widgetAt(i)->property(kProperty).toString());
 			}
 			Save(order, Hidden());
+			crl::on_main(container, [=] { (*rebuild)(); });
 		}, list->lifetime());
 		reorder->start();
 

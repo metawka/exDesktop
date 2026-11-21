@@ -320,6 +320,7 @@ public:
 	}
 
 	[[nodiscard]] bool allowsForwarding() const;
+	[[nodiscard]] bool allowsForwardingRaw() const;
 	[[nodiscard]] Data::RestrictionCheckResult amRestricted(
 		ChatRestriction right) const;
 	[[nodiscard]] bool amAnonymous() const;

@@ -219,6 +219,9 @@ public:
 	bool hasTopBarShadow() const {
 		return peer() != nullptr;
 	}
+	[[nodiscard]] bool exdAnimatingShow() const {
+		return _showAnimation != nullptr;
+	}
 	void showAnimated(
 		Window::SlideDirection direction,
 		const Window::SectionSlideParams &params);

@@ -666,11 +666,13 @@ Message::~Message() {
 	if (_comments
 		|| _fromNameVerification
 		|| (_fromNameStatus && _fromNameStatus->custom)
-		|| (_exdBadgeStatus && _exdBadgeStatus->custom)) {
+		|| (_exdBadgeStatus && _exdBadgeStatus->custom)
+		|| _exdBadge2) {
 		_comments = nullptr;
 		_fromNameVerification = nullptr;
 		_fromNameStatus = nullptr;
 		_exdBadgeStatus = nullptr;
+		_exdBadge2 = nullptr;
 		checkHeavyPart();
 	}
 }
@@ -2610,8 +2612,16 @@ void Message::paintFromName(
 		? st::dialogsPremiumIcon.icon.width()
 		: 0;
 	const auto exdGap = style::ConvertScale(4) + st::msgNameFont->spacew;
+	const auto exdSecond = (_exdBadgeStatus && from)
+		? Extera::BadgeSecondEmoji(from)
+		: DocumentId();
+	const auto exdSecondGap = style::ConvertScale(2);
 	const auto exdWidth = _exdBadgeStatus
-		? (st::dialogsPremiumIcon.icon.width() + exdGap)
+		? (st::dialogsPremiumIcon.icon.width()
+			+ exdGap
+			+ (exdSecond
+				? (st::dialogsPremiumIcon.icon.width() + exdSecondGap)
+				: 0))
 		: 0;
 	const auto via = item->Get<HistoryMessageVia>();
 	const auto viaShown = via && !displayForwardedFrom() && via->width;
@@ -2649,6 +2659,30 @@ void Message::paintFromName(
 				.now = context.now,
 				.position = QPoint(
 					x - 2 * _exdBadgeStatus->skip,
+					y + _exdBadgeStatus->skip),
+				.paused = context.paused || On(PowerSaving::kEmojiStatus),
+			});
+		}
+		if (exdSecond) {
+			if (_exdBadge2Id != exdSecond || !_exdBadge2) {
+				const auto that = const_cast<Message*>(this);
+				_exdBadge2 = MakeWrappedEmoji<Ui::Text::LimitedLoopsEmoji>(
+					history()->owner().customEmojiManager().create(
+						Data::SerializeCustomEmojiId(exdSecond),
+						[=] { that->customEmojiRepaint(); }),
+					kPlayStatusLimit);
+				history()->owner().registerHeavyViewPart(that);
+				_exdBadge2Id = exdSecond;
+			}
+			clearCustomEmojiRepaint();
+			Extera::PaintBadgeEmoji(p, _exdBadge2.get(), {
+				.textColor = nameFg,
+				.now = context.now,
+				.position = QPoint(
+					x
+						+ st::dialogsPremiumIcon.icon.width()
+						+ exdSecondGap
+						- 2 * _exdBadgeStatus->skip,
 					y + _exdBadgeStatus->skip),
 				.paused = context.paused || On(PowerSaving::kEmojiStatus),
 			});
@@ -3978,6 +4012,7 @@ bool Message::hasHeavyPart() const {
 		|| _fromNameVerification
 		|| (_fromNameStatus && _fromNameStatus->custom)
 		|| (_exdBadgeStatus && _exdBadgeStatus->custom)
+		|| _exdBadge2
 		|| Element::hasHeavyPart();
 }
 
@@ -3993,6 +4028,8 @@ void Message::unloadHeavyPart() {
 		_exdBadgeStatus->custom = nullptr;
 		_exdBadgeId = 0;
 	}
+	_exdBadge2 = nullptr;
+	_exdBadge2Id = 0;
 	if (const auto summaryHeader = Get<SummaryHeader>()) {
 		summaryHeader->unloadHeavyPart();
 	}

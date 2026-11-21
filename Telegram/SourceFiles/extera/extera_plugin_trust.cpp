@@ -168,18 +168,25 @@ void Search(
 } // namespace
 
 std::vector<Source> Sources() {
-	if (const auto remote = Extera::TrustedSources()) {
-		auto result = std::vector<Source>();
-		result.reserve(remote->size());
-		for (const auto &source : *remote) {
-			result.push_back({ .id = source.id, .username = source.username });
-		}
-		return result;
-	}
-	return {
-		{ .id = 2189715950ULL, .username = u"exteraPlugins"_q },
+	auto result = std::vector<Source>{
+		{ .id = 2189715950ULL, .username = u"exteraPluginsSup"_q },
 		{ .id = 3914431400ULL, .username = u"exDesktopPlugins"_q },
 	};
+	if (const auto remote = Extera::TrustedSources()) {
+		for (const auto &source : *remote) {
+			const auto exists = ranges::contains(
+				result,
+				source.id,
+				&Source::id);
+			if (!exists) {
+				result.push_back({
+					.id = source.id,
+					.username = source.username,
+				});
+			}
+		}
+	}
+	return result;
 }
 
 std::vector<uint64> TrustedChannels() {

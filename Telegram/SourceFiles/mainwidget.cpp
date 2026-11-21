@@ -39,6 +39,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
 #include "ui/ui_utility.h"
+#include "ui/qt_object_factory.h"
 #include "window/window_columns.h"
 #include "window/window_connecting_widget.h"
 #include "window/window_top_bar_wrap.h"
@@ -1340,7 +1341,15 @@ void MainWidget::setInnerFocus() {
 			widget->setInnerFocus();
 		}
 	};
-	if (_dialogs && _dialogs->searchHasFocus()) {
+	if (_exdFocusHistory
+		&& !_hider
+		&& !_mainSection
+		&& _history->peer()
+		&& !_history->isHidden()
+		&& !_history->exdAnimatingShow()) {
+		_exdFocusHistory = false;
+		setTo(_history);
+	} else if (_dialogs && _dialogs->searchHasFocus()) {
 		setTo(_dialogs);
 	} else if (_hider || !_history->peer()) {
 		if (!_hider && _mainSection) {
@@ -1452,6 +1461,9 @@ void MainWidget::showHistory(
 		PeerId peerId,
 		const SectionShow &params,
 		MsgId showAtMsgId) {
+	_exdFocusHistory = peerId
+		&& (params.activation != anim::activation::background)
+		&& !(_dialogs && _dialogs->searchHasFocus());
 	if (peerId && _controller->window().locked()) {
 		if (params.activation != anim::activation::background) {
 			_controller->window().activate();
@@ -1703,6 +1715,11 @@ void MainWidget::showHistory(
 		&& way != Way::Forward) {
 		ClearBotStartToken(_history->peer());
 	}
+	const auto exdWasNoSlide = _exdNoThirdSlide;
+	_exdNoThirdSlide = exdWasNoSlide || bool(animationParams);
+	const auto exdRestore = gsl::finally([&] {
+		_exdNoThirdSlide = exdWasNoSlide;
+	});
 	_history->showHistory(peerId, showAtMsgId, params);
 	if (alreadyThatPeer && params.reapplyLocalDraft) {
 		_history->applyDraft(HistoryWidget::FieldHistoryAction::NewEntry);
@@ -2092,6 +2109,42 @@ void MainWidget::exdRevealThirdSection() {
 	}, 1., 0., st::slideDuration, anim::easeOutCirc);
 }
 
+void MainWidget::exdSlideOutThirdSection() {
+	const auto strong = _thirdSection.data();
+	if (!strong
+		|| anim::Disabled()
+		|| isOneColumn()
+		|| !strong->isVisible()
+		|| strong->width() <= 0) {
+		return;
+	}
+	const auto pixmap = Ui::GrabWidget(strong);
+	const auto geometry = strong->geometry();
+	const auto cover = Ui::CreateChild<Ui::RpWidget>(this);
+	cover->setAttribute(Qt::WA_TransparentForMouseEvents);
+	cover->setGeometry(geometry);
+	const auto animation = cover->lifetime().make_state<
+		Ui::Animations::Simple>();
+	cover->paintRequest(
+	) | rpl::on_next([=] {
+		const auto progress = animation->value(1.);
+		auto p = QPainter(cover);
+		p.setOpacity(1. - 0.5 * progress);
+		p.drawPixmap(
+			int(base::SafeRound(progress * geometry.width())),
+			0,
+			pixmap);
+	}, cover->lifetime());
+	cover->show();
+	cover->raise();
+	animation->start([=] {
+		cover->update();
+		if (!animation->animating()) {
+			crl::on_main(cover, [=] { delete cover; });
+		}
+	}, 0., 1., st::slideDuration, anim::easeOutCubic);
+}
+
 void MainWidget::showNewSection(
 		std::shared_ptr<Window::SectionMemento> memento,
 		const SectionShow &params) {
@@ -2146,6 +2199,23 @@ void MainWidget::showNewSection(
 			newMainGeometry);
 	Assert(newMainSection || newThirdSection);
 
+	if (newMainSection
+		&& _thirdSection
+		&& !isOneColumn()
+		&& !newMainSection->activeChat().key) {
+		exdSlideOutThirdSection();
+		destroyThirdSection();
+		_thirdShadow.destroy();
+		_exdNoThirdRestore = true;
+		updateControlsGeometry();
+		_exdNoThirdRestore = false;
+		newMainSection->setGeometry(QRect(
+			_history->x(),
+			mainSectionTop,
+			_history->width(),
+			height() - mainSectionTop));
+	}
+
 	const auto fromBottom = params.slideFromBottom
 		&& !newThirdSection
 		&& (_mainSection != nullptr);
@@ -2192,9 +2262,23 @@ void MainWidget::showNewSection(
 		? _thirdSection
 		: _mainSection;
 	if (newThirdSection) {
+		const auto exdHadThird = (_thirdSection != nullptr);
 		_thirdSection = std::move(newThirdSection);
+		if (!exdHadThird
+			&& !animatedShow
+			&& !_exdNoThirdSlide
+			&& !anim::Disabled()) {
+			_exdThirdSlide.stop();
+			_exdThirdSlide.start(
+				[=] { updateControlsGeometry(); },
+				0.,
+				1.,
+				st::slideDuration,
+				anim::easeOutCubic);
+		}
 		_thirdSection->removeRequests(
 		) | rpl::on_next([=] {
+			exdSlideOutThirdSection();
 			destroyThirdSection();
 			_thirdShadow.destroy();
 			updateControlsGeometry();
@@ -2211,6 +2295,11 @@ void MainWidget::showNewSection(
 			exdHoldThirdSection();
 		}
 	} else {
+		const auto exdWasNoSlide = _exdNoThirdSlide;
+		_exdNoThirdSlide = exdWasNoSlide || bool(animationParams);
+		const auto exdRestore = gsl::finally([&] {
+			_exdNoThirdSlide = exdWasNoSlide;
+		});
 		_mainSection = std::move(newMainSection);
 		_history->finishAnimating();
 		_history->showHistory(PeerId(), MsgId());
@@ -2787,6 +2876,7 @@ void MainWidget::updateControlsGeometry() {
 	}
 	if (isThreeColumn()) {
 		if (!_thirdSection
+			&& !_exdNoThirdRestore
 			&& !_controller->takeThirdSectionFromLayer()) {
 			auto params = Window::SectionShow(
 				Window::SectionShow::Way::ClearStack,
@@ -2819,6 +2909,7 @@ void MainWidget::updateControlsGeometry() {
 			}
 		}
 	} else {
+		exdSlideOutThirdSection();
 		destroyThirdSection();
 		_thirdShadow.destroy();
 	}
@@ -2856,13 +2947,17 @@ void MainWidget::updateControlsGeometry() {
 			_contentScrollAddToY);
 		if (_hider) _hider->setGeometry(0, 0, dialogsWidth, height());
 	} else {
-		auto thirdSectionWidth = _thirdSection ? _thirdColumnWidth : 0;
+		const auto exdFullThird = _thirdSection ? _thirdColumnWidth : 0;
+		const auto exdSlide = int(base::SafeRound(
+			(1. - _exdThirdSlide.value(1.)) * exdFullThird));
+		auto thirdSectionWidth = exdFullThird - exdSlide;
+		_exdThirdGap = nullptr;
 		if (_thirdSection) {
 			auto thirdSectionTop = getThirdSectionTop();
 			_thirdSection->setGeometry(
 				width() - thirdSectionWidth,
 				thirdSectionTop,
-				thirdSectionWidth,
+				exdFullThird,
 				height() - thirdSectionTop);
 			if (_exdThirdCover) {
 				_exdThirdCover->setGeometry(_thirdSection->geometry());
@@ -3094,6 +3189,11 @@ auto MainWidget::thirdSectionForCurrentMainSection(
 void MainWidget::updateThirdColumnToCurrentChat(
 		Dialogs::Key key,
 		bool canWrite) {
+	const auto exdWasNoSlide = _exdNoThirdSlide;
+	_exdNoThirdSlide = exdWasNoSlide || (_thirdSection != nullptr);
+	const auto exdRestore = gsl::finally([&] {
+		_exdNoThirdSlide = exdWasNoSlide;
+	});
 	auto saveOldThirdSection = [&] {
 		if (saveThirdSectionToStackBack()) {
 			_stack.back()->setThirdSectionMemento(

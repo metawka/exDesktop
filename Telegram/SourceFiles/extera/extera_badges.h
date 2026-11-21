@@ -37,6 +37,8 @@ void PaintBadgeEmoji(
 
 [[nodiscard]] BadgeKind BadgeKindFor(not_null<PeerData*> peer);
 [[nodiscard]] DocumentId BadgeEmoji(not_null<PeerData*> peer);
+[[nodiscard]] DocumentId BadgeSecondEmoji(not_null<PeerData*> peer);
+[[nodiscard]] QString BadgeSecondText(not_null<PeerData*> peer);
 [[nodiscard]] int BadgeNumber(not_null<PeerData*> peer);
 [[nodiscard]] int BadgeHolders(not_null<PeerData*> peer);
 [[nodiscard]] bool BadgeIsCustom(not_null<PeerData*> peer);

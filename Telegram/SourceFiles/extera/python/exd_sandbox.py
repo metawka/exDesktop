@@ -1,12 +1,13 @@
 import sys
 
 
-def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=True):
+def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=True, level=0):
     if getattr(host, "_exd_sandbox_installed", False):
         return None
     host._exd_sandbox_installed = True
 
     import _imp
+    from binascii import a2b_base64 as _a2b
     import _io
     import _socket
     import _thread
@@ -394,11 +395,19 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
     for key, rules in (stored.get("net") or {}).items():
         if _type(key) is _str and _type(rules) is _dict:
             net_rules[key] = {d: r for d, r in rules.items() if _type(d) is _str and r in ("allow", "deny")}
+    extra_keys = ("clipboard", "links", "notify", "files_read", "files_write", "msg_send", "msg_edit",
+                  "msg_delete", "process", "native")
+    try:
+        guard_level = [max(0, min(2, int(level)))]
+    except Exception:
+        guard_level = [0]
+    process_modules = {"_winapi", "msvcrt", "_overlapped", "_posixsubprocess"}
+    native_modules = {"winreg", "_winreg", "cffi", "_cffi_backend"}
     extra_rules = {}
     for key, rules in (stored.get("extra") or {}).items():
         if _type(key) is _str and _type(rules) is _dict:
             extra_rules[key] = {d: r for d, r in rules.items()
-                                if d in ("clipboard", "links", "notify") and r in ("allow", "deny", "ask")}
+                                if d in extra_keys and r in ("allow", "deny", "ask")}
     files_granted = {}
     once = set()
     leak_once = set()
@@ -440,6 +449,20 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                     "Plugin \"{name}\" tried to start a program. Launch blocked."),
         "native": ("Плагин «{name}» пытался получить прямой доступ к системе. Действие заблокировано.",
                    "Plugin \"{name}\" tried to access the system directly. Action blocked."),
+        "process_text": ("Плагин «{name}» запрашивает запуск программ на компьютере. Разрешение даётся на свой страх и риск.",
+                         "Plugin \"{name}\" requests to start programs on the computer. The permission is granted at your own risk."),
+        "native_text": ("Плагин «{name}» запрашивает прямой доступ к системе: нативные библиотеки и реестр. Разрешение даётся на свой страх и риск.",
+                        "Plugin \"{name}\" requests direct system access: native libraries and the registry. The permission is granted at your own risk."),
+        "files_off": ("Плагину «{name}» запрещён доступ к файлам.",
+                      "Plugin \"{name}\" is not allowed to access files."),
+        "msg_send_off": ("Плагину «{name}» запрещено отправлять сообщения.",
+                         "Plugin \"{name}\" is not allowed to send messages."),
+        "msg_edit_off": ("Плагину «{name}» запрещено редактировать сообщения.",
+                         "Plugin \"{name}\" is not allowed to edit messages."),
+        "msg_delete_off": ("Плагину «{name}» запрещено удалять сообщения.",
+                           "Plugin \"{name}\" is not allowed to delete messages."),
+        "leak_blocked": ("Плагин «{name}» пытался отправить {target}. Отправка заблокирована.",
+                         "Plugin \"{name}\" tried to send {target}. Sending blocked."),
         "denied_net": ("Плагину «{name}» запрещено подключение к {target}.",
                        "Plugin \"{name}\" is not allowed to connect to {target}."),
         "unknown": ("Заблокировано действие плагина из неизвестного контекста.",
@@ -751,7 +774,8 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             return
         waiter.acquire(True, 120)
 
-    prompt_texts = {"net": "lan_text", "udp": "udp_text", "path": "path_text"}
+    prompt_texts = {"net": "lan_text", "udp": "udp_text", "path": "path_text", "process": "process_text",
+                    "native": "native_text"}
 
     def answer(token, value):
         if _type(token) is not _str or _type(value) is not _str:
@@ -780,6 +804,10 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                     _sadd(once, plugin_id + "\x00" + target)
                 elif value == "deny":
                     _dset(net_rules.setdefault(plugin_id, {}), target, "deny")
+                    changed = True
+            elif entry["kind"] in ("process", "native"):
+                if value in ("allow", "deny"):
+                    _dset(extra_rules.setdefault(plugin_id, {}), entry["kind"], value)
                     changed = True
             elif value == "allow":
                 _sadd(paths_allowed.setdefault(plugin_id, _set()), target)
@@ -981,6 +1009,32 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             return host_name
         return None
 
+    def extra_rule(owner, key):
+        return _dget(_dget(extra_rules, owner, {}), key)
+
+    def gate_quiet(owner, kind):
+        if kind == "native" and guard_level[0] < 2:
+            return False
+        return extra_rule(owner, kind) == "allow"
+
+    def gate(owner, kind):
+        rule = extra_rule(owner, kind)
+        if rule == "deny":
+            return False
+        if kind == "process" and guard_level[0] < 1:
+            return False
+        if kind == "native" and guard_level[0] < 2:
+            return False
+        if rule == "allow":
+            return True
+        if owner == UNKNOWN:
+            return False
+        ask(kind, owner, kind, (
+            (text("path_allow"), "allow", -1),
+            (text("deny"), "deny", -2),
+        ))
+        return extra_rule(owner, kind) == "allow"
+
     # Decisions
     def deny_path(plugin_id, raw, write, importing, listing=False, base=None, chain=()):
         text_path = path_of(raw)
@@ -1000,6 +1054,10 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             if not inside(path, settings_root) and not inside(path, plugins_root):
                 toast(plugin_id, "hard")
             return "exDesktop sandbox: access to protected files is blocked"
+        if extra_rule(plugin_id, "files_write" if write else "files_read") == "deny":
+            journal_block(plugin_id, "path:" + folder_key(path))
+            toast(plugin_id, "files_off")
+            return "exDesktop sandbox: file access is disabled for this plugin"
         if path_allowed(plugin_id, path):
             journal_file(plugin_id, folder_key(path))
             return None
@@ -1112,6 +1170,10 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             if _type(name) is not _str:
                 return "import:exDesktop sandbox: invalid module name"
             top = _split(name, ".")[0]
+            if top in process_modules and gate(owner, "process"):
+                return None
+            if top in native_modules and gate(owner, "native"):
+                return None
             if name in sealed or top in sealed:
                 log("%s: import %s blocked" % (owner, name))
                 if top in ("cffi", "_cffi_backend", "_ctypes"):
@@ -1148,6 +1210,10 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             if _type(name) is not _str:
                 return "import:exDesktop sandbox: invalid module name"
             top = _split(name, ".")[0]
+            if top in process_modules and gate(owner, "process"):
+                return None
+            if top in native_modules and gate(owner, "native"):
+                return None
             if name in sealed or top in sealed:
                 return "import:exDesktop sandbox: module %s is not available to plugins" % name
             if event == "exd.create_dynamic":
@@ -1158,6 +1224,8 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                     for root in read_roots:
                         if inside(path, root):
                             trusted = True
+                if not trusted and gate(owner, "native"):
+                    trusted = True
                 if not trusted:
                     log("%s: native module %s blocked" % (owner, name))
                     toast(owner, "native")
@@ -1178,6 +1246,8 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                          or (proxy_key and root_key in (0x80000001, -0x7FFFFFFF, 0xFFFFFFFF80000001))):
                 reg_pending[_get_ident()] = True
                 return None
+            if gate_quiet(owner, "native"):
+                return None
             if readable:
                 log("%s: registry read denied %s" % (owner, sub_key))
                 journal_block(owner, "registry:" + sub_key)
@@ -1192,11 +1262,18 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             return None
         if _sw(event, "ctypes.") or _sw(event, "winreg.") or _sw(event, "_winapi.") or _sw(event, "msvcrt.") \
                 or _sw(event, "fcntl."):
+            if (_sw(event, "_winapi.") or _sw(event, "msvcrt.")) and extra_rule(owner, "process") == "allow" \
+                    and guard_level[0] >= 1:
+                return None
+            if gate(owner, "native"):
+                return None
             log("%s: %s blocked" % (owner, event))
             journal_block(owner, "native:" + event)
             toast(owner, "native")
             return "exDesktop sandbox: native access is blocked"
         if event in process_events:
+            if gate(owner, "process"):
+                return None
             log("%s: %s blocked" % (owner, event))
             journal_block(owner, "process:" + event)
             toast(owner, "process")
@@ -1299,6 +1376,14 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                 _lsort(extra)
                 return ("{\"net\":[" + _join(",", net) + "],\"paths\":[" + _join(",", folders)
                         + "],\"extra\":[" + _join(",", extra) + "]}")
+            if method == "set_level":
+                try:
+                    guard_level[0] = max(0, min(2, _int(first)))
+                except _Err:
+                    return "false"
+                return "true"
+            if method == "level":
+                return "%d" % guard_level[0]
             if method == "extra_allowed":
                 return "true" if _dget(_dget(extra_rules, first, {}), second) == "allow" else "false"
             if method == "journal":
@@ -1330,7 +1415,7 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
                     cut = _rfind(third, "=")
                     key = third[:cut] if cut > 0 else ""
                     value = third[cut + 1:] if cut > 0 else ""
-                    if key in ("clipboard", "links", "notify"):
+                    if key in extra_keys:
                         bucket = extra_rules.setdefault(first, {})
                         if value in ("allow", "deny", "ask"):
                             _dset(bucket, key, value)
@@ -1683,6 +1768,9 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             return None
         journal_block(owner, "leak:" + category + ":" + target)
         log("%s: blocked sending %s to %s" % (owner, category, target))
+        if category in ("session", "code", "phone"):
+            toast(owner, "leak_blocked", text("leak_" + category))
+            return "exDesktop sandbox: sending protected data is blocked"
         if owner == UNKNOWN or not interactive:
             return "exDesktop sandbox: sending protected data is blocked"
         ask("leak", owner, key, (
@@ -1738,6 +1826,45 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
         except _Err:
             pass
 
+    def tl_name(name, args):
+        if not args or _type(args[0]) is not _str:
+            return ""
+        value = args[0]
+        if name == "send_request":
+            start = _find(value, "\"_\": \"")
+            if start < 0:
+                return ""
+            start += 6
+            end = _find(value, "\"", start)
+            return _lower(value[start:end]) if end > start else ""
+        if name == "send_raw_request":
+            try:
+                head = _a2b(value[:8])
+                ident = head[0] | (head[1] << 8) | (head[2] << 16) | (head[3] << 24)
+                runtime = sys.modules.get("tl_runtime")
+                combinator = runtime._by_id.get(ident) if runtime is not None else None
+                return _lower(combinator.name) if combinator is not None else ""
+            except _Err:
+                return ""
+        return ""
+
+    def message_kind(name, args):
+        if name in ("send_message", "send_media"):
+            return "msg_send"
+        if name == "edit_message":
+            return "msg_edit"
+        method = tl_name(name, args)
+        if not _sw(method, ("messages.", "channels.")):
+            return None
+        action = method[_find(method, ".") + 1:]
+        if _sw(action, "delete") and ("message" in action or "history" in action):
+            return "msg_delete"
+        if _sw(action, "edit") and "message" in action:
+            return "msg_edit"
+        if _sw(action, ("send", "forward")) and ("message" in action or "media" in action):
+            return "msg_send"
+        return None
+
     def wrap_native(name, target_of, path_index=None):
         original = getattr(native, name, None) if native is not None else None
         if original is None:
@@ -1746,6 +1873,11 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
         def wrapper(*args):
             owner = owner_now()
             if owner != "":
+                kind = message_kind(name, args)
+                if kind is not None and extra_rule(owner, kind) == "deny":
+                    journal_block(owner, kind)
+                    toast(owner, kind + "_off")
+                    raise _PermErr("exDesktop sandbox: this action is disabled for the plugin")
                 if path_index is not None and _len(args) > path_index and _type(args[path_index]) is _str:
                     verdict = deny_path(owner, args[path_index], False, False)
                     if verdict:
@@ -1759,9 +1891,6 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
             setattr(native, name, wrapper)
         except _Err:
             pass
-
-    def extra_rule(owner, key):
-        return _dget(_dget(extra_rules, owner, {}), key)
 
     def wrap_extra(name, key):
         original = getattr(native, name, None) if native is not None else None
@@ -1792,6 +1921,41 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
     except _Err:
         pass
 
+    def wrap_fd_write(name, data_index):
+        original = getattr(os, name, None)
+        if original is None:
+            return
+
+        def wrapper(*args, **kwargs):
+            owner = owner_now()
+            if owner != "" and args:
+                try:
+                    is_socket = (_stat_fd(args[0]).st_mode & 0o170000) == 0o140000
+                except _Err:
+                    is_socket = False
+                if is_socket and name == "sendfile":
+                    journal_block(owner, "net:sendfile")
+                    raise _PermErr("exDesktop sandbox: sendfile to sockets is blocked")
+                if is_socket:
+                    payload = args[data_index] if _len(args) > data_index else b""
+                    verdict = leak_check(owner, payload, "socket")
+                    if verdict:
+                        raise _PermErr(verdict)
+            return original(*args, **kwargs)
+
+        try:
+            wrapper.__name__ = name
+            setattr(os, name, wrapper)
+        except _Err:
+            pass
+
+    if not win:
+        _stat_fd = os.fstat
+        wrap_fd_write("write", 1)
+        wrap_fd_write("writev", 1)
+        wrap_fd_write("pwrite", 1)
+        wrap_fd_write("sendfile", 1)
+
     def tg_target(args):
         return "Telegram"
 
@@ -1817,6 +1981,12 @@ def install(host, plugins_dir, settings_dir, files_dir, deps_dir, interactive=Tr
         _thread.start_new_thread = start_new_thread
         _thread.start_new = start_new_thread
         threading._start_new_thread = start_new_thread
+        for name in ("sbx_install", "sbx_secrets", "sbx_push", "sbx_pop", "sbx_owner", "sbx_state", "sbx_ticket",
+                     "sbx_thread_entry", "sbx_prompt", "sbx_toast", "sbx_create_dynamic", "sbx_create_builtin"):
+            try:
+                delattr(native, name)
+            except _Err:
+                pass
     else:
         watched = read_events | write_events | pair_events | process_events | internals | net_name_events \
             | connect_events | {"open", "import", "compile", "sqlite3.connect", "socket.connect", "socket.bind",

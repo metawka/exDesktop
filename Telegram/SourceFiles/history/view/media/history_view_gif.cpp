@@ -359,7 +359,7 @@ QSize Gif::sizeForAspectRatio() const {
 
 QSize Gif::countThumbSize(int &inOutWidthMax) const {
 	const auto item = _parent->data();
-	const auto widePost = Extera::Bool(u"wide_posts"_q)
+	const auto widePost = Extera::Bool((_parent->context() == Context::Pinned) ? u"feed_wide_posts"_q : u"wide_posts"_q)
 		&& _data->isVideoFile()
 		&& item->isPost()
 		&& item->history()->peer->isBroadcast()
@@ -372,10 +372,18 @@ QSize Gif::countThumbSize(int &inOutWidthMax) const {
 		} else if (_data->isVideoFile()) {
 			return st::maxMediaSize;
 		} else if (_data->isVideoMessage()) {
+			switch (Extera::Int(u"exd_round_size"_q)) {
+			case 1: return style::ConvertScale(320);
+			case 2: return style::ConvertScale(400);
+			}
 			return st::maxVideoMessageSize;
 		}
 		return st::maxGifSize;
 	}();
+	if (_data->isVideoMessage() && !hostedInstantView) {
+		accumulate_min(inOutWidthMax, maxSize);
+		return QSize(inOutWidthMax, inOutWidthMax);
+	}
 	const auto size = style::ConvertScale(videoSize());
 	if (hostedInstantView) {
 		inOutWidthMax = std::max(inOutWidthMax, 1);

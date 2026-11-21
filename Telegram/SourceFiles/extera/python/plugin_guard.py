@@ -426,15 +426,177 @@ _ESCAPE_CALLS = {"exec", "eval", "compile", "open", "__import__", "system", "pop
                  "startfile", "spawnl", "execv", "getattr", "setattr"}
 
 
+_PATTERN_ANY = {"search", "match", "fullmatch", "findall", "finditer", "startswith", "endswith"}
+_PATTERN_RE = {"sub", "subn", "split", "compile", "escape"}
+_PATTERN_PASS = {"frozenset", "set", "list", "tuple", "dict", "sorted", "str", "lower", "upper"}
+_ACTIVE_CALLS = {"open", "read_bytes", "read_text", "write_bytes", "copy", "copyfile", "copytree", "remove", "unlink",
+                 "rmtree", "post", "put", "send", "sendall", "send_message", "senddocument", "urlopen", "urlretrieve",
+                 "system", "popen", "Popen", "run", "exec", "eval", "listdir", "walk", "glob"}
+
+
+def _is_pattern_call(call):
+    name = _call_name(call)
+    if name in _PATTERN_ANY:
+        return True
+    return name in _PATTERN_RE and _owner_name(call) == "re"
+
+
+def _matcher_functions(tree):
+    result = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        matches = active = False
+        for sub in ast.walk(fn):
+            if isinstance(sub, ast.Compare):
+                matches = True
+            elif isinstance(sub, ast.Call):
+                if _is_pattern_call(sub):
+                    matches = True
+                if _call_name(sub) in _ACTIVE_CALLS:
+                    active = True
+        if matches and not active:
+            result.add(fn.name)
+    return result
+
+
+def _matching_body(nodes):
+    matches = False
+    for node in nodes:
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Compare):
+                matches = True
+            elif isinstance(sub, ast.Call):
+                if _call_name(sub) in _ACTIVE_CALLS:
+                    return False
+                if _is_pattern_call(sub):
+                    matches = True
+    return matches
+
+
+def _compare_only(node, parents, matchers, uses, seen):
+    cur = node
+    while True:
+        par = parents.get(cur)
+        if par is None:
+            return False
+        if isinstance(par, ast.Compare):
+            return True
+        if isinstance(par, ast.Call):
+            if cur is par.func:
+                return False
+            if _is_pattern_call(par):
+                return True
+            name = par.func.id if isinstance(par.func, ast.Name) else ""
+            if name in matchers:
+                return True
+            if name in _PATTERN_PASS:
+                cur = par
+                continue
+            return False
+        if isinstance(par, (ast.BinOp, ast.Tuple, ast.List, ast.Set, ast.Dict, ast.Starred, ast.keyword, ast.IfExp)):
+            cur = par
+            continue
+        if isinstance(par, ast.Attribute) and par.value is cur and par.attr in _PATTERN_PASS:
+            cur = par
+            continue
+        if isinstance(par, ast.comprehension) and par.iter is cur:
+            owner = parents.get(par)
+            return owner is not None and _matching_body([getattr(owner, "elt", owner)] + list(par.ifs))
+        if isinstance(par, ast.For) and par.iter is cur:
+            return _matching_body(par.body)
+        if isinstance(par, (ast.Assign, ast.AnnAssign)):
+            targets = par.targets if isinstance(par, ast.Assign) else [par.target]
+            names = [t.id for t in targets if isinstance(t, ast.Name)]
+            if not names or len(names) != len(targets):
+                return False
+            for name in names:
+                if name in seen:
+                    return False
+                found = uses.get(name)
+                if not found:
+                    return False
+                seen = seen | {name}
+                if not all(_compare_only(use, parents, matchers, uses, seen) for use in found):
+                    return False
+            return True
+        return False
+
+
+def _inert_literals(tree):
+    parents = {}
+    uses = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            uses.setdefault(node.id, []).append(node)
+    matchers = _matcher_functions(tree)
+    result = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and not isinstance(parents.get(node), ast.JoinedStr):
+            if _compare_only(node, parents, matchers, uses, frozenset()):
+                result.append(node)
+    return result
+
+
+def _blank_spans(source, nodes):
+    lines = [line.encode("utf-8") for line in source.split("\n")]
+    for node in nodes:
+        start, end = node.lineno - 1, node.end_lineno - 1
+        if start >= len(lines) or end >= len(lines):
+            continue
+        for index in range(start, end + 1):
+            line = lines[index]
+            a = node.col_offset if index == start else 0
+            b = node.end_col_offset if index == end else len(line)
+            lines[index] = line[:a] + b" " * (b - a) + line[b:]
+    return b"\n".join(lines).decode("utf-8", "replace")
+
+
+def _active_text(tree, source):
+    try:
+        return _blank_spans(source, _inert_literals(tree))
+    except Exception:
+        return source
+
+
+def _local_defs(tree):
+    return {n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+
+
+_KNOWN_TOOL_NAMES = ("ffmpeg", "ffprobe", "yt-dlp", "yt_dlp", "pip", "pip3")
+_PROC_CALLS = {"run", "call", "Popen", "check_output", "check_call"}
+
+
+def _tool_launches(tree):
+    tools = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _call_name(node) not in _PROC_CALLS or _owner_name(node) != "subprocess":
+            continue
+        if any(k.arg == "shell" for k in node.keywords):
+            return None
+        first = node.args[0] if node.args else None
+        if not isinstance(first, (ast.List, ast.Tuple)) or not first.elts:
+            return None
+        head = first.elts[0]
+        if not (isinstance(head, ast.Constant) and head.value in _KNOWN_TOOL_NAMES):
+            return None
+        if any(isinstance(e, ast.Constant) and isinstance(e.value, str) and "://" in e.value for e in first.elts):
+            return None
+        tools.append(head.value)
+    return tools or None
+
+
 def _escape_root(node):
     while isinstance(node, (ast.Attribute, ast.Subscript)):
         node = node.value
     return node.id if isinstance(node, ast.Name) else None
 
 
-def _escape_callable(node, modules):
+def _escape_callable(node, modules, local=()):
     if isinstance(node, ast.Name):
-        return node.id in ("exec", "eval", "compile", "open", "__import__", "getattr", "setattr", "delattr")
+        return node.id not in local and node.id in ("exec", "eval", "compile", "open", "__import__", "getattr", "setattr", "delattr")
     if isinstance(node, ast.Attribute):
         root = _escape_root(node)
         origin = (modules.get(root) or root or "").split(".")[0]
@@ -466,6 +628,7 @@ def _escape_soft(detail):
 def _escape_patterns(tree):
     found = []
     modules = {}
+    local = _local_defs(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -527,12 +690,12 @@ def _escape_patterns(tree):
                         found.append(("store builtins.%s" % attr, node.lineno))
                     else:
                         found.append(("%s(%s)" % (name, modules.get(root) or root), node.lineno))
-            if name in ("partial", "methodcaller", "MethodType") and node.args and _escape_callable(node.args[0], modules):
+            if name in ("partial", "methodcaller", "MethodType") and node.args and _escape_callable(node.args[0], modules, local):
                 found.append(("%s(...)" % name, node.lineno))
             if name in ("Thread", "Timer", "start_new_thread", "run_on_queue", "run_on_ui_thread", "run_on_main",
                         "submit", "call_soon", "call_later", "run_in_executor", "map", "starmap"):
                 for value in list(node.args) + [k.value for k in node.keywords if k.arg in ("target", "function", "fn")]:
-                    if _escape_callable(value, modules):
+                    if _escape_callable(value, modules, local):
                         found.append(("%s(%s)" % (name, ast.unparse(value) if hasattr(ast, "unparse") else "callable"), node.lineno))
             if name in ("__import__", "import_module") and node.args and isinstance(node.args[0], ast.Constant)                     and node.args[0].value in _ESCAPE_SEALED:
                 found.append(("%s(%s)" % (name, node.args[0].value), node.lineno))
@@ -663,7 +826,11 @@ def _rules(source, capabilities):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 calls.add(node.func.id)
     network = bool(_NETWORK.search(low))
-    literal_text = "\n".join(_literals(tree)).lower() if tree is not None else low
+    active = _active_text(tree, source).lower() if tree is not None else low
+    literal_text = low
+    if tree is not None:
+        inert = {n.value for n in _inert_literals(tree)}
+        literal_text = "\n".join(v for v in _literals(tree) if v not in inert).lower()
     session = sorted({m.group(1) for m in _SESSION_TOKEN.finditer(literal_text)})
     if "getauthkey" in low.replace("_", "") and "getauthkey" not in session:
         session.append("getauthkey")
@@ -677,14 +844,14 @@ def _rules(source, capabilities):
         else:
             add("SANDBOX_TAMPERING", "CRITICAL", detail, line)
             break
-    sensitive = bool(session) or ("777000" in source) or any(k in low for k in (
+    sensitive = bool(session) or ("777000" in active) or any(k in low for k in (
         "getcontacts", "contacts.getcontacts", "phone_number", "getphone", "clientuserid", "get_phone"))
     if _BOT_TOKEN.search(source):
         add("EMBEDDED_TELEGRAM_BOT_TOKEN", "CRITICAL" if sensitive else "HIGH", "bot token in code")
     if "api.telegram.org/bot" in low:
         add("C2_TELEGRAM_BOT_API", "CRITICAL" if sensitive else "HIGH", "api.telegram.org/bot")
     for host in _HOOK_HOSTS:
-        if host in low:
+        if host in active:
             add("UNAUTHORIZED_DATA_EXFILTRATION", "CRITICAL", host)
     public_ips = [m for m in _RAW_IP_FULL.finditer(source) if not _is_local_ip(m.group(1))]
     unknown_ips = [m.group(0) for m in public_ips if m.group(1) not in _KNOWN_DNS]
@@ -693,7 +860,7 @@ def _rules(source, capabilities):
     elif public_ips:
         add("RAW_IP_C2_ENDPOINT", "WARNING", public_ips[0].group(0))
     for host in _IP_SERVICES:
-        if host in low:
+        if host in active:
             add("EXTERNAL_IP_QUERY_SERVICE", "WARNING", host)
     file_read = bool(_FILE_READ.search(low))
     upload = bool(_UPLOAD.search(low))
@@ -703,13 +870,12 @@ def _rules(source, capabilities):
         add("TELEGRAM_INTERNAL_STORAGE_THEFT", "HIGH", ", ".join(session))
     elif session:
         add("TELEGRAM_STORAGE_MENTION", "WARNING", ", ".join(session))
-    if "777000" in source and network and upload:
+    if "777000" in active and network and upload:
         if tree is not None and _codes_forwarded(tree):
             add("SERVICE_2FA_CODE_INTERCEPTION", "CRITICAL", "777000")
         else:
             add("SERVICE_2FA_CODE_INTERCEPTION", "WARNING", "777000")
-    if ("resetauthorizations" in low or "deleteaccount" in low
-            or "auth.resetauthorizations" in low or "account.deleteaccount" in low):
+    if "resetauthorizations" in active or "deleteaccount" in active:
         add("UNAUTHORIZED_DATA_EXFILTRATION", "CRITICAL", "account destructive call")
     if tree is not None:
         remote, indirect, local = _exec_calls(tree, source)
@@ -730,10 +896,13 @@ def _rules(source, capabilities):
             add("CLIPBOARD_CRYPTO_CLIPPER", "CRITICAL", "clipboard address replacement")
         elif reads and writes:
             add("CLIPBOARD_CRYPTO_CLIPPER", "WARNING", "clipboard with wallet address")
-    if "subprocess" in low or "os.system" in low or "popen" in low:
-        shell_exec = "shell=true" in low.replace(" ", "") or "os.system" in low
-        known_tools = any(k in low for k in ("ffmpeg", "ffprobe", "yt-dlp", "yt_dlp"))
-        if known_tools and not shell_exec:
+    if "subprocess" in active or "os.system" in active or "popen" in active:
+        shell_exec = "shell=true" in active.replace(" ", "") or "os.system" in active
+        known_tools = any(k in active for k in ("ffmpeg", "ffprobe", "yt-dlp", "yt_dlp"))
+        launches = _tool_launches(tree) if tree is not None else None
+        if launches and not shell_exec:
+            add("EXTERNAL_PROGRAM_LAUNCH", "WARNING", launches[0])
+        elif known_tools and not shell_exec:
             add("EXTERNAL_PROGRAM_LAUNCH", "WARNING", "ffmpeg")
         elif shell_exec or network:
             add("PRIVILEGED_COMMAND_EXECUTION", "HIGH", "process execution")

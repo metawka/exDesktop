@@ -88,6 +88,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/effects/toggle_arrow.h"
 #include "ui/style/style_core.h"
 #include "ui/painter.h"
+#include "ui/userpic_view.h"
+#include "ui/effects/animations.h"
 #include "ui/rect.h"
 #include "ui/ui_utility.h"
 #include "ui/text/format_values.h"
@@ -2866,94 +2868,151 @@ Section DetailsFiller::makeCommunityLink(not_null<PeerData*> peer) {
 	const auto community = peer->owner().channel(
 		Data::PeerLinkedCommunityId(peer));
 
-	class Controller final : public PeerListController {
-	public:
-		Controller(
-			not_null<Window::SessionController*> window,
-			not_null<ChannelData*> community,
-			Fn<void()> open)
-		: _window(window)
-		, _community(community)
-		, _open(std::move(open)) {
-			setStyleOverrides(&st::peerListSingleRow);
-		}
-
-		Main::Session &session() const override {
-			return _community->session();
-		}
-		void prepare() override {
-			auto row = std::make_unique<PeerListRow>(_community);
-			const auto rawRow = row.get();
-			const auto updateStatus = [=] {
-				const auto info = _community->communityInfo();
-				const auto count = info
-					? int(info->linkedPeers().size())
-					: 0;
-				rawRow->setCustomStatus(count
-					? tr::lng_community_profile_status(
-						tr::now,
-						lt_count,
-						count)
-					: tr::lng_community_title(tr::now));
-			};
-			updateStatus();
-			delegate()->peerListAppendRow(std::move(row));
-			delegate()->peerListRefreshRows();
-			_community->session().changes().peerUpdates(
-				_community,
-				Data::PeerUpdate::Flag::FullInfo
-			) | rpl::on_next([=] {
-				updateStatus();
-				delegate()->peerListUpdateRow(rawRow);
-			}, lifetime());
-		}
-		void rowClicked(not_null<PeerListRow*> row) override {
-			_open();
-		}
-		base::unique_qptr<Ui::PopupMenu> rowContextMenu(
-				QWidget *parent,
-				not_null<PeerListRow*> row) override {
-			const auto history = _community->owner().history(_community);
-			if (!history->owner().chatsFilters().has()
-				|| !history->inChatList()
-				|| (_community->isCommunity()
-					&& !_community->collapsedInDialogs())) {
-				return nullptr;
-			}
-			auto result = base::make_unique_q<Ui::PopupMenu>(
-				parent,
-				st::popupMenuWithIcons);
-			Ui::Menu::CreateAddActionCallback(result.get())({
-				.text = tr::lng_filters_menu_add(tr::now),
-				.handler = nullptr,
-				.icon = &st::menuIconAddToFolder,
-				.fillSubmenu = [&](not_null<Ui::PopupMenu*> submenu) {
-					FillChooseFilterMenu(_window, submenu, history);
-				},
-				.submenuSt = &st::foldersMenu,
-			});
-			return result;
-		}
-
-	private:
-		const not_null<Window::SessionController*> _window;
-		const not_null<ChannelData*> _community;
-		Fn<void()> _open;
-
-	};
-
-	const auto delegate = container->lifetime().make_state<
-		PeerListContentDelegateSimple
-	>();
-	const auto controller = container->lifetime().make_state<Controller>(
-		window,
-		community,
-		[=] { window->showPeerInfo(community); });
-	const auto content = container->add(object_ptr<PeerListContent>(
+	const auto &item = st::peerListBoxItem;
+	const auto row = container->add(object_ptr<Ui::RippleButton>(
 		container,
-		controller));
-	delegate->setContent(content);
-	controller->setDelegate(delegate);
+		st::defaultRippleAnimation));
+	row->resize(row->width(), item.height);
+	row->setProperty("md3GroupedRow", true);
+	struct RowState {
+		Ui::PeerUserpicView userpic;
+		Ui::Animations::Simple over;
+		bool overShown = false;
+		QString status;
+	};
+	const auto state = row->lifetime().make_state<RowState>();
+	const auto updateStatus = [=] {
+		const auto info = community->communityInfo();
+		const auto count = info ? int(info->linkedPeers().size()) : 0;
+		state->status = count
+			? tr::lng_community_profile_status(tr::now, lt_count, count)
+			: tr::lng_community_title(tr::now);
+		row->update();
+	};
+	updateStatus();
+	community->loadUserpic();
+	community->session().downloaderTaskFinished(
+	) | rpl::on_next([=] {
+		row->update();
+	}, row->lifetime());
+	community->session().changes().peerUpdates(
+		community,
+		Data::PeerUpdate::Flag::FullInfo
+			| Data::PeerUpdate::Flag::Name
+			| Data::PeerUpdate::Flag::Photo
+	) | rpl::on_next(updateStatus, row->lifetime());
+	row->events() | rpl::on_next([=](not_null<QEvent*> e) {
+		const auto type = e->type();
+		if (type != QEvent::Enter && type != QEvent::Leave) {
+			return;
+		}
+		const auto shown = (type == QEvent::Enter);
+		if (state->overShown == shown) {
+			return;
+		}
+		state->overShown = shown;
+		state->over.start(
+			[=] { row->update(); },
+			shown ? 0. : 1.,
+			shown ? 1. : 0.,
+			st::universalDuration);
+	}, row->lifetime());
+	row->paintRequest() | rpl::on_next([=] {
+		auto p = Painter(row);
+		const auto over = state->over.value(state->overShown ? 1. : 0.);
+		if (style::Md3Grouped()) {
+			const auto path = Ui::PaintGroupedRow(
+				p,
+				row,
+				st::windowBg->c,
+				over);
+			p.save();
+			p.setClipPath(path);
+			row->paintRipple(p, 0, 0);
+			p.restore();
+		} else {
+			p.fillRect(row->rect(), st::windowBg);
+			if (over > 0.) {
+				p.setOpacity(over);
+				p.fillRect(row->rect(), st::windowBgOver);
+				p.setOpacity(1.);
+			}
+			row->paintRipple(p, 0, 0);
+		}
+		const auto inset = style::Md3Grouped() ? style::ConvertScale(10) : 0;
+		const auto left = inset + item.photoPosition.x();
+		if (community->hasUserpic()
+			&& community->useEmptyUserpic(state->userpic)) {
+			community->loadUserpic();
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawEllipse(
+				left,
+				item.photoPosition.y(),
+				item.photoSize,
+				item.photoSize);
+		} else {
+			community->paintUserpicLeft(
+				p,
+				state->userpic,
+				left,
+				item.photoPosition.y(),
+				row->width(),
+				item.photoSize);
+		}
+		const auto textLeft = inset + item.namePosition.x();
+		const auto available = row->width() - textLeft - inset
+			- item.photoPosition.x();
+		if (available <= 0) {
+			return;
+		}
+		p.setPen(st::contactsNameFg);
+		p.setFont(st::semiboldFont);
+		p.drawTextLeft(
+			textLeft,
+			item.namePosition.y(),
+			row->width(),
+			st::semiboldFont->elided(community->name(), available));
+		p.setPen(st::contactsStatusFg);
+		p.setFont(st::contactsStatusFont);
+		p.drawTextLeft(
+			textLeft,
+			item.statusPosition.y(),
+			row->width(),
+			st::contactsStatusFont->elided(state->status, available));
+	}, row->lifetime());
+	row->setAcceptBoth(true);
+	row->clicks() | rpl::on_next([=](Qt::MouseButton button) {
+		if (button == Qt::LeftButton) {
+			window->showPeerInfo(community);
+			return;
+		} else if (button != Qt::RightButton) {
+			return;
+		}
+		const auto history = community->owner().history(community);
+		if (!history->owner().chatsFilters().has()
+			|| !history->inChatList()
+			|| (community->isCommunity()
+				&& !community->collapsedInDialogs())) {
+			return;
+		}
+		const auto menu = row->lifetime().make_state<
+			base::unique_qptr<Ui::PopupMenu>>();
+		*menu = base::make_unique_q<Ui::PopupMenu>(
+			row,
+			st::popupMenuWithIcons);
+		Ui::Menu::CreateAddActionCallback(menu->get())({
+			.text = tr::lng_filters_menu_add(tr::now),
+			.handler = nullptr,
+			.icon = &st::menuIconAddToFolder,
+			.fillSubmenu = [&](not_null<Ui::PopupMenu*> submenu) {
+				FillChooseFilterMenu(window, submenu, history);
+			},
+			.submenuSt = &st::foldersMenu,
+		});
+		(*menu)->popup(QCursor::pos());
+	}, row->lifetime());
 
 	if (!community->wasFullUpdated()) {
 		community->session().api().requestFullPeer(community);
@@ -3042,6 +3101,9 @@ void DetailsFiller::buildSections() {
 	}
 	_stack->add(makeInfo());
 	if (const auto user = _peer->asUser()) {
+		if (style::Md3Grouped()) {
+			_stack->addPlainSeparator();
+		}
 		_stack->add(makeAddAsContact(user));
 		addBotVerify();
 		if (const auto info = user->botInfo.get()) {

@@ -25,6 +25,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/profile/info_profile_values.h"
 #include "info/profile/info_profile_widget.h"
 #include "info/saved/info_saved_music_widget.h"
+#include "info/profile/info_profile_pills.h"
+#include "extera/extera_config.h"
 #include "info/stories/info_stories_albums.h"
 #include "info/stories/info_stories_widget.h"
 #include "info/info_controller.h"
@@ -306,6 +308,25 @@ void InnerWidget::createProfileTop() {
 
 	using namespace Profile;
 	auto stack = SectionStack(_top);
+	auto musicWrap = (Ui::SlideWrap<Ui::RpWidget>*)nullptr;
+	if (Extera::Bool(u"exd_profile_music_card"_q)) {
+		if (const auto user = _peer->asUser()) {
+			const auto controller = _controller;
+			auto card = CreateProfileMusicCard(
+				_top.data(),
+				user,
+				[=] {
+					controller->showSection(Info::Saved::MakeMusic(user));
+				});
+			musicWrap = static_cast<Ui::SlideWrap<Ui::RpWidget>*>(
+				card.data());
+			stack.add({
+				.widget = std::move(card),
+				.shown = musicWrap->toggledValue(),
+			});
+			stack.addPlainSeparator();
+		}
+	}
 	BuildProfileDetailsSections(
 		stack,
 		_controller,
@@ -332,6 +353,9 @@ void InnerWidget::createProfileTop() {
 	// Layout insertion shows even wrappers whose initial toggle is off.
 	for (const auto button : buttons) {
 		button->finishAnimating();
+	}
+	if (musicWrap) {
+		musicWrap->finishAnimating();
 	}
 
 	finalizeTop(false);
