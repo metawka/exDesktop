@@ -28,7 +28,11 @@
   "users": [
     {
       "id": 1388181090,
-      "type": "developer"
+      "type": "developer",
+      "second": {
+        "emoji": "5317051744444751648",
+        "text": ""
+      }
     },
     {
       "id": 5288193145,
