@@ -25,7 +25,8 @@ namespace {
 
 constexpr auto kExteraBase = AppVersionStr;
 constexpr auto kExteraBaseNumber = AppVersion;
-constexpr auto kExteraBuild = 1;
+constexpr auto kExteraBuild = 2;
+constexpr auto kExteraSuffix = "b";
 constexpr auto kCheckInterval = 6 * 60 * 60 * crl::time(1000);
 constexpr auto kFirstCheckDelay = 10 * crl::time(1000);
 
@@ -313,7 +314,8 @@ int BaseVersion() {
 QString VersionText() {
 	return QString::fromLatin1(kExteraBase)
 		+ '.'
-		+ QString::number(kExteraBuild);
+		+ QString::number(kExteraBuild)
+		+ QString::fromLatin1(kExteraSuffix);
 }
 
 rpl::producer<bool> AvailableValue() {
