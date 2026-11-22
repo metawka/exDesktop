@@ -1,27 +1,27 @@
 7.4.4.2b (22.11.26)
-Добавлено:
-- Глобально изменено и улучшено окно плагинов
-- Улучшен ИИ чат, добавлена возможность установки кастомных провайдеров
-- Сворачивание флуд-сообщений в чатах
-- Mention-tag по ключевым словам и никнейму пользователя
-- Скриншоты сообщений (взято из клиента AyuGram)
-- Автосохранение в папку загрузок и повторный просмотр одноразовых медиа
-- Предупреждения о вставке паролей/API-ключей/иных секретов в чатах
+Added:
+- Redesigned and improved plugins window
+- Improved AI Chat with support for custom providers
+- Collapsing of flood messages in chats
+- Mention tag for keywords and your nickname
+- Message screenshots (taken from AyuGram)
+- Auto saving to the Downloads folder and repeated viewing of view once media
+- Warnings when pasting passwords, API keys and other secrets in chats
 
-Улучшено:
-- Боковое меню навигации в MD3 стиле
-- Кастомные скругления аватарок в историях Telegram
+Improved:
+- Navigation side menu in MD3 style
+- Custom avatar corner radius in Telegram stories
 
-Исправлено:
-- Сбой при нажатии правой или левой кнопкой на элементы MD3
-- Моргание ИИ-чата и ленты каналов при открытой правой панели
-- Предпросмотр файлов больше не налезает на соседние сообщения при открытии чата
-- Открытие чата при открытой правой панели больше не переводит фокус в поиск
-- Время и отметки прочтения в списке чатов не выходят за скруглённую подсветку
-- Длинные ошибки ИИ-чата со ссылками больше не обрезаются
-- После обновления открывается окно обновления, а не список изменений
-- Linux: исправлен сбой при запуске
-- Бейджи запрашиваются вдвое реже
+Fixed:
+- Crash on right or left click on MD3 elements
+- Blinking of AI Chat and the channel feed with the right panel open
+- File preview no longer overlaps neighboring messages when a chat opens
+- Opening a chat with the right panel open no longer moves focus to search
+- Time and read marks in the chat list stay inside the rounded selection
+- Long AI Chat errors with links are no longer cut off
+- After an update the update window opens instead of the changelog
+- Linux: fixed a crash on start
+- Badges are requested half as often
 
 7.4.4.1 (21.11.26)
 - Updated to Telegram Desktop 7.4.4 and TG WS Proxy 1.11.4.
