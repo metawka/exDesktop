@@ -29,26 +29,26 @@
   <a href="README.en.md"><img src="https://img.shields.io/badge/English-open-ee6b54?style=for-the-badge" alt="English"></a>
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/main.webp" alt="exDesktop" width="100%">
+</p>
+
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/settings.webp" alt="Настройки"></td>
-    <td width="50%"><img src="docs/screenshots/appearance.webp" alt="Оформление"></td>
+    <td width="50%"><img src="docs/screenshots/screen-1.webp" alt="exDesktop"></td>
+    <td width="50%"><img src="docs/screenshots/screen-2.webp" alt="exDesktop"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/messages.webp" alt="Сообщения"></td>
-    <td width="50%"><img src="docs/screenshots/premium.webp" alt="Telegram Premium"></td>
+    <td width="50%"><img src="docs/screenshots/screen-3.webp" alt="exDesktop"></td>
+    <td width="50%"><img src="docs/screenshots/screen-4.webp" alt="exDesktop"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/privacy.webp" alt="Конфиденциальность"></td>
-    <td width="50%"><img src="docs/screenshots/saving.webp" alt="Сохранение сообщений"></td>
+    <td width="50%"><img src="docs/screenshots/screen-5.webp" alt="exDesktop"></td>
+    <td width="50%"><img src="docs/screenshots/screen-6.webp" alt="exDesktop"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/network.webp" alt="Сеть"></td>
-    <td width="50%"><img src="docs/screenshots/plugins.webp" alt="Плагины"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/screenshots/analysis.webp" alt="Анализ плагина"></td>
-    <td width="50%"><img src="docs/screenshots/support.webp" alt="Поддержка проекта"></td>
+    <td width="50%"><img src="docs/screenshots/screen-7.webp" alt="exDesktop"></td>
+    <td width="50%"><img src="docs/screenshots/screen-8.webp" alt="exDesktop"></td>
   </tr>
 </table>
 

@@ -29,26 +29,26 @@
   <a href="README.md"><img src="https://img.shields.io/badge/Русский-открыть-ee6b54?style=for-the-badge" alt="Русский"></a>
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/main.webp" alt="exDesktop" width="100%">
+</p>
+
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/settings.webp" alt="Settings"></td>
-    <td width="50%"><img src="docs/screenshots/appearance.webp" alt="Appearance"></td>
+    <td width="50%"><img src="docs/screenshots/screen-1.webp" alt="exDesktop"></td>
+    <td width="50%"><img src="docs/screenshots/screen-2.webp" alt="exDesktop"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/messages.webp" alt="Messages"></td>
-    <td width="50%"><img src="docs/screenshots/premium.webp" alt="Telegram Premium"></td>
+    <td width="50%"><img src="docs/screenshots/screen-3.webp" alt="exDesktop"></td>
+    <td width="50%"><img src="docs/screenshots/screen-4.webp" alt="exDesktop"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/privacy.webp" alt="Privacy"></td>
-    <td width="50%"><img src="docs/screenshots/saving.webp" alt="Saving messages"></td>
+    <td width="50%"><img src="docs/screenshots/screen-5.webp" alt="exDesktop"></td>
+    <td width="50%"><img src="docs/screenshots/screen-6.webp" alt="exDesktop"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/network.webp" alt="Network"></td>
-    <td width="50%"><img src="docs/screenshots/plugins.webp" alt="Plugins"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/screenshots/analysis.webp" alt="Plugin analysis"></td>
-    <td width="50%"><img src="docs/screenshots/support.webp" alt="Support the project"></td>
+    <td width="50%"><img src="docs/screenshots/screen-7.webp" alt="exDesktop"></td>
+    <td width="50%"><img src="docs/screenshots/screen-8.webp" alt="exDesktop"></td>
   </tr>
 </table>
 
