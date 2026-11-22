@@ -31,7 +31,7 @@
       "type": "developer",
       "second": {
         "emoji": "5317051744444751648",
-        "text": "тест"
+        "text": "privet"
       }
     },
     {
@@ -152,6 +152,10 @@
     },
     {
       "id": 5649214516,
+      "type": "donor"
+    },
+    {
+      "id": 8124619753,
       "type": "donor"
     }
   ],
