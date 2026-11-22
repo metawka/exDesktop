@@ -170,7 +170,8 @@
     },
     {
       "id": 7372219,
-      "type": "donor"
+      "type": "custom",
+      "emoji": "5436013804443971578"
     }
   ],
   "channels": [
