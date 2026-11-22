@@ -1,4 +1,4 @@
-7.4.4.2b (22.11.26)
+7.4.4.2 beta (22.11.26)
 Added:
 - Redesigned and improved plugins window
 - Improved AI Chat with support for custom providers
