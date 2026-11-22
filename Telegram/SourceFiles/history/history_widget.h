@@ -981,6 +981,7 @@ private:
 	bool _cmdStartShown = false;
 	object_ptr<Ui::InputField> _field;
 	base::unique_qptr<Ui::FadeWrap<Ui::RpWidget>> _exdMathGhost;
+	bool _exdSecretConfirmed = false;
 	void updateExdMathGhost();
 	std::unique_ptr<HistoryView::Controls::RichDraftPreview> _richDraftPreview;
 	base::unique_qptr<Ui::RpWidget> _fieldDisabled;

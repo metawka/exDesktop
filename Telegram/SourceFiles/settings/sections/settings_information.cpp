@@ -208,6 +208,23 @@ ComposedBadge::ComposedBadge(
 	}, lifetime());
 }
 
+[[nodiscard]] const style::SettingsButton &AccountButtonSt() {
+	if (!style::Md3Grouped()) {
+		return st::mainMenuAddAccountButton;
+	}
+	static auto result = st::mainMenuAddAccountButton;
+	result = st::mainMenuAddAccountButton;
+	result.textBg = st::windowBg;
+	result.textBgOver = st::windowBgOver;
+	const auto cut = style::ConvertScale(2);
+	result.padding.setTop(
+		std::max(st::mainMenuButton.padding.top() - cut, 0));
+	result.padding.setBottom(
+		std::max(st::mainMenuButton.padding.bottom() - cut, 0));
+	result.height = st::mainMenuButton.height;
+	return result;
+}
+
 class AccountsList final {
 public:
 	AccountsList(
@@ -821,7 +838,7 @@ void SetupAccountsWrap(
 	auto result = object_ptr<Ui::SettingsButton>(
 		parent,
 		rpl::duplicate(text),
-		st::mainMenuAddAccountButton);
+		AccountButtonSt());
 	const auto raw = result.data();
 
 	{
@@ -1016,13 +1033,12 @@ not_null<Ui::SlideWrap<Ui::SettingsButton>*> AccountsList::setupAdd() {
 			CreateButtonWithIcon(
 				_outer.get(),
 				tr::lng_menu_add_account(),
-				st::mainMenuAddAccountButton,
+				AccountButtonSt(),
 				{
 					&st::settingsIconAdd,
 					IconType::Round,
 					&st::windowBgActive
 				})))->setDuration(0);
-	Ui::SetupGroupedRowBackground(result, style::margins());
 	const auto button = result->entity();
 
 	using Environment = MTP::Environment;

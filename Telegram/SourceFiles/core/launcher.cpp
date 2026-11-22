@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/launcher.h"
+#include "extera/exd_crash_log.h"
 
 #include "platform/platform_launcher.h"
 #include "platform/platform_specific.h"
@@ -398,6 +399,7 @@ int Launcher::exec() {
 
 	// Must be started before Platform is started.
 	Logs::start();
+	Exd::CrashLog::Install();
 	base::options::init(cWorkingDir() + "tdata/experimental_options.json");
 
 	// Must be called after options are inited.

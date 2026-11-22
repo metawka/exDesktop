@@ -48,6 +48,10 @@ int UserpicCorners() {
 	return Corners;
 }
 
+bool UserpicIsCircle() {
+	return (Corners >= kMaxCorners);
+}
+
 void DrawUserpicShape(QPainter &p, QRectF rect) {
 	if (Corners >= kMaxCorners) {
 		p.drawEllipse(rect);

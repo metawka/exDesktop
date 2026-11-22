@@ -678,6 +678,11 @@ void PaintRow(
 	}
 
 	const auto nameleft = context.st->nameLeft;
+	const auto exdRightPadding = Extera::Md3::RoundedSelection()
+		? std::max(
+			context.st->padding.right(),
+			st::dialogsRowActiveMargins.right() + st::dialogsRowActiveRadius / 2)
+		: context.st->padding.right();
 	if (context.topicsExpanded > 0.) {
 		PaintExpandedTopicsBar(p, context.topicsExpanded);
 	}
@@ -688,7 +693,7 @@ void PaintRow(
 		return;
 	}
 
-	auto namewidth = context.width - nameleft - context.st->padding.right();
+	auto namewidth = context.width - nameleft - exdRightPadding;
 	auto rectForName = QRect(
 		nameleft,
 		context.st->nameTop,
@@ -809,7 +814,7 @@ void PaintRow(
 				context.selected);
 			icon.paint(
 				p,
-				context.width - context.st->padding.right() - icon.width(),
+				context.width - exdRightPadding - icon.width(),
 				texttop,
 				context.width);
 			availableWidth -= icon.width() + st::dialogsUnreadPadding;
@@ -905,7 +910,7 @@ void PaintRow(
 				st::dialogsPinnedIcon,
 				context.active,
 				context.selected);
-			icon.paint(p, context.width - context.st->padding.right() - icon.width(), texttop, context.width);
+			icon.paint(p, context.width - exdRightPadding - icon.width(), texttop, context.width);
 			availableWidth -= icon.width() + st::dialogsUnreadPadding;
 		}
 
@@ -947,7 +952,7 @@ void PaintRow(
 			context.selected);
 		icon.paint(
 			p,
-			context.width - context.st->padding.right() - icon.width(),
+			context.width - exdRightPadding - icon.width(),
 			texttop,
 			context.width);
 	}

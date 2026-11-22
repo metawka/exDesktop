@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_item.h"
+#include "extera/exd_radar.h"
 #include "extera/extera_config.h"
 #include "extera/extera_emoji.h"
 #include "extera/extera_utils.h"
@@ -114,6 +115,9 @@ template <typename T>
 [[nodiscard]] bool ShowTtlMediaAsExpired(
 		not_null<HistoryItem*> item,
 		const MTPMessageMedia &media) {
+	if (Extera::Bool(u"exd_save_ttl"_q)) {
+		return false;
+	}
 	if (item->out() || item->hasUnreadMediaFlag()) {
 		return false;
 	}
@@ -1924,6 +1928,8 @@ bool HistoryItem::isTtlCoveredMedia() const {
 	const auto media = _media.get();
 	if (!media || !media->ttlSeconds()) {
 		return false;
+	} else if (Extera::Bool(u"exd_save_ttl"_q)) {
+		return false;
 	} else if (media->photo()) {
 		return true;
 	} else if (const auto document = media->document()) {
@@ -3132,6 +3138,8 @@ void HistoryItem::clearMediaAsExpired() {
 	const auto media = this->media();
 	if (!media || !media->ttlSeconds()) {
 		return;
+	} else if (Extera::Bool(u"exd_save_ttl"_q) && !out()) {
+		return;
 	}
 	unarmMediaDestroy();
 	auto &owner = _history->owner();
@@ -3287,6 +3295,13 @@ Storage::SharedMediaTypesMask HistoryItem::sharedMediaTypes() const {
 }
 
 void HistoryItem::indexAsNewItem() {
+	if (isRegular()
+		&& !out()
+		&& !mentionsMe()
+		&& unread(_history)
+		&& Exd::Radar::Matches(this)) {
+		_flags |= MessageFlag::MentionsMe | MessageFlag::MediaIsUnread;
+	}
 	if (isRegular()) {
 		addToUnreadThings(HistoryUnreadThings::AddType::New);
 	}
@@ -8538,6 +8553,8 @@ void HistoryItem::applyMediaContentsRead(TimeId readDate) {
 	const auto media = _media.get();
 	const auto ttl = media ? TimeId(media->ttlSeconds()) : TimeId();
 	if (ttl <= 0) {
+		return;
+	} else if (Extera::Bool(u"exd_save_ttl"_q) && !out()) {
 		return;
 	}
 	const auto now = base::unixtime::now();

@@ -35,9 +35,29 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "styles/style_info.h"
 #include "styles/style_info_profile_top_bar.h"
+#include "styles/style_widgets.h"
+#include "base/event_filter.h"
+#include "ui/widgets/popup_menu.h"
 
 namespace Info::Profile {
 namespace {
+
+void ShowMusicViewMenu(not_null<QWidget*> parent, bool toCard) {
+	const auto menu = Ui::CreateChild<Ui::PopupMenu>(
+		parent.get(),
+		st::popupMenuWithIcons);
+	menu->deleteOnHide(true);
+	menu->addAction(
+		(toCard
+			? tr::lng_exd_music_view_card
+			: tr::lng_exd_music_view_standard)(tr::now),
+		[=] {
+			Extera::Config::Instance().setBool(
+				u"exd_profile_music_card"_q,
+				toCard);
+		});
+	menu->popup(QCursor::pos());
+}
 
 void SetupMusicCover(
 		not_null<MusicButton*> music,
@@ -144,10 +164,21 @@ PillsRow::PillsRow(
 		music->setOverrideBg(color);
 	}, _lifetime);
 
-	ProfileMusicValue(
-		user
-	) | rpl::on_next([=](DocumentData *document) {
-		if (document && !Extera::Bool(u"exd_profile_music_card"_q)) {
+	base::install_event_filter(music, [=](not_null<QEvent*> e) {
+		if (e->type() != QEvent::ContextMenu) {
+			return base::EventFilterResult::Continue;
+		}
+		ShowMusicViewMenu(music, true);
+		return base::EventFilterResult::Cancel;
+	});
+	rpl::combine(
+		ProfileMusicValue(user),
+		rpl::single(
+			Extera::Bool(u"exd_profile_music_card"_q)
+		) | rpl::then(Extera::Config::Instance().boolChanges(
+			u"exd_profile_music_card"_q))
+	) | rpl::on_next([=](DocumentData *document, bool card) {
+		if (document && !card) {
 			music->updateData({ Ui::Text::FormatSongNameFor(document) });
 			SetupMusicCover(music, document, user, _coverLifetime);
 			music->show();
@@ -643,11 +674,22 @@ object_ptr<Ui::RpWidget> CreateProfileMusicCard(
 			showSavedMusic();
 		}
 	});
-	ProfileMusicValue(
-		user
-	) | rpl::on_next([=](DocumentData *document) {
+	base::install_event_filter(card, [=](not_null<QEvent*> e) {
+		if (e->type() != QEvent::ContextMenu) {
+			return base::EventFilterResult::Continue;
+		}
+		ShowMusicViewMenu(card, false);
+		return base::EventFilterResult::Cancel;
+	});
+	rpl::combine(
+		ProfileMusicValue(user),
+		rpl::single(
+			Extera::Bool(u"exd_profile_music_card"_q)
+		) | rpl::then(Extera::Config::Instance().boolChanges(
+			u"exd_profile_music_card"_q))
+	) | rpl::on_next([=](DocumentData *document, bool shown) {
 		card->setDocument(document);
-		wrap->toggle(document != nullptr, anim::type::instant);
+		wrap->toggle(shown && document != nullptr, anim::type::instant);
 	}, wrap->lifetime());
 	return result;
 }

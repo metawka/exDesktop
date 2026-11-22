@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/ui_integration.h"
+#include "extera/extera_config.h"
+#include "extera/exd_safety.h"
 #include "extera/extera_plugins.h"
 
 #include "api/api_text_entities.h"
@@ -26,6 +28,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "platform/platform_specific.h"
 #include "boxes/url_auth_box.h"
+#include "ui/boxes/confirm_box.h"
+#include "base/qt/qt_key_modifiers.h"
 #include "core/phone_click_handler.h"
 #include "main/main_account.h"
 #include "main/main_session.h"
@@ -41,6 +45,58 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QLocale>
 
 namespace Core {
+namespace {
+
+class ExdWarnedUrlClickHandler final : public HiddenUrlClickHandler {
+public:
+	ExdWarnedUrlClickHandler(QString url, QString warning)
+	: HiddenUrlClickHandler(url)
+	, _warning(std::move(warning)) {
+	}
+
+	QString tooltip() const override {
+		return QString::fromUtf8("\xE2\x9A\xA0 ")
+			+ _warning
+			+ u"\n"_q
+			+ url();
+	}
+
+	void onClick(ClickContext context) const override {
+		const auto button = context.button;
+		if (button != Qt::LeftButton && button != Qt::MiddleButton) {
+			return;
+		}
+		auto my = context.other.value<ClickHandlerContext>();
+		auto show = my.show;
+		if (!show) {
+			if (const auto window = my.sessionWindow.get()) {
+				show = window->uiShow();
+			}
+		}
+		if (!show || base::IsCtrlPressed()) {
+			HiddenUrlClickHandler::onClick(context);
+			return;
+		}
+		const auto url = this->url();
+		const auto other = context.other;
+		show->showBox(Ui::MakeConfirmBox({
+			.text = TextWithEntities{ _warning + u"\n\n"_q + url },
+			.confirmed = [=](Fn<void()> close) {
+				close();
+				HiddenUrlClickHandler::Open(url, other);
+			},
+			.confirmText = tr::lng_exd_link_hint_open(),
+			.title = tr::lng_exd_link_hint_title(),
+		}));
+	}
+
+private:
+	QString _warning;
+
+};
+
+} // namespace
+
 namespace {
 
 const auto kGoodPrefix = u"https://"_q;
@@ -363,6 +419,16 @@ std::shared_ptr<ClickHandler> UiIntegration::createLinkHandler(
 		if (data.data.startsWith(u"internal:"_q, Qt::CaseInsensitive)) {
 			return nullptr;
 		}
+		if (!data.data.isEmpty() && Extera::Bool(u"exd_link_hint"_q)) {
+			const auto warning = Exd::Safety::LinkWarning(
+				QString(),
+				data.data);
+			if (!warning.isEmpty()) {
+				return std::make_shared<ExdWarnedUrlClickHandler>(
+					data.data,
+					warning);
+			}
+		}
 		return (!data.data.isEmpty()
 			&& (UrlClickHandler::IsSuspicious(data.data)
 				|| SchemeRequiresConfirmation(data.data)))
@@ -370,6 +436,16 @@ std::shared_ptr<ClickHandler> UiIntegration::createLinkHandler(
 			: Integration::createLinkHandler(data, context);
 
 	case EntityType::CustomUrl:
+		if (!data.data.isEmpty() && Extera::Bool(u"exd_link_hint"_q)) {
+			const auto warning = Exd::Safety::LinkWarning(
+				data.text,
+				data.data);
+			if (!warning.isEmpty()) {
+				return std::make_shared<ExdWarnedUrlClickHandler>(
+					data.data,
+					warning);
+			}
+		}
 		return !data.data.isEmpty()
 			? std::make_shared<HiddenUrlClickHandler>(data.data)
 			: Integration::createLinkHandler(data, context);

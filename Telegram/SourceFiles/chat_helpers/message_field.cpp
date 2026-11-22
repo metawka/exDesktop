@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "chat_helpers/message_field.h"
+#include "extera/extera_config.h"
+#include "extera/exd_safety.h"
 
 #include "history/history_widget.h"
 #include "history/history.h" // History::session

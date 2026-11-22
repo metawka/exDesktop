@@ -340,6 +340,9 @@ public:
 	Fn<void()> restoreTextCallback(const QString &insertTextOnCancel) const;
 
 	[[nodiscard]] Ui::InputField *fieldForMention() const;
+	[[nodiscard]] not_null<Ui::InputField*> exdField() const {
+		return _field;
+	}
 	[[nodiscard]] auto fieldTabbed() const
 	-> rpl::producer<not_null<Ui::InputField::TabbedRequest*>>;
 	void insertTextToField(const QString &text);

@@ -22,7 +22,7 @@ namespace {
 constexpr auto kPorterEmoji = DocumentId(5395339798430919126ULL);
 constexpr auto kDeveloperEmoji = DocumentId(5359407509327085568ULL);
 constexpr auto kSupporterEmoji = DocumentId(5391059537102927631ULL);
-constexpr auto kRefreshInterval = 60 * 60 * 1000;
+constexpr auto kRefreshInterval = 3 * 60 * 60 * 1000;
 constexpr auto kPorterUsers = std::array<uint64, 2>{
 	1388181090ULL,
 	5288193145ULL,
@@ -297,7 +297,7 @@ void RefreshOwnFromRepo(QNetworkAccessManager *manager, bool fresh) {
 }
 
 void RefreshOwn(QNetworkAccessManager *manager, bool fresh = false) {
-	auto request = QNetworkRequest(QUrl(u"https://exdesktop.xyz/api/badges"_q));
+	auto request = QNetworkRequest(QUrl(u"https://exdesktop.xyz/api/badges/"_q));
 	request.setRawHeader("User-Agent", "exDesktop");
 	request.setAttribute(
 		QNetworkRequest::CacheLoadControlAttribute,

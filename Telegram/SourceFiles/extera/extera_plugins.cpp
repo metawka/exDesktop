@@ -230,11 +230,18 @@ private:
 	return DataPath() + u"plugin_hang.lock"_q;
 }
 
-void ShowAutoSafeModeBox(bool hang = false) {
-	base::call_delayed(3000, [=] {
-		const auto window = Core::App().activePrimaryWindow();
+void ShowAutoSafeModeBox(bool hang = false, int attempt = 0) {
+	base::call_delayed((attempt > 0) ? 1000 : 3000, [=] {
+		auto window = Core::App().activePrimaryWindow();
+		if (!window) {
+			window = Core::App().windowFor(
+				Window::SeparateId(&Core::App().activeAccount()));
+		}
 		const auto controller = window ? window->sessionController() : nullptr;
 		if (!controller) {
+			if (attempt < 120) {
+				ShowAutoSafeModeBox(hang, attempt + 1);
+			}
 			return;
 		}
 		controller->show(Ui::MakeConfirmBox({
@@ -243,7 +250,7 @@ void ShowAutoSafeModeBox(bool hang = false) {
 				: tr::lng_extera_safe_mode_auto()),
 			.confirmed = [=](Fn<void()> close) {
 				close();
-				UrlClickHandler::Open(u"tg://settings/extera/plugins"_q);
+				ShowPluginsWindow(controller);
 			},
 			.confirmText = tr::lng_extera_safe_mode_open(),
 			.title = tr::lng_extera_safe_mode_title(),

@@ -104,11 +104,15 @@ struct Settings {
 	return result;
 }
 
-[[nodiscard]] int ProviderIndex() {
+[[nodiscard]] int ProviderIndexFor(const QString &prefix) {
 	return std::clamp(
-		Int(u"port_llm_provider"_q),
+		Int(prefix + u"_provider"_q),
 		0,
 		int(kProviders.size()) - 1);
+}
+
+[[nodiscard]] int ProviderIndex() {
+	return ProviderIndexFor(u"port_llm"_q);
 }
 
 [[nodiscard]] QString NormalizeEndpoint(QString endpoint, bool anthropic) {
@@ -138,10 +142,10 @@ struct Settings {
 	return endpoint;
 }
 
-[[nodiscard]] Settings CurrentSettings() {
+[[nodiscard]] Settings SettingsFor(const QString &prefix) {
 	auto result = Settings();
-	result.provider = kProviders[ProviderIndex()];
-	const auto endpoint = String(u"port_llm_endpoint"_q).trimmed();
+	result.provider = kProviders[ProviderIndexFor(prefix)];
+	const auto endpoint = String(prefix + u"_endpoint"_q).trimmed();
 	if (!endpoint.isEmpty()) {
 		result.provider.endpoint = NormalizeEndpoint(
 			endpoint,
@@ -149,13 +153,17 @@ struct Settings {
 		result.provider.ollama = result.provider.endpoint.endsWith(
 			u"/api/chat"_q);
 	}
-	const auto model = String(u"port_llm_model"_q).trimmed();
+	const auto model = String(prefix + u"_model"_q).trimmed();
 	if (!model.isEmpty()) {
 		result.provider.model = model;
 	}
-	result.key = String(u"port_llm_key"_q).trimmed();
+	result.key = String(prefix + u"_key"_q).trimmed();
 	result.agent = (Int(u"port_llm_mode"_q) == 0);
 	return result;
+}
+
+[[nodiscard]] Settings CurrentSettings() {
+	return SettingsFor(u"port_llm"_q);
 }
 
 [[nodiscard]] QNetworkReply *Send(
@@ -361,6 +369,59 @@ bool Configured() {
 		return false;
 	}
 	return settings.provider.local || !settings.key.isEmpty();
+}
+
+bool ConfiguredFor(const QString &prefix) {
+	if (!ProviderIndexFor(prefix)) {
+		return false;
+	}
+	const auto settings = SettingsFor(prefix);
+	if (settings.provider.endpoint.isEmpty()) {
+		return false;
+	}
+	return settings.provider.local || !settings.key.isEmpty();
+}
+
+QString ModelFor(const QString &prefix) {
+	const auto settings = SettingsFor(prefix);
+	return settings.provider.model.isEmpty()
+		? QUrl(settings.provider.endpoint).host()
+		: settings.provider.model;
+}
+
+void Complete(
+		const QString &prefix,
+		const QString &system,
+		const QJsonArray &messages,
+		Fn<void(QString answer, bool ok)> done) {
+	const auto settings = SettingsFor(prefix);
+	auto list = messages;
+	if (settings.provider.anthropic) {
+		auto fixed = QJsonArray();
+		for (const auto &value : messages) {
+			auto object = value.toObject();
+			if (object.value(u"role"_q).toString() == u"system"_q) {
+				continue;
+			}
+			fixed.push_back(object);
+		}
+		list = fixed;
+	}
+	const auto reply = Send(settings, system, list);
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		reply->deleteLater();
+		const auto data = reply->readAll();
+		auto error = QString();
+		const auto answer = ParseAnswer(
+			data,
+			settings.provider.anthropic,
+			&error);
+		if (!answer.trimmed().isEmpty()) {
+			done(answer.trimmed(), true);
+		} else {
+			done(error.isEmpty() ? reply->errorString() : error, false);
+		}
+	});
 }
 
 bool Suggested(const QJsonObject &info) {

@@ -19,6 +19,8 @@
 #include "ui/chat/attach/attach_prepare.h"
 #include "api/api_common.h"
 #include "window/window_peer_menu.h"
+#include "ui/layers/layer_manager.h"
+#include "ui/layers/show.h"
 #include "storage/storage_media_prepare.h"
 #include "storage/localimageloader.h"
 #include "ui/effects/animations.h"
@@ -35,6 +37,11 @@
 #include "ui/boxes/single_choice_box.h"
 #include "ui/layers/generic_box.h"
 #include "ui/vertical_list.h"
+#include "settings/sections/settings_extera.h"
+#include "mainwindow.h"
+#include "ui/text/text_options.h"
+#include "ui/widgets/checkbox.h"
+#include "ui/widgets/scroll_area.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/continuous_sliders.h"
 #include "ui/widgets/fields/input_field.h"
@@ -62,6 +69,7 @@
 #include "ui/emoji_config.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
+#include "styles/style_info.h"
 
 #include <QtCore/QJsonArray>
 #include <QtCore/QFile>
@@ -77,6 +85,19 @@
 
 namespace Extera::Plugins {
 namespace {
+
+std::weak_ptr<Ui::Show> PwShowOverride;
+
+void PwShowBox(
+		not_null<Window::SessionController*> controller,
+		object_ptr<Ui::BoxContent> box,
+		Ui::LayerOptions options = Ui::LayerOption::KeepOther) {
+	if (const auto show = PwShowOverride.lock()) {
+		show->showBox(std::move(box), options);
+	} else {
+		controller->show(std::move(box), options);
+	}
+}
 
 [[nodiscard]] QString Subtitle(const QJsonObject &info) {
 	auto parts = QStringList();
@@ -97,7 +118,7 @@ void ShowInput(
 		const QString &value,
 		bool multiline,
 		Fn<void(QString)> done) {
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(rpl::single(title));
 		const auto field = box->addRow(object_ptr<Ui::InputField>(
 			box,
@@ -208,7 +229,7 @@ void FillSettings(
 				label,
 				st::settingsButtonNoIcon);
 			button->setClickedCallback([=] {
-				controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+				PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 					SingleChoiceBox(box, {
 						.title = rpl::single(text),
 						.options = options,
@@ -506,7 +527,7 @@ void FillJournal(
 				+ JournalTime(last)),
 			st::settingsButtonNoIcon);
 		button->setClickedCallback([=] {
-			controller->show(Ui::MakeConfirmBox({
+			PwShowBox(controller, Ui::MakeConfirmBox({
 				.text = tr::lng_exd_plugin_journal_block_sure(
 					tr::now,
 					lt_target,
@@ -672,7 +693,7 @@ void FillPermissions(
 			setExtra(u"links"_q, enabled ? u"allow"_q : QString());
 		});
 	const auto revoke = [=](QString kind, QString key, QString target) {
-		controller->show(Ui::MakeConfirmBox({
+		PwShowBox(controller, Ui::MakeConfirmBox({
 			.text = tr::lng_exd_plugin_perm_revoke_sure(
 				tr::now,
 				lt_target,
@@ -735,7 +756,7 @@ void FillPermissions(
 			tr::lng_exd_plugin_perm_reset_all(),
 			st::settingsAttentionButton));
 		all->setClickedCallback([=] {
-			controller->show(Ui::MakeConfirmBox({
+			PwShowBox(controller, Ui::MakeConfirmBox({
 				.text = tr::lng_exd_plugin_perm_reset_all_sure(),
 				.confirmed = [=](Fn<void()> close) {
 					SandboxQuery(u"revoke"_q, id, u"all"_q);
@@ -774,7 +795,7 @@ void SharePluginFile(
 		return;
 	}
 	const auto session = &controller->session();
-	Window::ShowChooseRecipientBox(controller, [=](
+	PwShowBox(controller, Window::PrepareChooseRecipientBox(session, [=](
 			not_null<Data::Thread*> thread) {
 		auto list = Storage::PrepareMediaList(
 			QStringList{ path },
@@ -792,7 +813,7 @@ void SharePluginFile(
 			Api::SendAction(thread));
 		controller->showToast(tr::lng_extera_plugins_shared(tr::now));
 		return true;
-	});
+	}));
 }
 
 void ShowPluginCode(
@@ -805,7 +826,7 @@ void ShowPluginCode(
 		return;
 	}
 	const auto code = QString::fromUtf8(file.readAll());
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(rpl::single(name));
 		box->setWidth(st::exteraPluginCodeWidth);
 		auto text = TextWithEntities{ code };
@@ -953,7 +974,8 @@ void SetupPluginIcon(
 		not_null<Window::SessionController*> controller,
 		const QString &icon,
 		int size,
-		int badge) {
+		int badge,
+		Fn<QColor()> ring = nullptr) {
 	struct State {
 		std::unique_ptr<Ui::Text::CustomEmoji> emoji;
 		StickerSetIdentifier set;
@@ -964,7 +986,7 @@ void SetupPluginIcon(
 		bool shown = false;
 		bool captured = false;
 	};
-	widget->resize(size, size + badge / 3);
+	widget->resize(size + badge / 3, size + badge / 3);
 	const auto state = widget->lifetime().make_state<State>();
 	const auto slash = icon.lastIndexOf('/');
 	state->failed = (slash <= 0);
@@ -1017,7 +1039,7 @@ void SetupPluginIcon(
 	widget->paintRequest() | rpl::on_next([=] {
 		auto p = QPainter(widget);
 		auto hq = PainterHighQualityEnabler(p);
-		const auto left = (widget->width() - size) / 2;
+		const auto left = (widget->width() - size - badge / 3) / 2;
 		const auto rect = QRect(left, 0, size, size);
 		const auto radius = st::exteraInstallIconRadius;
 		p.setPen(Qt::NoPen);
@@ -1100,7 +1122,7 @@ void SetupPluginIcon(
 				rect.y() + rect.height() - badge * 2 / 3,
 				badge,
 				badge);
-			p.setBrush(st::boxBg);
+			p.setBrush(ring ? ring() : st::boxBg->c);
 			p.drawEllipse(circle);
 			const auto stroke = st::exteraInstallBadgeStroke;
 			const auto inner = circle.marginsRemoved(
@@ -1122,7 +1144,7 @@ void SetupPluginIcon(
 		if (state->set.shortName.isEmpty() && !state->set.id) {
 			return;
 		}
-		controller->show(Box<StickerSetBox>(
+		PwShowBox(controller, Box<StickerSetBox>(
 			controller->uiShow(),
 			state->set,
 			Data::StickersType::Stickers));
@@ -1217,7 +1239,7 @@ void AddInstallIcon(
 void ShowPluginSettings(
 		not_null<Window::SessionController*> controller,
 		const QString &id) {
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		auto title = id;
 		for (const auto &entry : Call(u"list"_q).toArray()) {
 			const auto info = entry.toObject();
@@ -1247,7 +1269,7 @@ void ShowPluginPermissions(
 		not_null<Window::SessionController*> controller,
 		const QString &id,
 		const QString &name) {
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(rpl::single(name));
 		box->setWidth(st::boxWideWidth);
 		const auto content = box->verticalLayout();
@@ -1510,7 +1532,7 @@ void FillPluginsList(
 				&st::menuIconDeleteAttention,
 				&st::menuIconDeleteAttention);
 			remove->setClickedCallback([=] {
-				controller->show(Ui::MakeConfirmBox({
+				PwShowBox(controller, Ui::MakeConfirmBox({
 					.text = tr::lng_extera_plugins_delete_sure(),
 					.confirmed = [=](Fn<void()> close) {
 						Call(u"delete"_q, QJsonObject{ { u"id"_q, id } });
@@ -2091,7 +2113,7 @@ void ShowThreatsBox(
 	const auto locations = Call(u"capability_lines"_q, QJsonObject{
 		{ u"path"_q, path },
 	}).toObject();
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		box->setStyle(st::exteraInstallBox);
 		box->setWidth(st::exteraInstallWidth);
 		box->setNoContentMargin(true);
@@ -2311,7 +2333,7 @@ Fn<void(Fn<void()>)> AddTopActions(
 	auto index = 0;
 	if (!description.isEmpty()) {
 		addButton(index++, st::exteraTopActionTranslate, [=] {
-			controller->show(
+			PwShowBox(controller, 
 				Box(
 					Ui::TranslateBox,
 					controller->session().user(),
@@ -2747,7 +2769,7 @@ void ShowGuardAnalysis(
 	const auto meta = Call(u"metadata"_q, QJsonObject{
 		{ u"path"_q, path },
 	}).toObject();
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(tr::lng_exd_guard_analysis());
 		box->setWidth(st::exteraInstallWidth);
 		const auto color = GuardLevelColor(report.level);
@@ -3067,7 +3089,7 @@ void ShowInstallBoxResolved(
 			installed = info.value(u"version"_q).toString();
 		}
 	}
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		box->setStyle(st::exteraInstallBox);
 		box->setWidth(st::exteraInstallWidth);
 		box->setNoContentMargin(true);
@@ -3399,7 +3421,7 @@ void ShowSourceBox(
 			{ u"path"_q, path },
 		}).toString();
 	}
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(rpl::single(QFileInfo(path).fileName()));
 		box->setWidth(st::boxWideWidth * 3 / 2);
 		box->setMaxHeight(st::boxWideWidth * 2);
@@ -3426,7 +3448,7 @@ void ShowSourceBox(
 void ShowUnknownSourcesWarning(
 		not_null<Window::SessionController*> controller,
 		Fn<void(bool)> done) {
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		struct State {
 			rpl::variable<int> left = 30;
 			base::Timer timer;
@@ -3523,7 +3545,7 @@ void ShowUnknownSourcesWarning(
 void ShowGuardLevelConfirm(
 		not_null<Window::SessionController*> controller,
 		int level) {
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		struct State {
 			rpl::variable<int> left = 30;
 			base::Timer timer;
@@ -3664,8 +3686,14 @@ void ShowGuardLevelConfirm(
 	}));
 }
 
+void ShowBoxInPluginsWindow(
+		not_null<Window::SessionController*> controller,
+		object_ptr<Ui::BoxContent> box) {
+	PwShowBox(controller, std::move(box));
+}
+
 void ShowGuardLevelBox(not_null<Window::SessionController*> controller) {
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		const auto current = Extera::Int(u"plugins_guard_level"_q);
 		SingleChoiceBox(box, {
 			.title = tr::lng_exd_guard_level_title(),
@@ -4299,7 +4327,7 @@ void ShowPortResult(
 		const Exd::PluginPorter::Progress &progress,
 		const Exd::PluginPorter::Info &info) {
 	using Stage = Exd::PluginPorter::Progress::Stage;
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		AddPortHeader(box, controller, meta);
 		const auto good = st::boxTextFgGood->c;
 		const auto attention = st::historyPeer3UserpicBg->c;
@@ -4490,7 +4518,7 @@ void ShowPartialStyled(
 		not_null<Window::SessionController*> controller,
 		const QJsonObject &info,
 		const QStringList &items) {
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		AddPortHeader(box, controller, info);
 		const auto attention = st::historyPeer3UserpicBg->c;
 		AddColorPill(
@@ -4682,7 +4710,7 @@ void OpenPortBox(
 	const auto meta = task->meta;
 	const auto info = task->info;
 	const auto weakTask = std::weak_ptr<PortTask>(task);
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		AddPortHeader(box, controller, meta);
 		AddColorPill(
 			box,
@@ -4904,7 +4932,7 @@ void ShowPortSetupBox(
 			: tr::lng_extera_plugins_bad_file(tr::now));
 		return;
 	}
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		AddPortHeader(box, controller, meta);
 		AddColorPill(
 			box,
@@ -4981,7 +5009,7 @@ void ShowPortSetupBox(
 			}),
 			st::exdCardSettingsButton);
 		serviceButton->setClickedCallback([=] {
-			controller->show(Box([=](not_null<Ui::GenericBox*> inner) {
+			PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> inner) {
 				SingleChoiceBox(inner, {
 					.title = tr::lng_exd_port_setup_provider(),
 					.options = options,
@@ -5132,7 +5160,7 @@ void ShowPermissionAlert(
 			}
 		}
 	}
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	PwShowBox(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		AddPortHeader(box, controller, meta);
 		const auto color = [=] {
 			return (leak || system)
@@ -5206,6 +5234,1987 @@ void ShowPermissionAlert(
 		box->boxClosing() | rpl::on_next([=] {
 			answer(u"dismiss"_q);
 		}, box->lifetime());
+	}));
+}
+
+namespace {
+
+// Window
+
+enum class PwSection {
+	All,
+	Enabled,
+	Disabled,
+	Errors,
+	Pinned,
+};
+
+enum class PwSource {
+	None,
+	Trusted,
+	Ported,
+	Other,
+};
+
+enum class PwSort {
+	Pinned,
+	Name,
+	Enabled,
+	Date,
+};
+
+struct PwEntry {
+	QJsonObject info;
+	QString id;
+	QString name;
+	QString meta;
+	QString description;
+	QString error;
+	QString path;
+	bool enabled = false;
+	bool trusted = false;
+	bool desktop = false;
+	bool ported = false;
+	bool partial = false;
+	bool settings = false;
+	bool pinned = false;
+	int pinIndex = -1;
+	QDateTime installed;
+	qint64 size = 0;
+};
+
+struct PwState {
+	std::vector<PwEntry> entries;
+	PwSection section = PwSection::All;
+	PwSource source = PwSource::None;
+	PwSort sort = PwSort::Pinned;
+	bool grid = true;
+	bool chipDesktop = false;
+	bool chipPartial = false;
+	bool chipSettings = false;
+	QString query;
+	QString selected;
+	int page = 0;
+	bool engineOpen = false;
+	rpl::event_stream<> changes;
+};
+
+[[nodiscard]] QColor PwMix(QColor a, QColor b, float64 ratio) {
+	return anim::color(a, b, ratio);
+}
+
+[[nodiscard]] QColor PwSurface(float64 level = 0.) {
+	return PwMix(st::windowBg->c, st::windowFg->c, 0.05 + level);
+}
+
+[[nodiscard]] int Px(int value) {
+	return style::ConvertScale(value);
+}
+
+[[nodiscard]] std::vector<PwEntry> PwLoad() {
+	auto result = std::vector<PwEntry>();
+	const auto pinned = PinnedPlugins();
+	for (const auto &value : Call(u"list"_q).toArray()) {
+		const auto info = value.toObject();
+		auto entry = PwEntry();
+		entry.info = info;
+		entry.id = info.value(u"id"_q).toString();
+		entry.name = info.value(u"name"_q).toString();
+		entry.meta = Subtitle(info);
+		entry.description = info.value(u"description"_q).toString();
+		entry.error = info.value(u"error"_q).toString().trimmed();
+		entry.path = info.value(u"path"_q).toString();
+		entry.enabled = info.value(u"enabled"_q).toBool()
+			&& !Extera::Bool(u"plugins_safe_mode"_q);
+		entry.trusted = info.value(u"trusted"_q).toBool();
+		entry.desktop = info.value(u"desktop"_q).toBool();
+		entry.ported = !info.value(u"ported_from"_q).toString().isEmpty();
+		entry.partial = !info.value(u"unsupported"_q).toArray().isEmpty();
+		entry.settings = info.value(u"has_settings"_q).toBool();
+		entry.pinIndex = pinned.indexOf(entry.id);
+		entry.pinned = (entry.pinIndex >= 0);
+		const auto file = QFileInfo(entry.path);
+		entry.installed = file.lastModified();
+		entry.size = file.size();
+		result.push_back(std::move(entry));
+	}
+	return result;
+}
+
+[[nodiscard]] bool PwMatchSection(const PwEntry &entry, PwSection section) {
+	switch (section) {
+	case PwSection::All: return true;
+	case PwSection::Enabled: return entry.enabled;
+	case PwSection::Disabled: return !entry.enabled;
+	case PwSection::Errors: return !entry.error.isEmpty();
+	case PwSection::Pinned: return entry.pinned;
+	}
+	return true;
+}
+
+[[nodiscard]] bool PwMatchSource(const PwEntry &entry, PwSource source) {
+	switch (source) {
+	case PwSource::None: return true;
+	case PwSource::Trusted: return entry.trusted;
+	case PwSource::Ported: return entry.ported;
+	case PwSource::Other: return !entry.trusted;
+	}
+	return true;
+}
+
+[[nodiscard]] std::vector<const PwEntry*> PwFiltered(
+		const PwState &state) {
+	auto result = std::vector<const PwEntry*>();
+	const auto query = state.query.trimmed().toLower();
+	for (const auto &entry : state.entries) {
+		if (!PwMatchSection(entry, state.section)
+			|| !PwMatchSource(entry, state.source)
+			|| (state.chipDesktop && !entry.desktop)
+			|| (state.chipPartial && !entry.partial)
+			|| (state.chipSettings && !entry.settings)) {
+			continue;
+		}
+		if (!query.isEmpty()) {
+			const auto haystack = (entry.name
+				+ ' '
+				+ entry.meta
+				+ ' '
+				+ entry.description).toLower();
+			if (!haystack.contains(query)) {
+				continue;
+			}
+		}
+		result.push_back(&entry);
+	}
+	const auto byName = [](const PwEntry *a, const PwEntry *b) {
+		return a->name.compare(b->name, Qt::CaseInsensitive) < 0;
+	};
+	switch (state.sort) {
+	case PwSort::Pinned:
+		ranges::stable_sort(result, [&](const PwEntry *a, const PwEntry *b) {
+			if (a->pinned != b->pinned) {
+				return a->pinned;
+			} else if (a->pinned) {
+				return a->pinIndex < b->pinIndex;
+			} else if (a->error.isEmpty() != b->error.isEmpty()) {
+				return !a->error.isEmpty();
+			}
+			return byName(a, b);
+		});
+		break;
+	case PwSort::Name:
+		ranges::stable_sort(result, byName);
+		break;
+	case PwSort::Enabled:
+		ranges::stable_sort(result, [&](const PwEntry *a, const PwEntry *b) {
+			if (a->enabled != b->enabled) {
+				return a->enabled;
+			}
+			return byName(a, b);
+		});
+		break;
+	case PwSort::Date:
+		ranges::stable_sort(result, [&](const PwEntry *a, const PwEntry *b) {
+			return a->installed > b->installed;
+		});
+		break;
+	}
+	return result;
+}
+
+struct PwTag {
+	QString text;
+	QColor fg;
+	QColor bg;
+};
+
+[[nodiscard]] std::vector<PwTag> PwTags(const PwEntry &entry) {
+	auto result = std::vector<PwTag>();
+	const auto sub = st::windowSubTextFg->c;
+	const auto neutral = PwSurface(0.06);
+	if (!entry.error.isEmpty()) {
+		auto bg = st::attentionButtonFg->c;
+		bg.setAlphaF(0.16);
+		result.push_back({
+			tr::lng_exd_pw_tag_error(tr::now),
+			st::attentionButtonFg->c,
+			bg,
+		});
+	}
+	if (entry.desktop) {
+		auto fg = QColor(0x5f, 0xbf, 0x7f);
+		auto bg = fg;
+		bg.setAlphaF(0.16);
+		result.push_back({ tr::lng_exd_pw_tag_desktop(tr::now), fg, bg });
+	}
+	if (entry.ported) {
+		result.push_back({ tr::lng_exd_pw_tag_ported(tr::now), sub, neutral });
+	}
+	if (entry.partial) {
+		auto fg = QColor(0xe0, 0xa8, 0x4a);
+		auto bg = fg;
+		bg.setAlphaF(0.16);
+		result.push_back({ tr::lng_exd_pw_tag_partial(tr::now), fg, bg });
+	}
+	return result;
+}
+
+int PwPaintTags(
+		QPainter &p,
+		const std::vector<PwTag> &tags,
+		int left,
+		int top,
+		int right) {
+	const auto &font = st::normalFont;
+	const auto height = font->height + Px(4);
+	const auto padding = Px(8);
+	auto x = left;
+	for (const auto &tag : tags) {
+		const auto width = font->width(tag.text) + padding * 2;
+		if (x + width > right) {
+			break;
+		}
+		p.setPen(Qt::NoPen);
+		p.setBrush(tag.bg);
+		p.drawRoundedRect(
+			QRect(x, top, width, height),
+			height / 2.,
+			height / 2.);
+		p.setPen(tag.fg);
+		p.setFont(font);
+		p.drawText(
+			QRect(x, top, width, height),
+			Qt::AlignCenter,
+			tag.text);
+		x += width + Px(6);
+	}
+	return height;
+}
+
+class PwToggle final : public Ui::AbstractButton {
+public:
+	PwToggle(QWidget *parent, bool checked)
+	: AbstractButton(parent)
+	, _view(st::defaultToggle, checked, [=] { update(); }) {
+		const auto size = _view.getSize();
+		resize(size.width() + Px(8), size.height() + Px(8));
+		setClickedCallback([=] {
+			_view.setChecked(!_view.checked(), anim::type::normal);
+			_changes.fire_copy(_view.checked());
+		});
+	}
+
+	[[nodiscard]] rpl::producer<bool> changes() const {
+		return _changes.events();
+	}
+
+private:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		_view.paint(p, Px(4), Px(4), width());
+	}
+
+	Ui::ToggleView _view;
+	rpl::event_stream<bool> _changes;
+
+};
+
+class PwNavButton final : public Ui::AbstractButton {
+public:
+	PwNavButton(
+		QWidget *parent,
+		const style::icon &icon,
+		QString text,
+		int count,
+		Fn<bool()> active)
+	: AbstractButton(parent)
+	, _icon(icon)
+	, _text(std::move(text))
+	, _count(count)
+	, _active(std::move(active)) {
+		resize(width(), Px(38));
+	}
+
+	void setCount(int count) {
+		_count = count;
+		update();
+	}
+
+private:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto active = _active();
+		const auto rect = this->rect();
+		if (active || isOver()) {
+			auto bg = active
+				? st::windowActiveTextFg->c
+				: PwSurface(0.05);
+			if (active) {
+				bg.setAlphaF(0.16);
+			}
+			p.setPen(Qt::NoPen);
+			p.setBrush(bg);
+			p.drawRoundedRect(rect, rect.height() / 2., rect.height() / 2.);
+		}
+		const auto fg = active ? st::windowActiveTextFg->c : st::windowFg->c;
+		_icon.paint(
+			p,
+			Px(12),
+			(height() - _icon.height()) / 2,
+			width(),
+			active ? fg : st::menuIconColor->c);
+		p.setPen(fg);
+		p.setFont(st::normalFont);
+		const auto textLeft = Px(12) + _icon.width() + Px(10);
+		const auto count = (_count >= 0) ? QString::number(_count) : QString();
+		const auto countWidth = st::normalFont->width(count);
+		p.drawText(
+			QRect(
+				textLeft,
+				0,
+				width() - textLeft - countWidth - Px(24),
+				height()),
+			Qt::AlignVCenter | Qt::AlignLeft,
+			st::normalFont->elided(
+				_text,
+				width() - textLeft - countWidth - Px(24)));
+		p.setPen(active ? fg : st::windowSubTextFg->c);
+		p.drawText(
+			QRect(0, 0, width() - Px(14), height()),
+			Qt::AlignVCenter | Qt::AlignRight,
+			count);
+	}
+
+	const style::icon &_icon;
+	QString _text;
+	int _count = 0;
+	Fn<bool()> _active;
+
+};
+
+class PwChip final : public Ui::AbstractButton {
+public:
+	PwChip(QWidget *parent, QString text, Fn<bool()> active)
+	: AbstractButton(parent)
+	, _text(std::move(text))
+	, _active(std::move(active)) {
+		resize(
+			st::normalFont->width(_text) + Px(24),
+			st::normalFont->height + Px(12));
+	}
+
+private:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto active = _active();
+		const auto rect = QRectF(this->rect()).marginsRemoved(
+			{ 0.5, 0.5, 0.5, 0.5 });
+		if (active) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(PwSurface(0.1));
+		} else {
+			p.setPen(QPen(PwSurface(0.12), 1.));
+			p.setBrush(isOver() ? PwSurface(0.02) : Qt::transparent);
+		}
+		p.drawRoundedRect(rect, rect.height() / 2., rect.height() / 2.);
+		p.setPen(active ? st::windowFg->c : st::windowSubTextFg->c);
+		p.setFont(st::normalFont);
+		p.drawText(this->rect(), Qt::AlignCenter, _text);
+	}
+
+	QString _text;
+	Fn<bool()> _active;
+
+};
+
+class PwPillButton final : public Ui::AbstractButton {
+public:
+	PwPillButton(
+		QWidget *parent,
+		rpl::producer<QString> text,
+		const style::icon *icon,
+		bool primary)
+	: AbstractButton(parent)
+	, _icon(icon)
+	, _primary(primary) {
+		std::move(text) | rpl::on_next([=](QString value) {
+			_text = std::move(value);
+			const auto iconWidth = _icon ? (_icon->width() + Px(6)) : 0;
+			resize(
+				st::semiboldFont->width(_text) + iconWidth + Px(32),
+				Px(38));
+			update();
+		}, lifetime());
+	}
+
+private:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		auto bg = _primary ? st::windowActiveTextFg->c : PwSurface(0.08);
+		if (isOver()) {
+			bg = _primary
+				? PwMix(bg, st::windowFg->c, 0.1)
+				: PwSurface(0.12);
+		}
+		p.setPen(Qt::NoPen);
+		p.setBrush(bg);
+		p.drawRoundedRect(rect(), height() / 2., height() / 2.);
+		const auto fg = _primary ? st::windowBg->c : st::windowFg->c;
+		const auto iconWidth = _icon ? (_icon->width() + Px(6)) : 0;
+		const auto textWidth = st::semiboldFont->width(_text);
+		auto x = (width() - textWidth - iconWidth) / 2;
+		if (_icon) {
+			_icon->paint(
+				p,
+				x,
+				(height() - _icon->height()) / 2,
+				width(),
+				fg);
+			x += iconWidth;
+		}
+		p.setPen(fg);
+		p.setFont(st::semiboldFont);
+		p.drawText(
+			QRect(x, 0, textWidth + 1, height()),
+			Qt::AlignVCenter | Qt::AlignLeft,
+			_text);
+	}
+
+	QString _text;
+	const style::icon *_icon = nullptr;
+	bool _primary = false;
+
+};
+
+class PwIconButton final : public Ui::AbstractButton {
+public:
+	PwIconButton(QWidget *parent, const style::icon &icon, int size = 34)
+	: AbstractButton(parent)
+	, _icon(&icon) {
+		resize(Px(size), Px(size));
+	}
+
+	void setIcon(const style::icon &icon) {
+		_icon = &icon;
+		update();
+	}
+
+	void setActiveColor(std::optional<QColor> color) {
+		_color = color;
+		update();
+	}
+
+private:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		if (isOver()) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(PwSurface(0.1));
+			p.drawEllipse(rect());
+		}
+		const auto color = _color.value_or(st::menuIconColor->c);
+		_icon->paint(
+			p,
+			(width() - _icon->width()) / 2,
+			(height() - _icon->height()) / 2,
+			width(),
+			color);
+	}
+
+	const style::icon *_icon = nullptr;
+	std::optional<QColor> _color;
+
+};
+
+class PwViewButton final : public Ui::AbstractButton {
+public:
+	PwViewButton(QWidget *parent, bool grid)
+	: AbstractButton(parent)
+	, _grid(grid) {
+		resize(Px(38), Px(38));
+	}
+
+	void setActiveColor(std::optional<QColor> color) {
+		_color = color;
+		update();
+	}
+
+private:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		if (_color) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(PwSurface(0.14));
+			p.drawRoundedRect(rect(), height() / 2., height() / 2.);
+		}
+		const auto color = _color
+			? st::windowFg->c
+			: isOver()
+			? st::windowFg->c
+			: st::windowSubTextFg->c;
+		const auto size = Px(16);
+		const auto left = (width() - size) / 2.;
+		const auto top = (height() - size) / 2.;
+		if (_grid) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(color);
+			const auto cell = (size - Px(2)) / 2.;
+			for (auto i = 0; i != 4; ++i) {
+				p.drawRoundedRect(
+					QRectF(
+						left + (i % 2) * (cell + Px(2)),
+						top + (i / 2) * (cell + Px(2)),
+						cell,
+						cell),
+					Px(2),
+					Px(2));
+			}
+		} else {
+			auto pen = QPen(color, Px(2));
+			pen.setCapStyle(Qt::RoundCap);
+			p.setPen(pen);
+			for (auto i = 0; i != 3; ++i) {
+				const auto y = top + Px(2) + i * (size - Px(4)) / 2.;
+				p.drawLine(QPointF(left + Px(1), y), QPointF(left + size - Px(1), y));
+			}
+		}
+	}
+
+	const bool _grid = true;
+	std::optional<QColor> _color;
+
+};
+
+class PwCard final : public Ui::AbstractButton {
+public:
+	PwCard(
+		QWidget *parent,
+		not_null<Window::SessionController*> controller,
+		const PwEntry &entry,
+		bool grid,
+		bool selected,
+		Fn<void(QString)> select,
+		Fn<void(QString, bool)> setEnabled,
+		Fn<void(QString)> togglePin,
+		Fn<void(QWidget*, QString)> showMenu,
+		Fn<void(QString)> openSettings)
+	: AbstractButton(parent)
+	, _id(entry.id)
+	, _grid(grid)
+	, _selected(selected)
+	, _enabled(entry.enabled)
+	, _name(entry.name)
+	, _meta(entry.meta)
+	, _error(entry.error.split('\n').last())
+	, _tags(PwTags(entry)) {
+		_description.setMarkedText(
+			st::defaultTextStyle,
+			WithLinks(entry.description),
+			Ui::ItemTextDefaultOptions());
+		const auto iconSize = _grid ? Px(44) : Px(36);
+		_iconSize = iconSize;
+		_icon = Ui::CreateChild<Ui::AbstractButton>(this);
+		_icon->setAttribute(Qt::WA_TransparentForMouseEvents);
+		SetupPluginIcon(
+			_icon,
+			controller,
+			entry.info.value(u"icon"_q).toString(),
+			iconSize,
+			entry.trusted ? (iconSize * 4 / 10) : 0,
+			[=] { return isOver() ? PwSurface(0.08) : PwSurface(0.04); });
+		_toggle = Ui::CreateChild<PwToggle>(this, entry.enabled);
+		_toggle->changes(
+		) | rpl::on_next([=](bool value) {
+			setEnabled(_id, value);
+		}, _toggle->lifetime());
+		if (_grid) {
+			_settings = Ui::CreateChild<PwIconButton>(
+				this,
+				st::menuIconSettings);
+			_settings->setClickedCallback([=] {
+				openSettings(_id);
+			});
+			_pin = Ui::CreateChild<PwIconButton>(
+				this,
+				entry.pinned ? st::menuIconUnpin : st::menuIconPin);
+			if (entry.pinned) {
+				_pin->setActiveColor(st::windowActiveTextFg->c);
+			}
+			_pin->setClickedCallback([=] { togglePin(_id); });
+			_more = Ui::CreateChild<PwIconButton>(this, st::exteraIconMore);
+			_more->setClickedCallback([=] { showMenu(_more, _id); });
+		}
+		setClickedCallback([=] { select(_id); });
+		setAcceptBoth(true);
+		clicks(
+		) | rpl::filter([](Qt::MouseButton button) {
+			return (button == Qt::RightButton);
+		}) | rpl::on_next([=] {
+			showMenu(this, _id);
+		}, lifetime());
+		resize(width(), _grid ? Px(180) : Px(58));
+	}
+
+	void layout() {
+		const auto padding = _grid ? Px(14) : Px(12);
+		const auto iconSize = _iconSize;
+		if (_grid) {
+			_icon->moveToLeft(padding, padding);
+			_toggle->moveToLeft(
+				width() - padding - _toggle->width() + Px(4),
+				padding + (iconSize - _toggle->height()) / 2);
+			const auto bottom = height() - padding + Px(4) - _settings->height();
+			_settings->moveToLeft(padding - Px(6), bottom);
+			_pin->moveToLeft(padding - Px(6) + _settings->width(), bottom);
+			_more->moveToLeft(
+				width() - padding + Px(6) - _more->width(),
+				bottom);
+		} else {
+			_icon->moveToLeft(padding, (height() - iconSize) / 2);
+			_toggle->moveToLeft(
+				width() - padding - _toggle->width() + Px(4),
+				(height() - _toggle->height()) / 2);
+		}
+	}
+
+protected:
+	void resizeEvent(QResizeEvent *e) override {
+		layout();
+	}
+
+	void paintEvent(QPaintEvent *e) override {
+		auto p = Painter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto radius = _grid ? Px(18) : Px(14);
+		p.setPen(Qt::NoPen);
+		p.setBrush(isOver() ? PwSurface(0.08) : PwSurface(0.04));
+		p.drawRoundedRect(rect(), radius, radius);
+		if (_selected) {
+			p.setPen(QPen(st::windowActiveTextFg->c, Px(2)));
+			p.setBrush(Qt::NoBrush);
+			p.drawRoundedRect(
+				QRectF(rect()).marginsRemoved({ 1., 1., 1., 1. }),
+				radius,
+				radius);
+		}
+		const auto padding = _grid ? Px(14) : Px(12);
+		const auto iconSize = _iconSize;
+		const auto textLeft = padding + iconSize + Px(12);
+		const auto textRight = _toggle->x() - Px(8);
+		const auto nameWidth = std::max(textRight - textLeft, 0);
+		if (!_enabled) {
+			p.setOpacity(0.75);
+		}
+		const auto nameTop = _grid
+			? (padding + (iconSize - st::semiboldFont->height - st::normalFont->height) / 2)
+			: ((height() - st::semiboldFont->height - st::normalFont->height) / 2);
+		if (_grid) {
+			p.setPen(st::windowFg);
+			p.setFont(st::semiboldFont);
+			p.drawText(
+				textLeft,
+				nameTop + st::semiboldFont->ascent,
+				st::semiboldFont->elided(_name, nameWidth));
+			p.setPen(st::windowSubTextFg);
+			p.setFont(st::normalFont);
+			p.drawText(
+				textLeft,
+				nameTop + st::semiboldFont->height + st::normalFont->ascent,
+				st::normalFont->elided(_meta, nameWidth));
+			const auto descTop = padding + iconSize + Px(10);
+			const auto descWidth = width() - padding * 2;
+			if (!_error.isEmpty()) {
+				p.setPen(st::attentionButtonFg);
+				p.setFont(st::normalFont);
+				p.drawText(
+					QRect(padding, descTop, descWidth, st::normalFont->height * 2),
+					Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop,
+					_error);
+			} else {
+				p.setPen(st::windowFg);
+				_description.draw(p, {
+					.position = { padding, descTop },
+					.availableWidth = descWidth,
+					.palette = &st::defaultTextPalette,
+					.now = crl::now(),
+					.elisionLines = _tags.empty() ? 3 : 2,
+				});
+			}
+			PwPaintTags(
+				p,
+				_tags,
+				padding,
+				descTop + st::defaultTextStyle.font->height * 2 + Px(10),
+				width() - padding);
+		} else {
+			const auto nameColumn = std::min(nameWidth, Px(220));
+			p.setPen(st::windowFg);
+			p.setFont(st::semiboldFont);
+			p.drawText(
+				textLeft,
+				nameTop + st::semiboldFont->ascent,
+				st::semiboldFont->elided(_name, nameColumn));
+			p.setPen(st::windowSubTextFg);
+			p.setFont(st::normalFont);
+			p.drawText(
+				textLeft,
+				nameTop + st::semiboldFont->height + st::normalFont->ascent,
+				st::normalFont->elided(_meta, nameColumn));
+			const auto descLeft = textLeft + nameColumn + Px(16);
+			auto tagsWidth = 0;
+			for (const auto &tag : _tags) {
+				tagsWidth += st::normalFont->width(tag.text) + Px(22);
+			}
+			const auto descRight = textRight - tagsWidth;
+			if (descRight - descLeft > Px(60)) {
+				const auto line = _error.isEmpty()
+					? _description.toString()
+					: _error;
+				p.setPen(_error.isEmpty()
+					? st::windowSubTextFg
+					: st::attentionButtonFg);
+				p.setFont(st::normalFont);
+				p.drawText(
+					QRect(descLeft, 0, descRight - descLeft, height()),
+					Qt::AlignVCenter | Qt::AlignLeft,
+					st::normalFont->elided(
+						line.simplified(),
+						descRight - descLeft));
+			}
+			PwPaintTags(
+				p,
+				_tags,
+				std::max(descRight, descLeft),
+				(height() - st::normalFont->height - Px(4)) / 2,
+				textRight);
+		}
+		p.setOpacity(1.);
+	}
+
+private:
+	const QString _id;
+	const bool _grid = true;
+	const bool _selected = false;
+	const bool _enabled = false;
+	QString _name;
+	QString _meta;
+	QString _error;
+	std::vector<PwTag> _tags;
+	Ui::Text::String _description;
+	Ui::AbstractButton *_icon = nullptr;
+	int _iconSize = 0;
+	PwToggle *_toggle = nullptr;
+	PwIconButton *_settings = nullptr;
+	PwIconButton *_pin = nullptr;
+	PwIconButton *_more = nullptr;
+
+};
+
+class PwGrid final : public Ui::RpWidget {
+public:
+	PwGrid(QWidget *parent, bool grid)
+	: RpWidget(parent)
+	, _grid(grid) {
+	}
+
+	void add(not_null<PwCard*> card) {
+		_cards.push_back(card);
+	}
+
+protected:
+	int resizeGetHeight(int newWidth) override {
+		if (_cards.empty()) {
+			return 0;
+		}
+		const auto gap = _grid ? Px(10) : Px(3);
+		const auto columns = _grid
+			? std::max(1, (newWidth + gap) / (Px(250) + gap))
+			: 1;
+		const auto cardWidth = (newWidth - gap * (columns - 1)) / columns;
+		auto top = 0;
+		auto rowHeight = 0;
+		for (auto i = 0; i != int(_cards.size()); ++i) {
+			const auto column = i % columns;
+			if (column == 0 && i > 0) {
+				top += rowHeight + gap;
+			}
+			const auto card = _cards[i];
+			card->resize(cardWidth, card->height());
+			card->moveToLeft(column * (cardWidth + gap), top);
+			rowHeight = card->height();
+		}
+		return top + rowHeight;
+	}
+
+private:
+	const bool _grid = true;
+	std::vector<not_null<PwCard*>> _cards;
+
+};
+
+[[nodiscard]] QString PwSize(qint64 size) {
+	if (size < 1024 * 1024) {
+		return QString::number(std::max<qint64>(size / 1024, 1)) + u" KB"_q;
+	}
+	return QString::number(size / (1024. * 1024.), 'f', 1) + u" MB"_q;
+}
+
+} // namespace
+
+void ShowPluginsWindow(not_null<Window::SessionController*> controller) {
+	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		const auto computeSize = [=] {
+			const auto outer = controller->widget()->size();
+			const auto width = std::max(
+				std::min({
+					outer.width() * 92 / 100,
+					outer.width() - Px(24),
+					Px(1180) }),
+				Px(320));
+			const auto height = std::max(
+				std::min(
+					std::max(width * 9 / 16, Px(520)),
+					outer.height() * 90 / 100),
+				Px(300));
+			return QSize(width, height);
+		};
+		const auto width = computeSize().width();
+		const auto height = computeSize().height();
+		box->setStyle(st::exteraInstallBox);
+		box->setWidth(width);
+		box->setNoContentMargin(true);
+		box->setMaxHeight(height);
+
+		const auto state = box->lifetime().make_state<PwState>();
+		state->entries = PwLoad();
+		state->sort = PwSort(std::clamp(
+			Extera::Int(u"plugins_window_sort"_q),
+			0,
+			3));
+		state->grid = !Extera::Bool(u"plugins_compact_view"_q);
+
+		const auto root = box->addRow(
+			object_ptr<Ui::RpWidget>(box),
+			style::margins());
+		root->resize(width, height);
+		controller->widget()->sizeValue(
+		) | rpl::skip(1) | rpl::on_next([=] {
+			const auto size = computeSize();
+			box->setWidth(size.width());
+			box->setMaxHeight(size.height());
+			root->resize(size);
+		}, root->lifetime());
+		const auto layers = box->lifetime().make_state<Ui::LayerManager>(
+			root);
+		layers->setHideByBackgroundClick(true);
+		PwShowOverride = layers->uiShow();
+		box->lifetime().add([] { PwShowOverride.reset(); });
+
+		const auto detailWidthValue = box->lifetime().make_state<int>(Px(330));
+
+		// Side
+		const auto side = Ui::CreateChild<Ui::RpWidget>(root);
+		side->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(side);
+			p.fillRect(side->rect(), PwSurface(0.02));
+		}, side->lifetime());
+		const auto sideScroll = Ui::CreateChild<Ui::ScrollArea>(
+			side,
+			st::defaultSolidScroll);
+		const auto sideInner = sideScroll->setOwnedWidget(
+			object_ptr<Ui::VerticalLayout>(sideScroll));
+
+		const auto title = sideInner->add(
+			object_ptr<Ui::FlatLabel>(
+				sideInner,
+				tr::lng_extera_plugins(),
+				st::exdUpdateCardTitle),
+			style::margins(Px(20), Px(22), Px(20), Px(14)));
+		title->setTextColorOverride(st::windowFg->c);
+
+		const auto engine = sideInner->add(
+			object_ptr<Ui::RpWidget>(sideInner),
+			style::margins(Px(12), 0, Px(12), Px(12)));
+		engine->resize(engine->width(), Px(60));
+		const auto engineOn = Extera::Bool(u"plugins_enabled"_q);
+		const auto engineToggle = Ui::CreateChild<PwToggle>(engine, engineOn);
+		engine->widthValue() | rpl::on_next([=](int w) {
+			engineToggle->moveToLeft(
+				w - engineToggle->width() - Px(10),
+				(engine->height() - engineToggle->height()) / 2);
+		}, engine->lifetime());
+		engine->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(engine);
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(PwSurface(0.07));
+			p.drawRoundedRect(engine->rect(), Px(18), Px(18));
+			const auto status = !Extera::Plugins::Available()
+				? tr::lng_exd_pw_engine_missing(tr::now)
+				: (Extera::Bool(u"plugins_enabled"_q)
+					&& Extera::Plugins::Started())
+				? tr::lng_exd_pw_engine_on(tr::now)
+				: tr::lng_exd_pw_engine_off(tr::now);
+			const auto textWidth = engineToggle->x() - Px(22);
+			p.setPen(st::windowFg);
+			p.setFont(st::semiboldFont);
+			p.drawText(
+				Px(14),
+				Px(10) + st::semiboldFont->ascent,
+				st::semiboldFont->elided(
+					tr::lng_exd_pw_engine(tr::now),
+					textWidth));
+			p.setPen(st::windowSubTextFg);
+			p.setFont(st::normalFont);
+			p.drawText(
+				Px(14),
+				Px(12) + st::semiboldFont->height + st::normalFont->ascent,
+				st::normalFont->elided(status, textWidth));
+		}, engine->lifetime());
+		engineToggle->changes(
+		) | rpl::on_next([=](bool value) {
+			Extera::Config::Instance().setBool(u"plugins_enabled"_q, value);
+			PwShowBox(controller, Ui::MakeConfirmBox({
+				.text = tr::lng_extera_restart_required(),
+				.confirmed = [] { Core::Restart(); },
+				.confirmText = tr::lng_extera_restart(),
+			}));
+		}, engineToggle->lifetime());
+
+		const auto engineSettings = sideInner->add(
+			object_ptr<PwNavButton>(
+				sideInner,
+				st::menuIconSettings,
+				tr::lng_exd_pw_engine_settings(tr::now),
+				-1,
+				[=] { return state->engineOpen; }),
+			style::margins(Px(12), 0, Px(12), Px(10)));
+		const auto enginePage = Ui::CreateChild<Ui::RpWidget>(root);
+		enginePage->hide();
+		enginePage->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(enginePage);
+			p.fillRect(enginePage->rect(), st::boxBg);
+		}, enginePage->lifetime());
+		const auto engineHeader = Ui::CreateChild<Ui::RpWidget>(enginePage);
+		engineHeader->resize(engineHeader->width(), Px(56));
+		const auto engineBack = Ui::CreateChild<PwIconButton>(
+			engineHeader,
+			st::infoTopBarBackIcon,
+			40);
+		const auto engineTitle = Ui::CreateChild<Ui::FlatLabel>(
+			engineHeader,
+			tr::lng_exd_pw_engine_settings(),
+			st::exdUpdateCardTitle);
+		engineTitle->setTextColorOverride(st::windowFg->c);
+		const auto engineScroll = Ui::CreateChild<Ui::ScrollArea>(
+			enginePage,
+			st::defaultSolidScroll);
+		const auto engineInner = engineScroll->setOwnedWidget(
+			object_ptr<Ui::VerticalLayout>(engineScroll));
+		const auto engineFilled = box->lifetime().make_state<bool>(false);
+		enginePage->sizeValue() | rpl::on_next([=](QSize size) {
+			engineHeader->setGeometry(0, 0, size.width(), Px(56));
+			engineBack->moveToLeft(Px(8), Px(8));
+			engineTitle->resizeToWidth(std::max(size.width() - Px(64), 1));
+			engineTitle->moveToLeft(
+				Px(56),
+				(Px(56) - engineTitle->height()) / 2);
+			engineScroll->setGeometry(
+				0,
+				Px(56),
+				size.width(),
+				size.height() - Px(56));
+			const auto inner = std::min(size.width() - Px(32), Px(1100));
+			engineInner->resizeToWidth(inner);
+			engineInner->moveToLeft((size.width() - inner) / 2, 0);
+		}, enginePage->lifetime());
+		const auto showEngine = [=](bool show) {
+			if (show && !*engineFilled) {
+				*engineFilled = true;
+				::Settings::FillExteraPluginsEngine(engineInner, controller);
+				for (const auto child : engineInner->findChildren<QWidget*>()) {
+					if (!child->testAttribute(Qt::WA_WState_ExplicitShowHide)) {
+						child->show();
+					}
+				}
+				engineInner->resizeToWidth(engineInner->width());
+			}
+			state->engineOpen = show;
+			state->changes.fire({});
+		};
+		engineBack->setClickedCallback([=] { showEngine(false); });
+		engineSettings->setClickedCallback([=] { showEngine(true); });
+		root->sizeValue() | rpl::on_next([=](QSize size) {
+			const auto left = (size.width() < Px(640))
+				? 0
+				: (size.width() < Px(900))
+				? Px(196)
+				: Px(232);
+			enginePage->setGeometry(
+				left,
+				0,
+				size.width() - left,
+				size.height());
+		}, enginePage->lifetime());
+
+		auto navButtons = std::vector<std::pair<
+			not_null<PwNavButton*>,
+			Fn<int()>>>();
+		const auto addNav = [&](
+				const style::icon &icon,
+				QString text,
+				Fn<int()> count,
+				Fn<bool()> active,
+				Fn<void()> click) {
+			const auto button = sideInner->add(
+				object_ptr<PwNavButton>(
+					sideInner,
+					icon,
+					std::move(text),
+					count(),
+					std::move(active)),
+				style::margins(Px(12), 0, Px(12), Px(2)));
+			button->setClickedCallback(std::move(click));
+			navButtons.push_back({ button, std::move(count) });
+		};
+		const auto countIf = [=](auto predicate) {
+			return [=] {
+				return int(ranges::count_if(state->entries, predicate));
+			};
+		};
+		const auto addSection = [&](
+				const style::icon &icon,
+				QString text,
+				PwSection section) {
+			addNav(
+				icon,
+				std::move(text),
+				countIf([=](const PwEntry &e) {
+					return PwMatchSection(e, section);
+				}),
+				[=] {
+					return !state->engineOpen
+						&& (state->source == PwSource::None)
+						&& (state->section == section);
+				},
+				[=] {
+					state->engineOpen = false;
+					state->section = section;
+					state->source = PwSource::None;
+					state->changes.fire({});
+				});
+		};
+		const auto addSource = [&](
+				const style::icon &icon,
+				QString text,
+				PwSource source) {
+			addNav(
+				icon,
+				std::move(text),
+				countIf([=](const PwEntry &e) {
+					return PwMatchSource(e, source);
+				}),
+				[=] {
+					return !state->engineOpen && (state->source == source);
+				},
+				[=] {
+					state->source = (state->source == source)
+						? PwSource::None
+						: source;
+					state->section = PwSection::All;
+					state->engineOpen = false;
+					state->changes.fire({});
+				});
+		};
+		addSection(
+			st::exteraIconPlugins,
+			tr::lng_exd_pw_all(tr::now),
+			PwSection::All);
+		addSection(
+			st::menuIconSelect,
+			tr::lng_exd_pw_enabled(tr::now),
+			PwSection::Enabled);
+		addSection(
+			st::menuIconBlock,
+			tr::lng_exd_pw_disabled(tr::now),
+			PwSection::Disabled);
+		addSection(
+			st::menuIconReport,
+			tr::lng_exd_pw_errors(tr::now),
+			PwSection::Errors);
+		addSection(
+			st::menuIconPin,
+			tr::lng_exd_pw_pinned(tr::now),
+			PwSection::Pinned);
+		sideInner->add(
+			object_ptr<Ui::FlatLabel>(
+				sideInner,
+				tr::lng_exd_pw_sources(),
+				st::defaultSubsectionTitle),
+			style::margins(Px(22), Px(14), Px(22), Px(6)));
+		addSource(
+			st::menuIconAntispam,
+			tr::lng_exd_pw_trusted(tr::now),
+			PwSource::Trusted);
+		addSource(
+			st::menuIconTranslate,
+			tr::lng_exd_pw_ported(tr::now),
+			PwSource::Ported);
+		addSource(
+			st::menuIconDownload,
+			tr::lng_exd_pw_other(tr::now),
+			PwSource::Other);
+		const auto navList = box->lifetime().make_state<std::vector<
+			std::pair<not_null<PwNavButton*>, Fn<int()>>>>(
+				std::move(navButtons));
+
+		// Main
+		const auto main = Ui::CreateChild<Ui::RpWidget>(root);
+		const auto toolbar = Ui::CreateChild<Ui::RpWidget>(main);
+		toolbar->resize(toolbar->width(), Px(62));
+		const auto searchWrap = Ui::CreateChild<Ui::RpWidget>(toolbar);
+		searchWrap->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(searchWrap);
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(PwSurface(0.05));
+			p.drawRoundedRect(
+				searchWrap->rect(),
+				searchWrap->height() / 2.,
+				searchWrap->height() / 2.);
+			st::menuIconSearch.paint(
+				p,
+				Px(10),
+				(searchWrap->height() - st::menuIconSearch.height()) / 2,
+				searchWrap->width(),
+				st::windowSubTextFg->c);
+		}, searchWrap->lifetime());
+		const auto search = Ui::CreateChild<Ui::InputField>(
+			searchWrap,
+			st::defaultMultiSelectSearchField,
+			tr::lng_exd_pw_search());
+		search->changes() | rpl::on_next([=] {
+			state->query = search->getLastText();
+			state->changes.fire({});
+		}, search->lifetime());
+
+		const auto sortLabel = [=] {
+			switch (state->sort) {
+			case PwSort::Name: return tr::lng_exd_pw_sort_name(tr::now);
+			case PwSort::Enabled: return tr::lng_exd_pw_sort_enabled(tr::now);
+			case PwSort::Date: return tr::lng_exd_pw_sort_date(tr::now);
+			default: return tr::lng_exd_pw_sort_pinned(tr::now);
+			}
+		};
+		const auto sortText = box->lifetime().make_state<
+			rpl::variable<QString>>(sortLabel());
+		const auto sort = Ui::CreateChild<PwPillButton>(
+			toolbar,
+			sortText->value(),
+			nullptr,
+			false);
+		const auto sortMenu = box->lifetime().make_state<
+			base::unique_qptr<Ui::PopupMenu>>();
+		sort->setClickedCallback([=] {
+			*sortMenu = base::make_unique_q<Ui::PopupMenu>(
+				sort,
+				st::popupMenuWithIcons);
+			const auto add = [&](PwSort value, QString text) {
+				(*sortMenu)->addAction(text, [=] {
+					state->sort = value;
+					Extera::Config::Instance().setInt(
+						u"plugins_window_sort"_q,
+						int(value));
+					*sortText = sortLabel();
+					state->changes.fire({});
+				}, (state->sort == value) ? &st::menuIconSelect : nullptr);
+			};
+			add(PwSort::Pinned, tr::lng_exd_pw_sort_pinned(tr::now));
+			add(PwSort::Name, tr::lng_exd_pw_sort_name(tr::now));
+			add(PwSort::Enabled, tr::lng_exd_pw_sort_enabled(tr::now));
+			add(PwSort::Date, tr::lng_exd_pw_sort_date(tr::now));
+			(*sortMenu)->popup(QCursor::pos());
+		});
+
+		const auto viewSwitch = Ui::CreateChild<Ui::RpWidget>(toolbar);
+		viewSwitch->resize(Px(38) * 2 + Px(6), Px(38));
+		viewSwitch->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(viewSwitch);
+			auto hq = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(PwSurface(0.05));
+			p.drawRoundedRect(
+				viewSwitch->rect(),
+				viewSwitch->height() / 2.,
+				viewSwitch->height() / 2.);
+		}, viewSwitch->lifetime());
+		const auto gridButton = Ui::CreateChild<PwViewButton>(viewSwitch, true);
+		const auto listButton = Ui::CreateChild<PwViewButton>(viewSwitch, false);
+		gridButton->resize(Px(36), Px(32));
+		listButton->resize(Px(36), Px(32));
+		gridButton->moveToLeft(Px(3), Px(3));
+		listButton->moveToLeft(Px(3) + Px(36) + Px(4), Px(3));
+		const auto viewAnimate = box->lifetime().make_state<Fn<void()>>();
+		const auto refreshView = [=] {
+			gridButton->setActiveColor(state->grid
+				? std::make_optional(st::windowActiveTextFg->c)
+				: std::nullopt);
+			listButton->setActiveColor(!state->grid
+				? std::make_optional(st::windowActiveTextFg->c)
+				: std::nullopt);
+		};
+		refreshView();
+		gridButton->setClickedCallback([=] {
+			if (state->grid) {
+				return;
+			}
+			if (*viewAnimate) {
+				(*viewAnimate)();
+			}
+			state->grid = true;
+			Extera::Config::Instance().setBool(
+				u"plugins_compact_view"_q,
+				false);
+			refreshView();
+			state->changes.fire({});
+		});
+		listButton->setClickedCallback([=] {
+			if (!state->grid) {
+				return;
+			}
+			if (*viewAnimate) {
+				(*viewAnimate)();
+			}
+			state->grid = false;
+			Extera::Config::Instance().setBool(
+				u"plugins_compact_view"_q,
+				true);
+			refreshView();
+			state->changes.fire({});
+		});
+		const auto install = Ui::CreateChild<PwPillButton>(
+			toolbar,
+			tr::lng_exd_pw_install(),
+			&st::menuIconDownload,
+			true);
+		install->setClickedCallback([=] {
+			if (Extera::Plugins::Started()) {
+				ChooseAndInstall(controller);
+			} else {
+				controller->showToast(
+					tr::lng_extera_plugins_not_running(tr::now));
+			}
+		});
+		toolbar->widthValue() | rpl::on_next([=](int w) {
+			const auto top = Px(18);
+			const auto h = Px(38);
+			auto right = w - Px(20);
+			install->moveToLeft(right - install->width(), top);
+			right = install->x() - Px(10);
+			viewSwitch->moveToLeft(right - viewSwitch->width(), top);
+			right = viewSwitch->x() - Px(10);
+			sort->moveToLeft(right - sort->width(), top);
+			right = sort->x() - Px(10);
+			const auto compact = (right - Px(20) < Px(200));
+			if (compact) {
+				searchWrap->setGeometry(
+					Px(20),
+					top + h + Px(10),
+					w - Px(40),
+					h);
+			} else {
+				searchWrap->setGeometry(Px(20), top, right - Px(20), h);
+			}
+			const auto wanted = compact ? (Px(62) + h + Px(10)) : Px(62);
+			if (toolbar->height() != wanted) {
+				toolbar->resize(w, wanted);
+			}
+			search->setGeometry(
+				Px(36),
+				(h - search->height()) / 2,
+				searchWrap->width() - Px(44),
+				search->height());
+		}, toolbar->lifetime());
+		sortText->value() | rpl::on_next([=] {
+			toolbar->resize(toolbar->width() + 1, toolbar->height());
+			toolbar->resize(toolbar->width() - 1, toolbar->height());
+		}, toolbar->lifetime());
+
+		const auto chips = Ui::CreateChild<Ui::RpWidget>(main);
+		chips->resize(chips->width(), Px(40));
+		auto chipList = std::vector<not_null<PwChip*>>();
+		const auto addChip = [&](QString text, bool PwState::*field) {
+			const auto chip = Ui::CreateChild<PwChip>(
+				chips,
+				std::move(text),
+				[=] { return state->*field; });
+			chip->setClickedCallback([=] {
+				state->*field = !(state->*field);
+				chip->update();
+				state->changes.fire({});
+			});
+			chipList.push_back(chip);
+		};
+		addChip(tr::lng_exd_pw_chip_desktop(tr::now), &PwState::chipDesktop);
+		addChip(tr::lng_exd_pw_chip_partial(tr::now), &PwState::chipPartial);
+		addChip(tr::lng_exd_pw_chip_settings(tr::now), &PwState::chipSettings);
+		chips->widthValue() | rpl::on_next([=](int) {
+			auto left = Px(20);
+			for (const auto chip : chipList) {
+				chip->moveToLeft(left, 0);
+				left += chip->width() + Px(8);
+			}
+		}, chips->lifetime());
+
+		const auto scroll = Ui::CreateChild<Ui::ScrollArea>(
+			main,
+			st::defaultSolidScroll);
+		const auto list = scroll->setOwnedWidget(
+			object_ptr<Ui::VerticalLayout>(scroll));
+		*viewAnimate = [=] {
+			if (anim::Disabled() || scroll->width() <= 0) {
+				return;
+			}
+			const auto shot = Ui::GrabWidget(main, scroll->geometry());
+			const auto cover = Ui::CreateChild<Ui::RpWidget>(main);
+			cover->setAttribute(Qt::WA_TransparentForMouseEvents);
+			cover->setGeometry(scroll->geometry());
+			const auto animation = cover->lifetime().make_state<
+				Ui::Animations::Simple>();
+			cover->paintRequest() | rpl::on_next([=] {
+				const auto progress = animation->value(1.);
+				auto p = QPainter(cover);
+				p.setOpacity(1. - progress);
+				p.drawPixmap(0, -int(base::SafeRound(Px(12) * progress)), shot);
+			}, cover->lifetime());
+			cover->show();
+			cover->raise();
+			animation->start([=] {
+				cover->update();
+				if (!animation->animating()) {
+					crl::on_main(cover, [=] { delete cover; });
+				}
+			}, 0., 1., st::slideDuration, anim::easeOutCubic);
+		};
+
+		// Detail
+		const auto detail = Ui::CreateChild<Ui::RpWidget>(root);
+		detail->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(detail);
+			p.fillRect(detail->rect(), PwSurface(0.02));
+		}, detail->lifetime());
+		const auto detailScroll = Ui::CreateChild<Ui::ScrollArea>(
+			detail,
+			st::defaultSolidScroll);
+		const auto detailInner = detailScroll->setOwnedWidget(
+			object_ptr<Ui::VerticalLayout>(detailScroll));
+		const auto detailShown = box->lifetime().make_state<
+			Ui::Animations::Simple>();
+		const auto detailOpen = box->lifetime().make_state<bool>(false);
+
+		const auto relayout = [=] {
+			const auto w = root->width();
+			const auto h = root->height();
+			const auto sideWidth = (w < Px(640))
+				? 0
+				: (w < Px(900))
+				? Px(196)
+				: Px(232);
+			const auto detailWidth = std::min(Px(330), w - sideWidth);
+			*detailWidthValue = detailWidth;
+			const auto overlay = (w - sideWidth - detailWidth < Px(420));
+			const auto shown = detailShown->value(*detailOpen ? 1. : 0.);
+			const auto dw = int(base::SafeRound(detailWidth * shown));
+			side->setVisible(sideWidth > 0);
+			side->setGeometry(0, 0, sideWidth, h);
+			sideScroll->setGeometry(0, 0, sideWidth, h);
+			if (sideWidth > 0) {
+				sideInner->resizeToWidth(sideWidth);
+			}
+			main->setGeometry(
+				sideWidth,
+				0,
+				w - sideWidth - (overlay ? 0 : dw),
+				h);
+			detail->setGeometry(w - dw, 0, dw, h);
+			detail->setVisible(dw > 0);
+			detail->raise();
+			detailScroll->setGeometry(0, 0, detailWidth, h);
+			detailInner->resizeToWidth(*detailWidthValue);
+			toolbar->setGeometry(0, 0, main->width(), toolbar->height());
+			chips->setGeometry(0, toolbar->height(), main->width(), chips->height());
+			const auto top = toolbar->height() + chips->height();
+			scroll->setGeometry(0, top, main->width(), h - top);
+			list->resizeToWidth(main->width());
+		};
+
+		toolbar->heightValue(
+		) | rpl::skip(1) | rpl::on_next([=] {
+			relayout();
+		}, toolbar->lifetime());
+
+		const auto entryById = [=](const QString &id) -> const PwEntry* {
+			for (const auto &entry : state->entries) {
+				if (entry.id == id) {
+					return &entry;
+				}
+			}
+			return nullptr;
+		};
+		const auto reload = [=] {
+			state->entries = PwLoad();
+			if (!state->selected.isEmpty() && !entryById(state->selected)) {
+				state->selected = QString();
+			}
+			state->changes.fire({});
+		};
+		const auto setEnabled = [=](QString id, bool enabled) {
+			if (enabled && Extera::Bool(u"plugins_safe_mode"_q)) {
+				controller->showToast(tr::lng_exd_safe_mode_blocked(tr::now));
+				crl::on_main(root, reload);
+				return;
+			}
+			Call(u"set_enabled"_q, QJsonObject{
+				{ u"id"_q, id },
+				{ u"enabled"_q, enabled },
+			});
+			crl::on_main(root, reload);
+		};
+		const auto togglePin = [=](QString id) {
+			if (const auto entry = entryById(id)) {
+				SetPluginPinned(id, !entry->pinned);
+				notifyListChanged();
+			}
+		};
+		const auto removePlugin = [=](QString id) {
+			PwShowBox(controller, Ui::MakeConfirmBox({
+				.text = tr::lng_extera_plugins_delete_sure(),
+				.confirmed = [=](Fn<void()> close) {
+					Call(u"delete"_q, QJsonObject{ { u"id"_q, id } });
+					SetPluginPinned(id, false);
+					notifyListChanged();
+					close();
+				},
+				.confirmText = tr::lng_extera_plugins_delete(),
+				.confirmStyle = &st::attentionBoxButton,
+			}));
+		};
+		const auto openPage = [=](QString id, int page) {
+			state->selected = id;
+			state->page = page;
+			state->changes.fire({});
+		};
+		const auto menu = box->lifetime().make_state<
+			base::unique_qptr<Ui::PopupMenu>>();
+		const auto showMenu = [=](QWidget *parent, QString id) {
+			const auto entry = entryById(id);
+			if (!entry) {
+				return;
+			}
+			const auto info = entry->info;
+			const auto name = entry->name;
+			const auto path = entry->path;
+			const auto pinned = entry->pinned;
+			*menu = base::make_unique_q<Ui::PopupMenu>(
+				parent,
+				st::popupMenuWithIcons);
+			const auto raw = menu->get();
+			if (entry->settings) {
+				raw->addAction(tr::lng_exd_pw_settings(tr::now), [=] {
+					openPage(id, 1);
+				}, &st::menuIconSettings);
+			}
+			raw->addAction(
+				(pinned
+					? tr::lng_context_unpin_from_top
+					: tr::lng_context_pin_to_top)(tr::now),
+				[=] { togglePin(id); },
+				pinned ? &st::menuIconUnpin : &st::menuIconPin);
+			raw->addAction(
+				tr::lng_exd_plugin_permissions_menu(tr::now),
+				[=] { openPage(id, 2); },
+				&st::menuIconLock);
+			raw->addAction(tr::lng_exd_plugin_view_code(tr::now), [=] {
+				ShowPluginCode(controller, name, path);
+			}, &st::exteraIconOpenCode);
+			raw->addAction(tr::lng_exd_plugin_share(tr::now), [=] {
+				SharePluginFile(controller, path);
+			}, &st::menuIconShare);
+			if (Exd::PluginGuard::Mode() != 2) {
+				raw->addAction(tr::lng_exd_guard_run(tr::now), [=] {
+					RunGuard(controller, path, id);
+				}, &st::menuIconAntispam);
+			}
+			if (Exd::PluginPorter::Suggested(info)) {
+				raw->addAction(tr::lng_exd_plugin_port(tr::now), [=] {
+					Exd::PluginPorter::Start(controller, path);
+				}, &st::menuIconTranslate);
+			}
+			raw->addSeparator();
+			raw->addAction(
+				tr::lng_exd_pw_delete(tr::now),
+				[=] { removePlugin(id); },
+				&st::menuIconDeleteAttention);
+			raw->popup(QCursor::pos());
+		};
+
+		const auto showAllChildren = [](not_null<QWidget*> parent) {
+			for (const auto child : parent->findChildren<QWidget*>()) {
+				if (!child->testAttribute(Qt::WA_WState_ExplicitShowHide)) {
+					child->show();
+				}
+			}
+		};
+		const auto fillDetail = box->lifetime().make_state<Fn<void()>>();
+		const auto fillPage = box->lifetime().make_state<
+			Fn<void(const PwEntry*)>>();
+		*fillPage = [=](const PwEntry *entry) {
+			const auto id = entry->id;
+			const auto header = detailInner->add(
+				object_ptr<Ui::RpWidget>(detailInner),
+				style::margins(Px(8), Px(12), Px(12), Px(4)));
+			header->resize(header->width(), Px(40));
+			const auto back = Ui::CreateChild<PwIconButton>(
+				header,
+				st::infoTopBarBackIcon,
+				40);
+			back->moveToLeft(0, 0);
+			back->setClickedCallback([=] {
+				state->page = 0;
+				state->changes.fire({});
+			});
+			const auto title = Ui::CreateChild<Ui::FlatLabel>(
+				header,
+				(state->page == 1)
+					? tr::lng_exd_pw_settings()
+					: tr::lng_exd_pw_permissions(),
+				st::exdUpdateCardTitle);
+			title->setTextColorOverride(st::windowFg->c);
+			header->widthValue() | rpl::on_next([=](int w) {
+				title->resizeToWidth(std::max(w - Px(48), 1));
+				title->moveToLeft(Px(48), (Px(40) - title->height()) / 2);
+			}, title->lifetime());
+			detailInner->add(
+				object_ptr<Ui::FlatLabel>(
+					detailInner,
+					rpl::single(entry->name),
+					st::exdUpdateCardText),
+				style::margins(Px(20), 0, Px(20), Px(8)));
+			const auto content = detailInner->add(
+				object_ptr<Ui::VerticalLayout>(detailInner));
+			const auto refill = [=] {
+				content->clear();
+				if (state->page == 1) {
+					FillSettings(content, controller, id);
+				} else {
+					FillPermissions(content, controller, id, [=] {
+						crl::on_main(content, [=] { (*fillDetail)(); });
+					});
+				}
+				content->resizeToWidth(*detailWidthValue);
+				showAllChildren(content);
+			};
+			refill();
+			if (state->page == 1) {
+				settingsChanges(
+				) | rpl::filter([=](const QString &changed) {
+					return changed == id;
+				}) | rpl::on_next([=] {
+					crl::on_main(content, refill);
+				}, content->lifetime());
+			}
+			Ui::AddSkip(detailInner, Px(20));
+			detailInner->resizeToWidth(*detailWidthValue);
+			showAllChildren(detailInner);
+		};
+		*fillDetail = [=] {
+			detailInner->clear();
+			const auto entry = entryById(state->selected);
+			if (!entry) {
+				return;
+			}
+			if (state->page != 0) {
+				(*fillPage)(entry);
+				return;
+			}
+			const auto id = entry->id;
+			const auto name = entry->name;
+			const auto path = entry->path;
+			const auto padding = style::margins(Px(20), 0, Px(20), 0);
+			const auto header = detailInner->add(
+				object_ptr<Ui::RpWidget>(detailInner),
+				style::margins(Px(20), Px(20), Px(20), Px(12)));
+			header->resize(header->width(), Px(72));
+			const auto bigIcon = Ui::CreateChild<Ui::AbstractButton>(header);
+			bigIcon->setAttribute(Qt::WA_TransparentForMouseEvents);
+			SetupPluginIcon(
+				bigIcon,
+				controller,
+				entry->info.value(u"icon"_q).toString(),
+				Px(72),
+				entry->trusted ? Px(24) : 0);
+			bigIcon->moveToLeft(0, 0);
+			const auto close = Ui::CreateChild<PwIconButton>(
+				header,
+				st::boxTitleClose.icon);
+			header->widthValue() | rpl::on_next([=](int w) {
+				close->moveToLeft(w - close->width() + Px(6), -Px(6));
+			}, close->lifetime());
+			close->setClickedCallback([=] {
+				state->selected = QString();
+				state->changes.fire({});
+			});
+			const auto nameLabel = detailInner->add(
+				object_ptr<Ui::FlatLabel>(
+					detailInner,
+					rpl::single(name),
+					st::exdUpdateCardTitle),
+				padding);
+			nameLabel->setTextColorOverride(st::windowFg->c);
+			detailInner->add(
+				object_ptr<Ui::FlatLabel>(
+					detailInner,
+					rpl::single(entry->meta),
+					st::exdUpdateCardText),
+				padding);
+			const auto tags = PwTags(*entry);
+			if (!tags.empty()) {
+				const auto row = detailInner->add(
+					object_ptr<Ui::RpWidget>(detailInner),
+					style::margins(Px(20), Px(10), Px(20), 0));
+				row->resize(row->width(), st::normalFont->height + Px(4));
+				row->paintRequest() | rpl::on_next([=] {
+					auto p = QPainter(row);
+					auto hq = PainterHighQualityEnabler(p);
+					PwPaintTags(p, tags, 0, 0, row->width());
+				}, row->lifetime());
+			}
+			if (!entry->description.isEmpty()) {
+				const auto about = detailInner->add(
+					object_ptr<Ui::FlatLabel>(detailInner, st::boxLabel),
+					style::margins(Px(20), Px(12), Px(20), 0));
+				about->setMarkedText(WithLinks(entry->description));
+			}
+			if (!entry->error.isEmpty()) {
+				const auto developer = Extera::Bool(
+					u"plugins_developer_mode"_q);
+				const auto error = detailInner->add(
+					object_ptr<Ui::FlatLabel>(
+						detailInner,
+						rpl::single(developer
+							? entry->error
+							: entry->error.split('\n').last()),
+						st::exteraAbout),
+					style::margins(Px(20), Px(12), Px(20), 0));
+				error->setTextColorOverride(st::attentionButtonFg->c);
+				error->setSelectable(true);
+			}
+			const auto addBlock = [&] {
+				const auto block = detailInner->add(
+					object_ptr<Ui::VerticalLayout>(detailInner),
+					style::margins(Px(12), Px(14), Px(12), 0));
+				block->paintRequest() | rpl::on_next([=] {
+					auto p = QPainter(block);
+					auto hq = PainterHighQualityEnabler(p);
+					p.setPen(Qt::NoPen);
+					p.setBrush(PwSurface(0.07));
+					p.drawRoundedRect(block->rect(), Px(18), Px(18));
+				}, block->lifetime());
+				return block;
+			};
+			const auto addRow = [&](
+					not_null<Ui::VerticalLayout*> block,
+					rpl::producer<QString> text,
+					const style::icon *icon,
+					QString value,
+					Fn<void()> click) {
+				const auto button = block->add(
+					object_ptr<Ui::SettingsButton>(
+						block,
+						std::move(text),
+						st::exdCardSettingsButton));
+				if (icon) {
+					auto padding = st::exdCardSettingsButton.padding;
+					padding.setLeft(Px(50));
+					button->setPaddingOverride(padding);
+					const auto iconWidget = Ui::CreateChild<Ui::RpWidget>(button);
+					iconWidget->setAttribute(Qt::WA_TransparentForMouseEvents);
+					iconWidget->resize(icon->size());
+					button->heightValue() | rpl::on_next([=](int h) {
+						iconWidget->moveToLeft(
+							Px(16),
+							(h - icon->height()) / 2);
+					}, iconWidget->lifetime());
+					iconWidget->paintRequest() | rpl::on_next([=] {
+						auto p = QPainter(iconWidget);
+						icon->paint(p, 0, 0, iconWidget->width());
+					}, iconWidget->lifetime());
+				}
+				if (!value.isEmpty()) {
+					const auto label = Ui::CreateChild<Ui::FlatLabel>(
+						button,
+						value,
+						st::exdUpdateCardText);
+					label->setAttribute(Qt::WA_TransparentForMouseEvents);
+					rpl::combine(
+						button->sizeValue(),
+						label->sizeValue()
+					) | rpl::on_next([=](QSize outer, QSize inner) {
+						label->moveToLeft(
+							outer.width() - inner.width() - Px(16),
+							(outer.height() - inner.height()) / 2);
+					}, label->lifetime());
+				}
+				if (click) {
+					button->setClickedCallback(std::move(click));
+				} else {
+					button->setAttribute(Qt::WA_TransparentForMouseEvents);
+				}
+				return button;
+			};
+
+			const auto main = addBlock();
+			Ui::AddSkip(main, Px(4));
+			const auto enabledRow = main->add(
+				object_ptr<Ui::SettingsButton>(
+					main,
+					tr::lng_exd_pw_enabled_row(),
+					st::exdCardSettingsButton));
+			enabledRow->toggleOn(rpl::single(entry->enabled));
+			enabledRow->toggledChanges(
+			) | rpl::on_next([=](bool value) {
+				setEnabled(id, value);
+			}, enabledRow->lifetime());
+			if (entry->settings) {
+				addRow(
+					main,
+					tr::lng_exd_pw_settings(),
+					&st::menuIconSettings,
+					QString(),
+					[=] { openPage(id, 1); });
+			}
+			const auto permissions = entry->info.value(
+				u"permissions"_q).toArray().size();
+			addRow(
+				main,
+				tr::lng_exd_pw_permissions(),
+				&st::menuIconLock,
+				permissions
+					? QString::number(permissions)
+					: tr::lng_exd_pw_permissions_none(tr::now),
+				[=] { openPage(id, 2); });
+			Ui::AddSkip(main, Px(4));
+
+			detailInner->add(
+				object_ptr<Ui::FlatLabel>(
+					detailInner,
+					tr::lng_exd_pw_info(),
+					st::defaultSubsectionTitle),
+				style::margins(Px(22), Px(14), Px(22), 0));
+			const auto info = addBlock();
+			Ui::AddSkip(info, Px(4));
+			addRow(
+				info,
+				tr::lng_exd_pw_source(),
+				&st::menuIconAntispam,
+				entry->trusted
+					? tr::lng_exd_pw_source_trusted(tr::now)
+					: tr::lng_exd_pw_source_other(tr::now),
+				nullptr);
+			if (entry->size > 0) {
+				addRow(
+					info,
+					tr::lng_exd_pw_size(),
+					&st::menuIconDownload,
+					PwSize(entry->size),
+					nullptr);
+			}
+			if (entry->installed.isValid()) {
+				addRow(
+					info,
+					tr::lng_exd_pw_installed(),
+					&st::menuIconInfo,
+					QLocale().toString(
+						entry->installed.date(),
+						QLocale::ShortFormat),
+					nullptr);
+			}
+			Ui::AddSkip(info, Px(4));
+
+			const auto actions = addBlock();
+			Ui::AddSkip(actions, Px(4));
+			addRow(
+				actions,
+				tr::lng_exd_plugin_view_code(),
+				&st::exteraIconOpenCode,
+				QString(),
+				[=] { ShowPluginCode(controller, name, path); });
+			addRow(
+				actions,
+				tr::lng_exd_plugin_share(),
+				&st::menuIconShare,
+				QString(),
+				[=] { SharePluginFile(controller, path); });
+			if (Exd::PluginGuard::Mode() != 2) {
+				addRow(
+					actions,
+					tr::lng_exd_guard_run(),
+					&st::menuIconAntispam,
+					QString(),
+					[=] { RunGuard(controller, path, id); });
+			}
+			if (Exd::PluginPorter::Suggested(entry->info)) {
+				addRow(
+					actions,
+					tr::lng_exd_plugin_port(),
+					&st::menuIconTranslate,
+					QString(),
+					[=] { Exd::PluginPorter::Start(controller, path); });
+			}
+			const auto remove = addRow(
+				actions,
+				tr::lng_exd_pw_delete(),
+				&st::menuIconDeleteAttention,
+				QString(),
+				[=] { removePlugin(id); });
+			remove->setColorOverride(st::attentionButtonFg->c);
+			Ui::AddSkip(actions, Px(4));
+			Ui::AddSkip(detailInner, Px(20));
+			detailInner->resizeToWidth(*detailWidthValue);
+			showAllChildren(detailInner);
+		};
+
+		const auto fillList = [=] {
+			list->clear();
+			const auto engineEnabled = Extera::Bool(u"plugins_enabled"_q);
+			const auto addText = [&](rpl::producer<QString> text) {
+				const auto label = list->add(
+					object_ptr<Ui::FlatLabel>(
+						list,
+						std::move(text),
+						st::exteraAbout),
+					style::margins(Px(20), Px(60), Px(20), Px(20)),
+					style::al_top);
+				label->setTextColorOverride(st::windowSubTextFg->c);
+			};
+			if (!engineEnabled) {
+				addText(tr::lng_exd_pw_engine_disabled());
+			} else if (!Extera::Plugins::Available()) {
+				addText(tr::lng_extera_plugins_runtime_missing());
+			} else if (!Extera::Plugins::RuntimeError().isEmpty()) {
+				addText(rpl::single(Extera::Plugins::RuntimeError()));
+			}
+			const auto filtered = PwFiltered(*state);
+			if (filtered.empty()) {
+				if (engineEnabled) {
+					addText(state->entries.empty()
+						? tr::lng_extera_plugins_empty()
+						: tr::lng_exd_pw_empty());
+				}
+			} else {
+				const auto split = (state->sort == PwSort::Pinned);
+				auto pinnedList = std::vector<const PwEntry*>();
+				auto restList = std::vector<const PwEntry*>();
+				for (const auto entry : filtered) {
+					((split && entry->pinned) ? pinnedList : restList)
+						.push_back(entry);
+				}
+				const auto addGroup = [&](
+						const std::vector<const PwEntry*> &items,
+						QString title) {
+					if (items.empty()) {
+						return;
+					}
+					if (!title.isEmpty()) {
+						const auto label = list->add(
+							object_ptr<Ui::FlatLabel>(
+								list,
+								rpl::single(title),
+								st::exdUpdateCardText),
+							style::margins(Px(24), Px(4), Px(20), Px(8)));
+						label->setTextColorOverride(st::windowSubTextFg->c);
+					}
+					const auto grid = list->add(
+						object_ptr<PwGrid>(list, state->grid),
+						style::margins(Px(20), 0, Px(20), Px(14)));
+					for (const auto entry : items) {
+						grid->add(Ui::CreateChild<PwCard>(
+							grid,
+							controller,
+							*entry,
+							state->grid,
+							(state->selected == entry->id),
+							[=](QString id) {
+								state->selected = (state->selected == id
+										&& !state->page)
+									? QString()
+									: id;
+								state->page = 0;
+								state->changes.fire({});
+							},
+							setEnabled,
+							togglePin,
+							showMenu,
+							[=](QString id) { openPage(id, 1); }));
+					}
+				};
+				if (!pinnedList.empty()) {
+					addGroup(pinnedList, tr::lng_exd_pw_pinned(tr::now));
+					addGroup(restList, tr::lng_exd_pw_section_other(tr::now));
+				} else {
+					addGroup(restList, QString());
+				}
+			}
+			list->resizeToWidth(main->width());
+			list->showChildren();
+			for (const auto child : list->findChildren<QWidget*>()) {
+				if (!child->testAttribute(Qt::WA_WState_ExplicitShowHide)) {
+					child->show();
+				}
+			}
+		};
+
+		const auto refresh = [=] {
+			for (const auto &[button, count] : *navList) {
+				button->setCount(count());
+				button->update();
+			}
+			engine->update();
+			const auto open = !state->selected.isEmpty();
+			if (*detailOpen != open) {
+				*detailOpen = open;
+				detailShown->start(
+					relayout,
+					open ? 0. : 1.,
+					open ? 1. : 0.,
+					st::slideDuration,
+					anim::easeOutCubic);
+			}
+			fillList();
+			(*fillDetail)();
+			relayout();
+			enginePage->setVisible(state->engineOpen);
+			if (state->engineOpen) {
+				enginePage->raise();
+			}
+			engineSettings->update();
+		};
+		state->changes.events(
+		) | rpl::on_next(refresh, root->lifetime());
+		listChanges(
+		) | rpl::on_next([=] {
+			crl::on_main(root, reload);
+		}, root->lifetime());
+		root->sizeValue() | rpl::on_next([=] {
+			relayout();
+		}, root->lifetime());
+		refresh();
+		search->setFocusFast();
 	}));
 }
 

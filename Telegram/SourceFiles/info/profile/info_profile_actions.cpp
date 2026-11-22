@@ -3122,6 +3122,9 @@ void DetailsFiller::buildSections() {
 		if (!_sublist) {
 			auto reactionSection = makeReportOrDeleteReaction();
 			if (reactionSection.widget) {
+				if (style::Md3Grouped()) {
+					_stack->addPlainSeparator();
+				}
 				_stack->add(std::move(reactionSection));
 			}
 		}

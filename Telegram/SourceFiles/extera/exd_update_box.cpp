@@ -37,6 +37,7 @@ struct BoxState {
 	bool showOriginal = false;
 	bool translating = false;
 	bool syncing = false;
+	bool updated = false;
 	float64 progress = -1.;
 	Fn<void()> render;
 };
@@ -103,7 +104,9 @@ void Translate(
 
 } // namespace
 
-void ShowUpdateBox(not_null<Window::SessionController*> controller) {
+void ShowUpdateBox(
+		not_null<Window::SessionController*> controller,
+		bool updated) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setStyle(st::exteraInstallBox);
 		box->setWidth(st::exteraInstallWidth);
@@ -112,6 +115,7 @@ void ShowUpdateBox(not_null<Window::SessionController*> controller) {
 
 		const auto session = &controller->session();
 		const auto state = box->lifetime().make_state<BoxState>();
+		state->updated = updated;
 
 		const auto header = box->addRow(
 			object_ptr<Ui::VerticalLayout>(box),
@@ -274,7 +278,9 @@ void ShowUpdateBox(not_null<Window::SessionController*> controller) {
 			progress->setVisible(state->progress >= 0. && state->progress < 1.);
 
 			const auto notes = FormatNotes(release.notes);
-			if (state->status == Status::Available && !notes.isEmpty()) {
+			if ((state->status == Status::Available
+					|| (state->updated && state->status == Status::Latest))
+				&& !notes.isEmpty()) {
 				const auto card = body->add(
 					object_ptr<Ui::VerticalLayout>(body),
 					st::exdUpdateCardMargin,
@@ -471,7 +477,8 @@ void ShowUpdateBox(not_null<Window::SessionController*> controller) {
 					? Status::Latest
 					: Status::Failed;
 				state->render();
-				if (state->status == Status::Available) {
+				if (state->status == Status::Available
+					|| (state->updated && state->status == Status::Latest)) {
 					translateIfNeeded();
 				}
 			});

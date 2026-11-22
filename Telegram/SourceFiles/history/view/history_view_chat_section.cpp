@@ -6,6 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_chat_section.h"
+#include "styles/style_menu_icons.h"
+#include "extera/extera_config.h"
+#include "extera/exd_safety.h"
 
 #include "history/admin_log/history_admin_log_section.h"
 #include "history/view/controls/history_view_top_controls.h"
@@ -1510,6 +1513,10 @@ bool ChatWidget::computeAreComments() const {
 }
 
 void ChatWidget::setupComposeControls() {
+	Exd::Safety::SetupSecretBar(
+		this,
+		_composeControls->exdField(),
+		_scroll->geometryValue());
 	auto replyThreadChanges = rpl::merge(
 		_composeControls->replyingToMessageValue() | rpl::to_empty,
 		_kbReplyToChanges.events() | rpl::to_empty);
@@ -2446,6 +2453,24 @@ void ChatWidget::sendVoice(const ComposeControls::VoiceToSend &data) {
 
 void ChatWidget::send(Api::SendOptions options) {
 	if (monoforumReplyMissing()) {
+		return;
+	}
+	if (!_exdSecretConfirmed
+		&& Extera::Bool(u"exd_paste_guard"_q)
+		&& Exd::Safety::LooksLikeSecret(
+			_composeControls->getTextWithAppliedMarkdown().text)) {
+		controller()->show(Ui::MakeConfirmBox({
+			.text = tr::lng_exd_secret_send_text(),
+			.confirmed = crl::guard(this, [=](Fn<void()> close) {
+				close();
+				_exdSecretConfirmed = true;
+				send(options);
+				_exdSecretConfirmed = false;
+			}),
+			.confirmText = tr::lng_exd_secret_send_confirm(),
+			.confirmStyle = &st::attentionBoxButton,
+			.title = tr::lng_exd_secret_send_title(),
+		}));
 		return;
 	} else if (const auto page = _composeControls->shownRichMessage()) {
 		sendRichDraft(page, options);

@@ -32,6 +32,7 @@ public:
 		rpl::producer<TextWithEntities> text,
 		rpl::producer<bool> shown,
 		Fn<void(not_null<Ui::FlatLabel*>)> setup = nullptr);
+	void setCompactTop(rpl::producer<bool> compact);
 	void finalize();
 
 	[[nodiscard]] not_null<Ui::VerticalLayout*> layout() const;
@@ -57,6 +58,7 @@ private:
 	const not_null<Ui::VerticalLayout*> _layout;
 	std::vector<Row> _rows;
 	bool _finalized = false;
+	rpl::producer<bool> _compactTop;
 
 };
 

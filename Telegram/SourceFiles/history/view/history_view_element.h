@@ -517,6 +517,14 @@ public:
 
 	[[nodiscard]] bool isHiddenByGroup() const;
 	[[nodiscard]] virtual bool isHidden() const;
+	void setExdCollapsed(bool collapsed);
+	[[nodiscard]] bool exdCollapsed() const;
+	void setExdFloodBar(
+		PreparedServiceText text,
+		ClickHandlerPtr handler);
+	[[nodiscard]] bool hasExdFloodBar() const;
+	void setExdFloodHead(int state);
+	[[nodiscard]] int exdFloodHead() const;
 
 	[[nodiscard]] bool isIsolatedEmoji() const {
 		return (_flags & Flag::SpecialOnlyEmoji)
@@ -879,6 +887,9 @@ private:
 	int _indexInBlock = -1;
 
 	mutable Flags _flags = Flag(0);
+	bool _exdCollapsed = false;
+	QString _exdFloodText;
+	int _exdFloodHead = 0;
 	Context _context = Context();
 
 };

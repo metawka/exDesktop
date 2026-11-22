@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtCore/QJsonObject>
+#include <QtCore/QJsonArray>
 
 namespace Window {
 class SessionController;
@@ -45,6 +46,13 @@ struct Info {
 struct Job;
 
 [[nodiscard]] bool Configured();
+[[nodiscard]] bool ConfiguredFor(const QString &prefix);
+[[nodiscard]] QString ModelFor(const QString &prefix);
+void Complete(
+	const QString &prefix,
+	const QString &system,
+	const QJsonArray &messages,
+	Fn<void(QString answer, bool ok)> done);
 [[nodiscard]] bool Suggested(const QJsonObject &info);
 [[nodiscard]] Info CurrentInfo();
 

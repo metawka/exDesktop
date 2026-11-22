@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/call_delayed.h"
 #include "base/qt/qt_key_modifiers.h"
+#include "base/event_filter.h"
 #include "base/options.h"
 #include "dialogs/ui/chat_search_in.h"
 #include "dialogs/ui/dialogs_bottom_button.h"
@@ -1931,9 +1932,27 @@ void Widget::updateLockUnlockPosition() {
 		st::dialogsFilterPadding.y());
 }
 
-void Widget::updateHasFocus(not_null<QWidget*> focused) {
+void Widget::updateHasFocus(
+		not_null<QWidget*> focused,
+		Qt::FocusReason reason) {
 	const auto has = (focused == _search.data())
 		|| (focused == _search->rawTextEdit());
+	if (has && !_searchHasFocus) {
+		if ((reason == Qt::TabFocusReason
+				|| reason == Qt::BacktabFocusReason)
+			&& _search->getLastText().isEmpty()
+			&& !_searchState.inChat
+			&& !_searchSuggestionsLocked
+			&& !_childList) {
+			crl::on_main(this, [=] {
+				if (_search->rawTextEdit()->hasFocus()) {
+					setFocus();
+					controller()->widget()->setInnerFocus();
+				}
+			});
+			return;
+		}
+	}
 	if (_searchHasFocus != has) {
 		_searchHasFocus = has;
 		if (_postponeProcessSearchFocusChange) {

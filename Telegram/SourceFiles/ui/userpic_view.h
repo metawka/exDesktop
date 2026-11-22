@@ -59,6 +59,7 @@ struct PeerUserpicView {
 
 void SetUserpicCorners(int corners, bool singleRadius);
 [[nodiscard]] int UserpicCorners();
+[[nodiscard]] bool UserpicIsCircle();
 void DrawUserpicShape(QPainter &p, QRectF rect);
 
 [[nodiscard]] bool PeerUserpicLoading(const PeerUserpicView &view);

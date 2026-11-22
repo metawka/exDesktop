@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "extera/extera_menu.h"
 #include "history/view/history_view_list_widget.h"
+#include "extera/exd_flood.h"
 
 #include "history/view/history_view_about_view.h"
 #include "base/unixtime.h"
@@ -3261,6 +3262,9 @@ void ListWidget::revealItemsCallback() {
 
 int ListWidget::resizeGetHeight(int newWidth) {
 	update();
+	if (!_items.empty()) {
+		Exd::Flood::RefreshViews(_items.front()->history(), _items);
+	}
 
 	const auto resizeAllItems = (_itemsWidth != newWidth);
 	auto newHeight = 0;

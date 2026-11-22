@@ -602,6 +602,7 @@ private:
 	bool _synteticScrollEvent = false;
 
 	std::unique_ptr<Ui::ElasticScroll> _scroll;
+	bool _exdSecretConfirmed = false;
 	std::unique_ptr<PullToNextChannel> _pullToNext;
 	base::unique_qptr<Ui::ScrollArea> _kbScroll;
 	BotKeyboard *_keyboard = nullptr;

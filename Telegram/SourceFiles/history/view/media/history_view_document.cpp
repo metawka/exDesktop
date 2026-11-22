@@ -640,8 +640,10 @@ void Document::validateTextPreview() const {
 		marked,
 		Ui::ItemTextDefaultOptions());
 	const auto parent = _parent;
+	const auto item = _realParent;
 	crl::on_main(this, [=] {
 		parent->history()->owner().requestViewResize(parent);
+		item->history()->owner().requestItemResize(item);
 	});
 }
 
@@ -797,7 +799,8 @@ QSize Document::countOptimalSize() {
 			minHeight += st::msgPadding.bottom();
 		}
 	}
-	if (hasTextPreview()) {
+	_textPreviewLaidOut = hasTextPreview();
+	if (_textPreviewLaidOut) {
 		accumulate_max(
 			maxWidth,
 			std::min(
@@ -811,6 +814,9 @@ QSize Document::countOptimalSize() {
 		minHeight += _textPreview.countHeight(previeww, true);
 		if (isBubbleBottom() && !hasTranscribe) {
 			minHeight += st::msgPadding.bottom();
+			if (!Get<HistoryDocumentCaptioned>()) {
+				minHeight += st::msgDateFont->height - st::msgDateDelta.y();
+			}
 		}
 	}
 	return { maxWidth, minHeight };
@@ -823,7 +829,7 @@ QSize Document::countCurrentSize(int newWidth) {
 	const auto thumbed = Get<HistoryDocumentThumbed>();
 	const auto &st = thumbed ? st::msgFileThumbLayout : st::msgFileLayout;
 	const auto hostedInstantView = IsHostedInstantViewMedia(_parent);
-	const auto preview = hasTextPreview();
+	const auto preview = hasTextPreview() && _textPreviewLaidOut;
 	if (!captioned && !hasTranscribe && !preview) {
 		auto result = File::countCurrentSize(newWidth);
 		if (hostedInstantView) {
@@ -870,7 +876,9 @@ QSize Document::countCurrentSize(int newWidth) {
 		if (captioned || hasTranscribe) {
 			newHeight += st::mediaCaptionSkip;
 		} else if (isBubbleBottom()) {
-			newHeight += st::msgPadding.bottom();
+			newHeight += st::msgPadding.bottom()
+				+ st::msgDateFont->height
+				- st::msgDateDelta.y();
 		}
 	}
 	if (hasTranscribe) {
@@ -1264,7 +1272,9 @@ void Document::draw(
 
 	auto selection = context.selection;
 	auto captiontop = bottom;
-	if (mode == LayoutMode::Full && !_textPreview.isEmpty()) {
+	if (mode == LayoutMode::Full
+		&& !_textPreview.isEmpty()
+		&& _textPreviewLaidOut) {
 		p.setPen(stm->historyTextFg);
 		_textPreview.draw(p, {
 			.position = { st::msgPadding.left(), captiontop },
@@ -1624,7 +1634,9 @@ TextState Document::textState(
 		}
 	}
 
-	if (mode == LayoutMode::Full && !_textPreview.isEmpty()) {
+	if (mode == LayoutMode::Full
+		&& !_textPreview.isEmpty()
+		&& _textPreviewLaidOut) {
 		const auto previeww = width
 			- st::msgPadding.left()
 			- st::msgPadding.right();

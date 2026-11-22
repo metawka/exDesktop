@@ -548,6 +548,7 @@ private:
 		not_null<PeerData*> from) const;
 
 	mutable std::unique_ptr<RightAction> _rightAction;
+	mutable ClickHandlerPtr _exdFloodLink;
 	mutable ClickHandlerPtr _fastReplyLink;
 	mutable std::unique_ptr<ViewButton> _viewButton;
 	std::unique_ptr<TopicButton> _topicButton;

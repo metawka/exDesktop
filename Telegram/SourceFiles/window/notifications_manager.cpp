@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/notifications_manager.h"
+#include "extera/exd_radar.h"
 
 #include "extera/extera_config.h"
 #include "extera/extera_streamer.h"
@@ -378,7 +379,9 @@ System::SkipState System::computeSkipState(
 		notifySettings->request(notifyBy);
 	}
 
-	if (messageType && notifySettings->muteUnknown(thread)) {
+	if (messageType && Exd::Radar::Matches(item)) {
+		return withSilent(SkipState::DontSkip);
+	} else if (messageType && notifySettings->muteUnknown(thread)) {
 		return { SkipState::Unknown };
 	} else if (messageType && !notifySettings->isMuted(thread)) {
 		return withSilent(SkipState::DontSkip);

@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_widget.h"
 #include "extera/extera_plugins.h"
 #include "extera/exd_md3.h"
+#include "extera/exd_safety.h"
 #include "ui/wrap/fade_wrap.h"
 
 #include "extera/extera_utils.h"
@@ -550,6 +551,7 @@ HistoryWidget::HistoryWidget(
 	) | rpl::on_next([=] {
 		fieldChanged();
 	}, _field->lifetime());
+	Exd::Safety::SetupSecretBar(this, _field, _scroll->geometryValue());
 	Data::AmPremiumValue(&session()) | rpl::on_next([=] {
 		checkCharsLimitation();
 		updateAiButtonVisibility();
@@ -6052,6 +6054,23 @@ void HistoryWidget::sendVoice(const VoiceToSend &data) {
 
 void HistoryWidget::send(Api::SendOptions options) {
 	if (!_history) {
+		return;
+	}
+	if (!_exdSecretConfirmed
+		&& Extera::Bool(u"exd_paste_guard"_q)
+		&& Exd::Safety::LooksLikeSecret(_field->getLastText())) {
+		controller()->show(Ui::MakeConfirmBox({
+			.text = tr::lng_exd_secret_send_text(),
+			.confirmed = crl::guard(this, [=](Fn<void()> close) {
+				close();
+				_exdSecretConfirmed = true;
+				send(options);
+				_exdSecretConfirmed = false;
+			}),
+			.confirmText = tr::lng_exd_secret_send_confirm(),
+			.confirmStyle = &st::attentionBoxButton,
+			.title = tr::lng_exd_secret_send_title(),
+		}));
 		return;
 	}
 	if (const auto value = Extera::InlineMathValue(_field->getLastText())) {

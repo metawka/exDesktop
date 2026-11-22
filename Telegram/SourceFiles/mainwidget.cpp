@@ -2875,8 +2875,11 @@ void MainWidget::updateControlsGeometry() {
 		}
 	}
 	if (isThreeColumn()) {
+		const auto exdChatless = _mainSection
+			&& !_mainSection->activeChat().key;
 		if (!_thirdSection
 			&& !_exdNoThirdRestore
+			&& !exdChatless
 			&& !_controller->takeThirdSectionFromLayer()) {
 			auto params = Window::SectionShow(
 				Window::SectionShow::Way::ClearStack,
@@ -3299,7 +3302,9 @@ bool MainWidget::eventFilter(QObject *o, QEvent *e) {
 		: nullptr;
 	if (e->type() == QEvent::FocusIn) {
 		if (widget && relevantForDialogsFocus(widget)) {
-			_dialogs->updateHasFocus(widget);
+			_dialogs->updateHasFocus(
+				widget,
+				static_cast<QFocusEvent*>(e)->reason());
 		} else if (widget == window()) {
 			crl::on_main(this, [=] {
 				_controller->widget()->setInnerFocus();

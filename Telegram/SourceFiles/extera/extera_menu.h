@@ -22,7 +22,8 @@ namespace Extera {
 void AddMessageMenuActions(
 	not_null<Ui::PopupMenu*> menu,
 	not_null<HistoryItem*> item,
-	not_null<Window::SessionController*> controller);
+	not_null<Window::SessionController*> controller,
+	MessageIdsList selected = {});
 
 void ApplyQuickActions(not_null<Ui::PopupMenu*> menu);
 [[nodiscard]] QStringList QuickActionIds();

@@ -143,7 +143,9 @@ public:
 
 	[[nodiscard]] RowDescriptor resolveChatNext(RowDescriptor from = {}) const;
 	[[nodiscard]] RowDescriptor resolveChatPrevious(RowDescriptor from = {}) const;
-	void updateHasFocus(not_null<QWidget*> focused);
+	void updateHasFocus(
+		not_null<QWidget*> focused,
+		Qt::FocusReason reason = Qt::OtherFocusReason);
 	void toggleFiltersMenu(bool value);
 
 	// Float player interface.

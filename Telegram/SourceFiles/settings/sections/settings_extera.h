@@ -8,6 +8,10 @@ namespace Window {
 class SessionController;
 } // namespace Window
 
+namespace Ui {
+class VerticalLayout;
+} // namespace Ui
+
 namespace Settings {
 
 [[nodiscard]] Type ExteraId();
@@ -24,6 +28,9 @@ namespace Settings {
 [[nodiscard]] Type ExteraUpdatesId();
 [[nodiscard]] Type ExteraSupportId();
 
+void FillExteraPluginsEngine(
+	not_null<Ui::VerticalLayout*> container,
+	not_null<Window::SessionController*> controller);
 void ShowExteraSupportBox(not_null<Window::SessionController*> controller);
 void ShowExteraBadgeBox(
 	not_null<Window::SessionController*> controller,

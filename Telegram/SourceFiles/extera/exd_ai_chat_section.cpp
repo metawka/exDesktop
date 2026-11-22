@@ -86,6 +86,7 @@ private:
 	QString _time;
 	int _textWidth = 0;
 	int _textHeight = 0;
+	int _lastLineWidth = 0;
 	int _timeExtra = 0;
 	base::unique_qptr<Ui::PopupMenu> _menu;
 
@@ -124,8 +125,7 @@ QRect Bubble::bubbleRect() const {
 	const auto timeWidth = _time.isEmpty()
 		? 0
 		: (st::msgDateFont->width(_time) + style::ConvertScale(10));
-	const auto lines = _text.countLineWidths(_textWidth);
-	const auto last = lines.empty() ? 0 : lines.back();
+	const auto last = _lastLineWidth;
 	const auto inner = _timeExtra
 		? std::max(_textWidth, timeWidth)
 		: std::max(_textWidth, last + timeWidth);
@@ -236,9 +236,14 @@ int Bubble::resizeGetHeight(int newWidth) {
 		? 0
 		: (st::msgDateFont->width(_time) + style::ConvertScale(10));
 	_textWidth = std::max(std::min(_text.maxWidth(), available), 1);
-	_textHeight = _text.countHeight(_textWidth);
-	const auto lines = _text.countLineWidths(_textWidth);
-	const auto last = lines.empty() ? 0 : lines.back();
+	const auto dimensions = _text.countDimensions(
+		Ui::Text::SimpleGeometry(_textWidth, 0, 0, false),
+		{ .lineWidths = true });
+	_textHeight = dimensions.height;
+	const auto last = dimensions.lineWidths.empty()
+		? 0
+		: dimensions.lineWidths.back();
+	_lastLineWidth = last;
 	_timeExtra = (timeWidth && (last + timeWidth > available))
 		? st::msgDateFont->height
 		: 0;

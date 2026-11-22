@@ -1,4 +1,5 @@
 #include "extera/extera_changelog.h"
+#include "extera/exd_update_box.h"
 
 #include "base/call_delayed.h"
 #include "boxes/translate_box.h"
@@ -343,7 +344,7 @@ void Start() {
 					return;
 				}
 				Config::Instance().setInt(u"changelog_seen"_q, current);
-				ShowWhenReady(controller);
+				Exd::ShowUpdateBox(controller, true);
 			}
 		});
 	}, Instance().lifetime);

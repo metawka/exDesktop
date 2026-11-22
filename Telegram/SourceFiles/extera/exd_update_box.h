@@ -6,6 +6,8 @@ class SessionController;
 
 namespace Exd {
 
-void ShowUpdateBox(not_null<Window::SessionController*> controller);
+void ShowUpdateBox(
+	not_null<Window::SessionController*> controller,
+	bool updated = false);
 
 } // namespace Exd

@@ -39,6 +39,7 @@
 #include "extera/extera_welcome.h"
 #include "extera/extera_changelog.h"
 #include "extera/extera_plugins_ui.h"
+#include "boxes/reactions_settings_box.h"
 #include "extera/extera_plugins.h"
 #include "extera/extera_update.h"
 #include "lang/lang_keys.h"
@@ -218,7 +219,7 @@ void AddChoice(
 			for (auto i = 0; i != int(options.size()); ++i) {
 				texts.push_back(optionText(i));
 			}
-			controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+			Extera::Plugins::ShowBoxInPluginsWindow(controller, Box([=](not_null<Ui::GenericBox*> box) {
 				SingleChoiceBox(box, {
 					.title = title(),
 					.options = texts,
@@ -1893,6 +1894,12 @@ void PartAppearance0(SectionBuilder &builder) {
 			.keywords = { u"material"_q, u"md3"_q, u"design"_q },
 		});
 	});
+	if (controller
+		&& controller->highlightControlId().startsWith(u"extera/md3/"_q)) {
+		crl::on_main(controller, [=] {
+			Extera::Md3::ShowSettingsBox(controller);
+		});
+	}
 	AddAbout(builder, tr::lng_exd_md3_about());
 
 	builder.addSkip();
@@ -1902,6 +1909,17 @@ void PartAppearance0(SectionBuilder &builder) {
 			u"smooth_scroll"_q,
 			tr::lng_exd_smooth_scroll(),
 			{ u"scroll"_q, u"smooth"_q });
+		AddChoice(
+			builder,
+			u"smooth_scroll_speed"_q,
+			tr::lng_exd_scroll_speed,
+			{
+				&tr::lng_exd_scroll_speed_slow,
+				&tr::lng_exd_scroll_speed_normal,
+				&tr::lng_exd_scroll_speed_fast,
+				&tr::lng_exd_scroll_speed_faster,
+			},
+			{ u"scroll"_q, u"speed"_q });
 	});
 
 	builder.addSkip();
@@ -2178,6 +2196,20 @@ void PartChats2(SectionBuilder &builder) {
 			builder,
 			u"unlimited_recent_stickers"_q,
 			tr::lng_extera_unlimited_stickers());
+		const auto reactionsController = builder.controller();
+		builder.addButton({
+			.id = u"extera/pinned_reactions"_q,
+			.title = tr::lng_exd_pinned_reactions(),
+			.st = &st::settingsButtonNoIcon,
+			.onClick = [=] {
+				if (reactionsController) {
+					reactionsController->show(Box(
+						ReactionsSettingsBox,
+						reactionsController));
+				}
+			},
+			.keywords = { u"reactions"_q, u"pin"_q, u"favorite"_q },
+		});
 		AddSwitchGroup(
 			builder,
 			u"hide_reactions"_q,
@@ -2387,6 +2419,11 @@ void PartChats5(SectionBuilder &builder) {
 			tr::lng_extera_hide_share());
 		AddToggle(
 			builder,
+			u"exd_noise_collapse"_q,
+			tr::lng_exd_noise_collapse(),
+			{ u"flood"_q, u"collapse"_q, u"stickers"_q });
+		AddToggle(
+			builder,
 			u"poll_results_before_voting"_q,
 			tr::lng_extera_poll_results(),
 			{ u"poll"_q },
@@ -2440,6 +2477,68 @@ void PartChats6(SectionBuilder &builder) {
 	builder.addDivider();
 }
 
+void ShowStringBox(
+	not_null<Window::SessionController*> controller,
+	const QString &key,
+	rpl::producer<QString> title,
+	rpl::producer<QString> placeholder);
+
+void PartChats8(SectionBuilder &builder) {
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_safety_title());
+	builder.card([&] {
+		AddToggle(
+			builder,
+			u"exd_paste_guard"_q,
+			tr::lng_exd_paste_guard(),
+			{ u"paste"_q, u"token"_q, u"secret"_q });
+		AddToggle(
+			builder,
+			u"exd_link_hint"_q,
+			tr::lng_exd_link_hint(),
+			{ u"link"_q, u"referral"_q, u"phishing"_q });
+	});
+	AddAbout(builder, tr::lng_exd_safety_about());
+
+	builder.addSkip();
+	builder.addSubsectionTitle(tr::lng_exd_radar_title());
+	builder.card([&] {
+		AddToggle(
+			builder,
+			u"exd_keyword_radar"_q,
+			tr::lng_exd_radar(),
+			{ u"keyword"_q, u"radar"_q, u"mention"_q });
+		AddToggle(
+			builder,
+			u"exd_radar_name"_q,
+			tr::lng_exd_radar_name(),
+			{ u"keyword"_q, u"name"_q });
+		const auto controller = builder.controller();
+		builder.addButton({
+			.id = u"extera/exd_radar_words"_q,
+			.title = tr::lng_exd_radar_words(),
+			.icon = { &st::menuIconSearch },
+			.label = Config().stringChanges(
+				u"exd_radar_words"_q
+			) | rpl::map([](const QString &words) {
+				return words.trimmed().isEmpty()
+					? tr::lng_exd_streamer_hotkey_none(tr::now)
+					: words.trimmed();
+			}),
+			.onClick = [=] {
+				if (controller) {
+					ShowStringBox(
+						controller,
+						u"exd_radar_words"_q,
+						tr::lng_exd_radar_words(),
+						tr::lng_exd_radar_words_placeholder());
+				}
+			},
+		});
+	});
+	AddAbout(builder, tr::lng_exd_radar_about());
+}
+
 void PartChats7(SectionBuilder &builder) {
 	[[maybe_unused]] const auto actions = std::vector<const Phrase*>{
 		&tr::lng_extera_action_reply,
@@ -2483,7 +2582,7 @@ void ShowStringBox(
 		const QString &key,
 		rpl::producer<QString> title,
 		rpl::producer<QString> placeholder) {
-	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+	Extera::Plugins::ShowBoxInPluginsWindow(controller, Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(std::move(title));
 		const auto field = box->addRow(object_ptr<Ui::InputField>(
 			box,
@@ -3731,7 +3830,11 @@ void AddCategoryGrid(SectionBuilder &builder) {
 				if (index >= 0 && index == pressed) {
 					const auto target = (*cards)[index].target();
 					crl::on_main(controller, [=] {
-						showOther(target);
+						if (target == ExteraPluginsId() && controller) {
+							Extera::Plugins::ShowPluginsWindow(controller);
+						} else {
+							showOther(target);
+						}
 					});
 				}
 			}
@@ -3754,7 +3857,7 @@ void AddCategoryGrid(SectionBuilder &builder) {
 // Plugins
 
 
-void BuildPluginsEngine(SectionBuilder &builder) {
+void PartPluginsEngineMain(SectionBuilder &builder) {
 	const auto controller = builder.controller();
 
 	builder.addSkip();
@@ -3830,13 +3933,10 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 		});
 	});
 	AddAbout(builder, tr::lng_extera_plugins_safe_about());
+}
 
-
-
-	PartPluginsSecurity(builder);
-	PartPluginsGuard(builder);
-	PartPluginsSdk(builder);
-	PartPluginsPort(builder);
+void PartPluginsLinks(SectionBuilder &builder) {
+	const auto controller = builder.controller();
 	builder.addSkip();
 	builder.addSubsectionTitle(tr::lng_extera_links());
 	builder.card([&] {
@@ -3884,6 +3984,15 @@ void BuildPluginsEngine(SectionBuilder &builder) {
 		}
 	});
 	builder.addSkip();
+}
+
+void BuildPluginsEngine(SectionBuilder &builder) {
+	PartPluginsEngineMain(builder);
+	PartPluginsSecurity(builder);
+	PartPluginsGuard(builder);
+	PartPluginsSdk(builder);
+	PartPluginsPort(builder);
+	PartPluginsLinks(builder);
 }
 
 // AI Chat
@@ -3938,12 +4047,81 @@ void BuildAiChat(SectionBuilder &builder) {
 			},
 			.keywords = { u"ai"_q, u"gemini"_q },
 		});
-		builder.addButton({
-			.id = u"extera/ai_service"_q,
-			.title = tr::lng_extera_ai_service(),
-			.icon = { &st::exteraIconWebsite },
-			.label = rpl::single(u"Google Gemini"_q),
-		});
+		AddChoice(
+			builder,
+			u"ai_chat_llm_provider"_q,
+			tr::lng_extera_ai_service,
+			{
+				&tr::lng_exd_ai_provider_builtin,
+				&tr::lng_exd_port_provider_openai,
+				&tr::lng_exd_port_provider_anthropic,
+				&tr::lng_exd_port_provider_openrouter,
+				&tr::lng_exd_port_provider_groq,
+				&tr::lng_exd_port_provider_deepseek,
+				&tr::lng_exd_port_provider_ollama,
+				&tr::lng_exd_port_provider_lmstudio,
+				&tr::lng_exd_port_provider_custom,
+				&tr::lng_exd_port_provider_gemini,
+			},
+			{ u"ai"_q, u"provider"_q, u"openai"_q, u"ollama"_q },
+			nullptr,
+			&st::exteraIconWebsite);
+		const auto aiCustom = [] {
+			return rpl::single(
+				Extera::Int(u"ai_chat_llm_provider"_q)
+			) | rpl::then(
+				Config().intChanges(u"ai_chat_llm_provider"_q)
+			) | rpl::map([](int value) { return value > 0; });
+		};
+		const auto addLlmField = [&](
+				const QString &key,
+				const Phrase *title,
+				const style::icon &icon,
+				const Phrase *placeholder,
+				bool secret) {
+			builder.addButton({
+				.id = u"extera/"_q + key,
+				.title = (*title)(),
+				.icon = { &icon },
+				.label = Config().stringChanges(
+					key
+				) | rpl::map([=](const QString &value) {
+					return value.trimmed().isEmpty()
+						? tr::lng_exd_guard_llm_model_default(tr::now)
+						: secret
+						? tr::lng_exd_premium_gemini_set(tr::now)
+						: value.trimmed();
+				}),
+				.onClick = [=] {
+					if (controller) {
+						ShowStringBox(
+							controller,
+							key,
+							(*title)(),
+							(*placeholder)());
+					}
+				},
+				.shown = aiCustom(),
+			});
+		};
+		addLlmField(
+			u"ai_chat_llm_key"_q,
+			&tr::lng_exd_port_key,
+			st::menuIcon2SV,
+			&tr::lng_exd_port_key_placeholder,
+			true);
+		addLlmField(
+			u"ai_chat_llm_model"_q,
+			&tr::lng_exd_port_model,
+			st::menuIconCustomize,
+			&tr::lng_exd_guard_llm_model_placeholder,
+			false);
+		addLlmField(
+			u"ai_chat_llm_endpoint"_q,
+			&tr::lng_exd_port_endpoint,
+			st::menuIconLink,
+			&tr::lng_exd_port_endpoint_placeholder,
+			false);
 		builder.addButton({
 			.id = u"extera/ai_key"_q,
 			.title = tr::lng_extera_ai_key(),
@@ -3960,6 +4138,7 @@ void BuildAiChat(SectionBuilder &builder) {
 					Extera::ShowKeyBox(controller);
 				}
 			},
+			.shown = aiCustom() | rpl::map([](bool custom) { return !custom; }),
 		});
 		AddChoice(
 			builder,
@@ -4052,6 +4231,7 @@ void BuildMessages(SectionBuilder &builder) {
 		PartChats2(builder);
 		PartChats6(builder);
 		PartChats7(builder);
+		PartChats8(builder);
 	});
 }
 
@@ -4163,6 +4343,12 @@ void PartAyuInner(SectionBuilder &builder) {
 			u"ayu_bypass_protection"_q,
 			tr::lng_exd_ayu_bypass_protection(),
 			{ u"protected"_q, u"copy"_q, u"screenshot"_q });
+		AddToggle(
+			builder,
+			u"exd_save_ttl"_q,
+			tr::lng_exd_save_ttl(),
+			{ u"ttl"_q, u"view once"_q, u"self-destruct"_q },
+			tr::lng_exd_save_ttl_about());
 		AddToggle(
 			builder,
 			u"translucent_deleted"_q,
@@ -5208,6 +5394,62 @@ Type ExteraPluginsId() {
 
 Type ExteraOtherId() {
 	return ExteraOther::Id();
+}
+
+void FillExteraPluginsEngine(
+		not_null<Ui::VerticalLayout*> container,
+		not_null<Window::SessionController*> controller) {
+	const auto row = container->add(object_ptr<Ui::RpWidget>(container));
+	const auto left = Ui::CreateChild<Ui::VerticalLayout>(row);
+	const auto right = Ui::CreateChild<Ui::VerticalLayout>(row);
+	const auto isPaused = Window::PausedIn(
+		controller,
+		Window::GifPauseReason::Layer);
+	const auto make = [&](not_null<Ui::VerticalLayout*> column) {
+		return SectionBuilder(WidgetContext{
+			.container = column,
+			.controller = controller,
+			.showOther = [=](Type type) { controller->showSettings(type); },
+			.isPaused = isPaused,
+		});
+	};
+	{
+		auto builder = make(left);
+		PartPluginsEngineMain(builder);
+		PartPluginsSecurity(builder);
+		PartPluginsLinks(builder);
+	}
+	{
+		auto builder = make(right);
+		PartPluginsGuard(builder);
+		PartPluginsSdk(builder);
+		PartPluginsPort(builder);
+	}
+	const auto relayout = [=] {
+		const auto width = row->width();
+		const auto gap = style::ConvertScale(16);
+		const auto twoColumns = (width >= style::ConvertScale(720));
+		const auto column = twoColumns ? (width - gap) / 2 : width;
+		left->resizeToWidth(column);
+		right->resizeToWidth(column);
+		left->moveToLeft(0, 0);
+		if (twoColumns) {
+			right->moveToLeft(column + gap, 0);
+		} else {
+			right->moveToLeft(0, left->height());
+		}
+		const auto height = twoColumns
+			? std::max(left->height(), right->height())
+			: (left->height() + right->height());
+		if (row->height() != height) {
+			row->resize(width, height);
+		}
+	};
+	rpl::merge(
+		row->widthValue() | rpl::to_empty,
+		left->heightValue() | rpl::skip(1) | rpl::to_empty,
+		right->heightValue() | rpl::skip(1) | rpl::to_empty
+	) | rpl::on_next(relayout, row->lifetime());
 }
 
 Type ExteraPluginsEngineId() {

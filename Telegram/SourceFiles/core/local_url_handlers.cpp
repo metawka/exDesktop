@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "extera/extera_ai_chat.h"
 #include "extera/extera_welcome.h"
 #include "extera/extera_feed.h"
+#include "extera/exd_ai_chat_section.h"
 #include "extera/extera_plugins_ui.h"
 #include "extera/extera_plugins.h"
 #include "extera/extera_config.h"
@@ -96,6 +97,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat_helpers.h"
 
 #include <QtGui/QGuiApplication>
+#include "base/call_delayed.h"
+#include "window/main_window.h"
+#include "history/view/history_view_element.h"
+#include "menu/menu_mark_as_read.h"
+#include "data/data_folder.h"
+#include "dialogs/dialogs_main_list.h"
+#include "dialogs/dialogs_indexed_list.h"
+#include "dialogs/dialogs_row.h"
+#include "window/window_columns.h"
+#include "extera/exd_md3.h"
+#include <QtWidgets/QApplication>
+#include <QtGui/QClipboard>
+#include <QtCore/QPointer>
+#include "base/timer.h"
 
 namespace Core {
 namespace {
@@ -1975,12 +1990,320 @@ bool ShowExdTestBox(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
-	if (!controller) {
+	if (!controller
+		|| !QFile::exists(cWorkingDir() + u"exd_test.enable"_q)) {
 		return false;
 	}
 	if (match->captured(1) == u"profile"_q) {
 		controller->showSection(
 			Info::Stories::MakeMyProfile(controller->session().user()));
+		return true;
+	} else if (match->captured(1) == u"third"_q) {
+		auto &columns = controller->columns();
+		columns.setThirdSectionInfoEnabled(
+			!columns.thirdSectionInfoEnabled());
+		return true;
+	} else if (match->captured(1) == u"menu"_q) {
+		controller->widget()->showMainMenu();
+		return true;
+	} else if (match->captured(1) == u"esc"_q) {
+		controller->hideLayer(anim::type::instant);
+		controller->window().hideSettingsAndLayer();
+		return true;
+	} else if (match->captured(1) == u"plugins"_q) {
+		Extera::Plugins::ShowPluginsWindow(controller);
+		return true;
+	} else if (match->captured(1) == u"md3"_q) {
+		Extera::Md3::ShowSettingsBox(controller);
+		return true;
+	} else if (match->captured(1) == u"close"_q) {
+		controller->clearSectionStack();
+		controller->showPeerHistory(
+			PeerId(),
+			Window::SectionShow::Way::ClearStack);
+		return true;
+	} else if (match->captured(1) == u"self"_q) {
+		controller->showPeerHistory(
+			controller->session().user(),
+			Window::SectionShow::Way::ClearStack);
+		return true;
+	} else if (match->captured(1) == u"state"_q) {
+		const auto focused = QApplication::focusWidget();
+		LOG(("EXD_STATE: focus=%1 third=%2"
+			).arg(focused ? QString::fromLatin1(focused->metaObject()->className()) : u"none"_q
+			).arg(controller->columns().thirdSectionInfoEnabled() ? 1 : 0));
+		return true;
+	} else if (match->captured(1) == u"archive"_q) {
+		if (const auto folder = controller->session().data().folderLoaded(
+				Data::Folder::kId)) {
+			controller->openFolder(folder);
+		}
+		return true;
+	} else if (match->captured(1) == u"archiveread"_q) {
+		if (const auto folder = controller->session().data().folderLoaded(
+				Data::Folder::kId)) {
+			for (const auto &row : folder->chatsList()->indexed()->all()) {
+				if (const auto thread = row->key().thread()) {
+					if (MarkAsReadMenu::IsUnreadThread(thread)) {
+						MarkAsReadMenu::MarkAsReadThread(thread);
+						break;
+					}
+				}
+			}
+		}
+		return true;
+	} else if (match->captured(1) == u"crash"_q) {
+		*static_cast<volatile int*>(nullptr) = 0;
+		return true;
+	} else if (match->captured(1) == u"forward"_q) {
+		const auto self = controller->session().user();
+		const auto history = self->owner().history(self);
+		auto ids = MessageIdsList();
+		for (const auto &block : history->blocks) {
+			for (const auto &view : block->messages) {
+				ids.push_back(view->data()->fullId());
+			}
+		}
+		if (!ids.empty()) {
+			Window::ShowForwardMessagesBox(controller, { ids.back() });
+		}
+		return true;
+	} else if (match->captured(1) == u"lmb"_q) {
+		const auto window = controller->widget()->window();
+		const auto point = QPoint(
+			match->captured(3).toInt(),
+			match->captured(4).toInt());
+		base::call_delayed(300, window, [=] {
+			const auto global = window->mapToGlobal(point);
+			const auto target = QApplication::widgetAt(global);
+			if (!target) {
+				return;
+			}
+			const auto local = target->mapFromGlobal(global);
+			auto press = QMouseEvent(
+				QEvent::MouseButtonPress,
+				QPointF(local),
+				QPointF(global),
+				Qt::LeftButton,
+				Qt::LeftButton,
+				Qt::NoModifier);
+			QApplication::sendEvent(target, &press);
+			auto release = QMouseEvent(
+				QEvent::MouseButtonRelease,
+				QPointF(local),
+				QPointF(global),
+				Qt::LeftButton,
+				Qt::NoButton,
+				Qt::NoModifier);
+			QApplication::sendEvent(target, &release);
+		});
+		return true;
+	} else if (match->captured(1) == u"paste"_q) {
+		const auto clipboard = QGuiApplication::clipboard();
+		const auto saved = clipboard->text();
+		clipboard->setText(
+			u"123456789:AAH"_q + QString(32, QChar('x')));
+		const auto send = [](QWidget *target, int key, Qt::KeyboardModifiers m) {
+			auto press = QKeyEvent(QEvent::KeyPress, key, m);
+			QApplication::sendEvent(target, &press);
+			auto release = QKeyEvent(QEvent::KeyRelease, key, m);
+			QApplication::sendEvent(target, &release);
+		};
+		const auto target = QApplication::focusWidget();
+		LOG(("EXD_PASTE focus=%1").arg(target
+			? target->metaObject()->className()
+			: "null"));
+		if (target) {
+			send(target, Qt::Key_V, Qt::ControlModifier);
+			base::call_delayed(2500, controller, [=] {
+				if (const auto now = QApplication::focusWidget()) {
+					send(now, Qt::Key_A, Qt::ControlModifier);
+					send(now, Qt::Key_Delete, Qt::NoModifier);
+				}
+				QGuiApplication::clipboard()->setText(saved);
+			});
+		}
+		return true;
+	} else if (match->captured(1) == u"ai"_q) {
+		Exd::ShowAiChatSection(controller);
+		return true;
+	} else if (match->captured(1) == u"feed"_q) {
+		Extera::ShowChannelFeed(controller);
+		return true;
+	} else if (match->captured(1) == u"probe"_q) {
+		class Probe final : public QObject {
+		public:
+			std::map<QString, int> counts;
+			bool eventFilter(QObject *o, QEvent *e) override {
+				const auto type = e->type();
+				if (type == QEvent::Resize
+					|| type == QEvent::Move
+					|| type == QEvent::Show
+					|| type == QEvent::Hide
+					|| type == QEvent::Paint
+					|| type == QEvent::ZOrderChange) {
+					if (const auto w = qobject_cast<QWidget*>(o)) {
+						auto key = QString::fromLatin1(o->metaObject()->className())
+							+ u" "_q + QString::number(int(type))
+							+ u" "_q + QString::number(w->width())
+							+ u"x"_q + QString::number(w->height());
+						++counts[key];
+					}
+				}
+				return false;
+			}
+		};
+		const auto probe = new Probe();
+		qApp->installEventFilter(probe);
+		base::call_delayed(3000, [=] {
+			qApp->removeEventFilter(probe);
+			auto f = QFile(u"exd_probe.txt"_q);
+			if (f.open(QIODevice::WriteOnly)) {
+				for (const auto &[key, count] : probe->counts) {
+					if (count >= 6) {
+						f.write((key + u" = "_q + QString::number(count) + u"\n"_q).toUtf8());
+					}
+				}
+			}
+			delete probe;
+		});
+		return true;
+	} else if (match->captured(1) == u"fuzz"_q) {
+		struct FuzzState {
+			std::vector<QPointer<QWidget>> list;
+			int index = 0;
+			base::Timer timer;
+			bool opened = false;
+		};
+		const auto state = std::make_shared<FuzzState>();
+		for (const auto top : QApplication::topLevelWidgets()) {
+			if (!top->isVisible()) {
+				continue;
+			}
+			for (const auto child : top->findChildren<QWidget*>()) {
+				if (child->isVisible()
+					&& child->width() > 4
+					&& child->height() > 4) {
+					state->list.push_back(child);
+				}
+			}
+		}
+		const auto file = std::make_shared<QFile>(
+			cWorkingDir() + u"exd_fuzz.txt"_q);
+		file->open(QIODevice::WriteOnly | QIODevice::Truncate);
+		const auto write = [=](const QString &text) {
+			file->write(text.toUtf8() + QByteArray(1, char(10)));
+			file->flush();
+		};
+		write(u"total %1"_q.arg(state->list.size()));
+		state->timer.setCallback([=] {
+			if (const auto popup = QApplication::activePopupWidget()) {
+				popup->close();
+				return;
+			}
+			while (state->index < int(state->list.size())) {
+				const auto widget = state->list[state->index++].data();
+				if (!widget || !widget->isVisible()) {
+					continue;
+				}
+				const auto global = widget->mapToGlobal(
+					widget->rect().center());
+				const auto target = QApplication::widgetAt(global);
+				if (!target) {
+					continue;
+				}
+				write(u"%1 %2 %3 %4,%5"_q
+					.arg(state->index)
+					.arg(target->metaObject()->className())
+					.arg(target->objectName())
+					.arg(global.x())
+					.arg(global.y()));
+				const auto local = target->mapFromGlobal(global);
+				auto move = QMouseEvent(
+					QEvent::MouseMove,
+					QPointF(local),
+					QPointF(global),
+					Qt::NoButton,
+					Qt::NoButton,
+					Qt::NoModifier);
+				QApplication::sendEvent(target, &move);
+				if (const auto alive = QPointer<QWidget>(target)) {
+					auto press = QMouseEvent(
+						QEvent::MouseButtonPress,
+						QPointF(local),
+						QPointF(global),
+						Qt::RightButton,
+						Qt::RightButton,
+						Qt::NoModifier);
+					QApplication::sendEvent(alive, &press);
+				}
+				if (const auto alive = QPointer<QWidget>(target)) {
+					auto release = QMouseEvent(
+						QEvent::MouseButtonRelease,
+						QPointF(local),
+						QPointF(global),
+						Qt::RightButton,
+						Qt::NoButton,
+						Qt::NoModifier);
+					QApplication::sendEvent(alive, &release);
+				}
+				if (const auto alive = QPointer<QWidget>(target)) {
+					auto menu = QContextMenuEvent(
+						QContextMenuEvent::Mouse,
+						local,
+						global);
+					QApplication::sendEvent(alive, &menu);
+				}
+				return;
+			}
+			write(u"done"_q);
+			state->timer.cancel();
+			file->close();
+		});
+		state->timer.callEach(350);
+		return true;
+	} else if (match->captured(1) == u"rmb"_q) {
+		const auto window = controller->widget()->window();
+		const auto point = QPoint(
+			match->captured(3).toInt(),
+			match->captured(4).toInt());
+		base::call_delayed(300, window, [=] {
+			const auto global = window->mapToGlobal(point);
+			const auto target = QApplication::widgetAt(global);
+			if (!target) {
+				return;
+			}
+			const auto local = target->mapFromGlobal(global);
+			auto move = QMouseEvent(
+				QEvent::MouseMove,
+				QPointF(local),
+				QPointF(global),
+				Qt::NoButton,
+				Qt::NoButton,
+				Qt::NoModifier);
+			QApplication::sendEvent(target, &move);
+			auto press = QMouseEvent(
+				QEvent::MouseButtonPress,
+				QPointF(local),
+				QPointF(global),
+				Qt::RightButton,
+				Qt::RightButton,
+				Qt::NoModifier);
+			QApplication::sendEvent(target, &press);
+			auto release = QMouseEvent(
+				QEvent::MouseButtonRelease,
+				QPointF(local),
+				QPointF(global),
+				Qt::RightButton,
+				Qt::NoButton,
+				Qt::NoModifier);
+			QApplication::sendEvent(target, &release);
+			auto menu = QContextMenuEvent(
+				QContextMenuEvent::Mouse,
+				local,
+				global);
+			QApplication::sendEvent(target, &menu);
+		});
 		return true;
 	}
 	const auto folder = QDir(cWorkingDir() + u"tdata/exd_test"_q);
@@ -2107,7 +2430,7 @@ const std::vector<LocalUrlHandler> &LocalUrlHandlers() {
 			ShowExdBadge
 		},
 		{
-			u"^exd_test_box/?\\?kind=(install|port|profile)(&|$)"_q,
+			u"^exd_test_box/?\\?kind=(install|port|profile|crash|rmb|forward|archive|archiveread|close|self|state|third|menu|esc|plugins|md3|lmb|fuzz|paste|ai|feed|probe)(&x=(\\d+)&y=(\\d+))?(&|$)"_q,
 			ShowExdTestBox
 		},
 		{

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/effects/outline_segments.h"
+#include "ui/userpic_view.h"
 
 namespace Ui {
 
@@ -20,7 +21,17 @@ void PaintOutlineSegments(
 	const auto count = std::min(int(segments.size()), kOutlineSegmentsMax);
 	if (count == 1) {
 		p.setPen(QPen(segments.front().brush, segments.front().width));
-		p.drawEllipse(ellipse);
+		DrawUserpicShape(p, ellipse);
+		return;
+	} else if (!UserpicIsCircle()) {
+		auto chosen = &segments.back();
+		for (const auto &segment : segments) {
+			if (segment.width > chosen->width) {
+				chosen = &segment;
+			}
+		}
+		p.setPen(QPen(chosen->brush, chosen->width));
+		DrawUserpicShape(p, ellipse);
 		return;
 	}
 	const auto small = 160;

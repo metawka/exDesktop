@@ -1992,6 +1992,18 @@ PRIVATE
     extera/extera_update.cpp
     extera/exd_md3.cpp
     extera/exd_md3.h
+    extera/exd_crash_log.cpp
+    extera/exd_flood.cpp
+    extera/exd_flood.h
+    extera/exd_message_shot.cpp
+    extera/exd_message_shot.h
+    extera/exd_radar.cpp
+    extera/exd_radar.h
+    extera/exd_safety.cpp
+    extera/exd_safety.h
+    extera/exd_ttl_saver.cpp
+    extera/exd_ttl_saver.h
+    extera/exd_crash_log.h
     extera/exd_settings_sync.cpp
     extera/exd_settings_sync.h
     extera/exd_update_box.cpp

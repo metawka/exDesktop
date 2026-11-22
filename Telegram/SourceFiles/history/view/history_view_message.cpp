@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_message.h"
+#include "extera/exd_message_shot.h"
+#include "extera/exd_flood.h"
 
 #include "extera/extera_feed.h"
 #include "extera/extera_badges.h"
@@ -1118,6 +1120,12 @@ void Message::initPaidInformation() {
 }
 
 void Message::refreshRightBadge() {
+	if (Exd::MessageShot::Hidden(this, Exd::MessageShot::Part::Badges)) {
+		if (Has<RightBadge>()) {
+			RemoveComponents(RightBadge::Bit());
+		}
+		return;
+	}
 	if (const auto badge = Get<RightBadge>(); badge && badge->overridden) {
 		return;
 	}
@@ -4333,7 +4341,8 @@ TextState Message::textState(
 			}
 		}
 		checkBottomInfoState();
-		if (const auto size = rightActionSize(); size && _rightAction) {
+		if (const auto size = rightActionSize();
+				size && (_rightAction || exdFloodHead())) {
 			const auto fastShareSkip = std::clamp(
 				(g.height() - size->height()) / 2,
 				0,
@@ -6172,6 +6181,8 @@ bool Message::displayRightActionComments() const {
 std::optional<QSize> Message::rightActionSize() const {
 	if (context() == Context::MediaEditor) {
 		return std::nullopt;
+	} else if (exdFloodHead()) {
+		return QSize(st::historyFastShareSize, st::historyFastShareSize);
 	} else if (displayRightActionComments()) {
 		const auto views = data()->Get<HistoryMessageViews>();
 		Assert(views != nullptr);
@@ -6287,7 +6298,25 @@ void Message::drawRightAction(
 			p.drawRoundedRect(rect, usual / 2, usual / 2);
 		}
 	}
-	if (displayRightActionComments()) {
+	if (const auto flood = exdFloodHead()) {
+		const auto center = QPointF(
+			left + size->width() / 2.,
+			top + size->height() / 2.);
+		const auto half = st::historyFastShareSize * 0.16;
+		const auto dir = (flood > 0) ? 1. : -1.;
+		auto pen = QPen(st->msgServiceFg()->c);
+		pen.setWidthF(style::ConvertScaleExact(2.));
+		pen.setCapStyle(Qt::RoundCap);
+		pen.setJoinStyle(Qt::RoundJoin);
+		PainterHighQualityEnabler hq(p);
+		p.setPen(pen);
+		p.setBrush(Qt::NoBrush);
+		auto path = QPainterPath();
+		path.moveTo(center.x() - half * 1.5, center.y() - half * 0.6 * dir);
+		path.lineTo(center.x(), center.y() + half * 0.9 * dir);
+		path.lineTo(center.x() + half * 1.5, center.y() - half * 0.6 * dir);
+		p.drawPath(path);
+	} else if (displayRightActionComments()) {
 		const auto &icon = st->historyFastCommentsIcon();
 		icon.paint(
 			p,
@@ -6329,6 +6358,19 @@ ClickHandlerPtr Message::rightActionLink(
 		std::optional<QPoint> pressPoint) const {
 	if (delegate()->elementInSelectionMode(this).progress > 0) {
 		return nullptr;
+	}
+	if (exdFloodHead()) {
+		const auto item = data();
+		const auto owner = &item->history()->owner();
+		const auto id = item->fullId();
+		if (!_exdFloodLink) {
+			_exdFloodLink = std::make_shared<LambdaClickHandler>([=] {
+				if (const auto strong = owner->message(id)) {
+					Exd::Flood::Toggle(strong);
+				}
+			});
+		}
+		return _exdFloodLink;
 	}
 	ensureRightAction();
 	if (!_rightAction->link) {

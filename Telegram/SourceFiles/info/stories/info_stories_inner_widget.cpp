@@ -309,7 +309,7 @@ void InnerWidget::createProfileTop() {
 	using namespace Profile;
 	auto stack = SectionStack(_top);
 	auto musicWrap = (Ui::SlideWrap<Ui::RpWidget>*)nullptr;
-	if (Extera::Bool(u"exd_profile_music_card"_q)) {
+	{
 		if (const auto user = _peer->asUser()) {
 			const auto controller = _controller;
 			auto card = CreateProfileMusicCard(
@@ -324,6 +324,7 @@ void InnerWidget::createProfileTop() {
 				.widget = std::move(card),
 				.shown = musicWrap->toggledValue(),
 			});
+			stack.setCompactTop(musicWrap->toggledValue());
 			stack.addPlainSeparator();
 		}
 	}

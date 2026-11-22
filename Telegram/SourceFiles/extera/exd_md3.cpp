@@ -247,6 +247,7 @@ not_null<Ui::SettingsButton*> AddOption(
 		container,
 		std::move(title),
 		st::settingsButtonNoIcon));
+	button->setProperty("exdMd3Key", key);
 	button->toggleOn(rpl::single(Bool(key)));
 	button->toggledChanges(
 	) | rpl::filter([=](bool value) {
@@ -266,12 +267,22 @@ void ApplyBeforeStyles() {
 	style::SetMd3Grouped(on && Bool(u"md3_grouped"_q));
 	style::SetMd3Icons(Bool(u"md3_icons"_q));
 	Ui::SetSmoothScroll(Bool(u"smooth_scroll"_q));
+	const auto speedFor = [](int index) {
+		constexpr auto kSpeeds = std::array{ 0.6, 1., 1.5, 2.2 };
+		return kSpeeds[std::clamp(index, 0, int(kSpeeds.size()) - 1)];
+	};
+	Ui::SetSmoothScrollSpeed(speedFor(Int(u"smooth_scroll_speed"_q)));
 	static auto smoothLifetime = rpl::lifetime();
 	if (!smoothLifetime) {
 		Config::Instance().boolChanges(
 			u"smooth_scroll"_q
 		) | rpl::on_next([](bool enabled) {
 			Ui::SetSmoothScroll(enabled);
+		}, smoothLifetime);
+		Config::Instance().intChanges(
+			u"smooth_scroll_speed"_q
+		) | rpl::on_next([=](int index) {
+			Ui::SetSmoothScrollSpeed(speedFor(index));
 		}, smoothLifetime);
 	}
 	style::SetMd3Floating(on && Bool(u"md3_floating_field"_q));
@@ -351,12 +362,13 @@ void ShowSettingsBox(not_null<Window::SessionController*> controller) {
 		};
 		const auto fontLabel = content->lifetime().make_state<
 			rpl::variable<QString>>(fontName());
-		Settings::AddButtonWithLabel(
+		const auto font = Settings::AddButtonWithLabel(
 			content,
 			tr::lng_exd_md3_font(),
 			fontLabel->value(),
-			st::settingsButtonNoIcon
-		)->setClickedCallback([=] {
+			st::settingsButtonNoIcon);
+		font->setProperty("exdMd3Key", u"font"_q);
+		font->setClickedCallback([=] {
 			const auto options = std::vector<QString>{
 				QString::fromLatin1(kGoogleSans),
 				tr::lng_exd_md3_font_telegram(tr::now),
@@ -389,6 +401,7 @@ void ShowSettingsBox(not_null<Window::SessionController*> controller) {
 				content,
 				cardHeight + labelSkip + labelHeight + style::ConvertScale(6)),
 			st::boxRowPadding);
+		picker->setProperty("exdMd3Key", u"icons"_q);
 		const auto selected = picker->lifetime().make_state<
 			rpl::variable<bool>>(Bool(u"md3_icons"_q));
 		for (auto i = 0; i != 2; ++i) {
@@ -518,6 +531,19 @@ void ShowSettingsBox(not_null<Window::SessionController*> controller) {
 			u"md3_sliders"_q,
 			[=](bool) { RepaintAll(); });
 		Ui::AddSkip(content);
+
+		for (const auto child : content->findChildren<QWidget*>()) {
+			const auto key = child->property("exdMd3Key").toString();
+			if (!key.isEmpty()) {
+				auto id = key;
+				if (id.startsWith(u"md3_"_q)) {
+					id = id.mid(4);
+				}
+				controller->checkHighlightControl(
+					u"extera/md3/"_q + id,
+					child);
+			}
+		}
 
 		box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 		box->boxClosing() | rpl::on_next([=] {

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_main_menu.h"
+#include "ui/wrap/padding_wrap.h"
 #include "extera/exd_md3.h"
 
 #include "extera/extera_changelog.h"
@@ -98,6 +99,27 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Window {
 namespace {
+
+[[nodiscard]] const style::SettingsButton &MenuButtonSt() {
+	if (!style::Md3Grouped()) {
+		return st::mainMenuButton;
+	}
+	static auto result = st::mainMenuButton;
+	result = st::mainMenuButton;
+	result.textBg = st::windowBg;
+	result.textBgOver = st::windowBgOver;
+	const auto cut = style::ConvertScale(2);
+	result.padding.setTop(std::max(result.padding.top() - cut, 0));
+	result.padding.setBottom(std::max(result.padding.bottom() - cut, 0));
+	return result;
+}
+
+[[nodiscard]] object_ptr<Ui::RpWidget> MakeMenuDivider(QWidget *parent) {
+	if (style::Md3Grouped()) {
+		return object_ptr<Ui::FixedHeightWidget>(parent, 0);
+	}
+	return object_ptr<Ui::PlainShadow>(parent);
+}
 
 constexpr auto kPlayStatusLimit = 2;
 
@@ -577,10 +599,10 @@ void MainMenu::setupArchive() {
 	const auto button = AddButtonWithIcon(
 		inner,
 		tr::lng_archived_name(),
-		st::mainMenuButton,
+		MenuButtonSt(),
 		{ &st::menuIconArchiveOpen });
 	inner->add(
-		object_ptr<Ui::PlainShadow>(inner),
+		MakeMenuDivider(inner),
 		{ st::mainMenuDividerInset, st::mainMenuSkip, st::mainMenuDividerInset, st::mainMenuSkip });
 	button->setAcceptBoth(true);
 	button->clicks(
@@ -716,7 +738,7 @@ void MainMenu::setupMenu() {
 		return AddButtonWithIcon(
 			_menu,
 			std::move(text),
-			st::mainMenuButton,
+			MenuButtonSt(),
 			std::move(descriptor));
 	};
 	const auto tag = [&](const char *id) {
@@ -731,7 +753,7 @@ void MainMenu::setupMenu() {
 			CreateButtonWithIcon(
 				_menu,
 				tr::lng_menu_my_profile(),
-				st::mainMenuButton,
+				MenuButtonSt(),
 				{ &st::menuIconProfile })
 		)->setClickedCallback([=] {
 			controller->showSection(
@@ -742,7 +764,7 @@ void MainMenu::setupMenu() {
 		SetupMenuBots(_menu, controller);
 
 		_menu->add(
-			object_ptr<Ui::PlainShadow>(_menu),
+			MakeMenuDivider(_menu),
 			{ st::mainMenuDividerInset, st::mainMenuSkip, st::mainMenuDividerInset, st::mainMenuSkip });
 
 		AddMyChannelsBox(addAction(
@@ -830,7 +852,7 @@ void MainMenu::setupMenu() {
 			tr::lng_extera_plugins(),
 			{ &st::exteraIconPlugins }
 		)->setClickedCallback([=] {
-			UrlClickHandler::Open(u"tg://settings/extera/plugins"_q);
+			Extera::Plugins::ShowPluginsWindow(controller);
 		});
 		tag("plugins");
 		const auto session = &controller->session();
@@ -840,12 +862,12 @@ void MainMenu::setupMenu() {
 				CreateButtonWithIcon(
 					_menu,
 					tr::lng_wallet_menu(),
-					st::mainMenuButton,
+					MenuButtonSt(),
 					{ &st::walletMenuIcon })));
 		Ui::NewBadge::AddAfterButtonText(
 			wallet->entity(),
 			tr::lng_wallet_menu(),
-			st::mainMenuButton);
+			MenuButtonSt());
 		wallet->toggleOn(session->appConfig().value(
 		) | rpl::map([=] {
 			return session->appConfig().walletAvailable();

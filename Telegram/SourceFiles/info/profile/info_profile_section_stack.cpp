@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/box_content_divider.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/slide_wrap.h"
+#include "ui/wrap/padding_wrap.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/vertical_list.h"
 #include "ui/rect_part.h"
@@ -109,6 +110,10 @@ void SectionStack::addTextSeparator(
 	});
 }
 
+void SectionStack::setCompactTop(rpl::producer<bool> compact) {
+	_compactTop = std::move(compact);
+}
+
 not_null<Ui::VerticalLayout*> SectionStack::layout() const {
 	return _layout;
 }
@@ -187,9 +192,19 @@ void SectionStack::finalize() {
 
 	_finalized = true;
 
-	Ui::AddSkip(_layout, st::infoProfileSkip);
-	if (style::Md3Grouped()) {
-		Ui::AddSkip(_layout, st::exdInfoGroupGap);
+	const auto full = st::infoProfileSkip
+		+ (style::Md3Grouped() ? st::exdInfoGroupGap : 0);
+	const auto top = _layout->add(object_ptr<Ui::FixedHeightWidget>(
+		_layout,
+		full));
+	if (_compactTop) {
+		std::move(
+			_compactTop
+		) | rpl::on_next([=](bool compact) {
+			top->resize(
+				top->width(),
+				compact ? style::ConvertScale(4) : full);
+		}, top->lifetime());
 	}
 
 	const auto count = int(_rows.size());

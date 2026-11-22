@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_element.h"
+#include "extera/exd_message_shot.h"
+#include "extera/exd_safety.h"
 #include "extera/extera_plugins.h"
 
 #include "extera/extera_config.h"
@@ -1595,6 +1597,7 @@ bool Element::isTopicRootReply() const {
 
 bool Element::hidesBottomInfo() const {
 	return data()->isWelcomeTemplate()
+		|| Exd::MessageShot::Hidden(this, Exd::MessageShot::Part::Date)
 		|| (data()->isFakeHistoryItem()
 			&& context() == Context::MediaEditor);
 }
@@ -1641,7 +1644,56 @@ bool Element::isHiddenByGroup() const {
 }
 
 bool Element::isHidden() const {
-	return isHiddenByGroup();
+	return isHiddenByGroup() || _exdCollapsed;
+}
+
+void Element::setExdCollapsed(bool collapsed) {
+	if (_exdCollapsed == collapsed) {
+		return;
+	}
+	_exdCollapsed = collapsed;
+	setPendingResize();
+	history()->owner().requestViewResize(this);
+}
+
+bool Element::exdCollapsed() const {
+	return _exdCollapsed;
+}
+
+void Element::setExdFloodBar(
+		PreparedServiceText text,
+		ClickHandlerPtr handler) {
+	const auto value = text.text.text;
+	if (value == _exdFloodText) {
+		return;
+	}
+	if (value.isEmpty()) {
+		_exdFloodText = QString();
+		setServicePostMessage({});
+	} else {
+		if (_exdFloodText.isEmpty() && Has<ServicePreMessage>()) {
+			return;
+		}
+		_exdFloodText = value;
+		setServicePostMessage(std::move(text), std::move(handler));
+	}
+	history()->owner().requestViewResize(this);
+}
+
+void Element::setExdFloodHead(int state) {
+	if (_exdFloodHead == state) {
+		return;
+	}
+	_exdFloodHead = state;
+	history()->owner().requestViewResize(this);
+}
+
+int Element::exdFloodHead() const {
+	return _exdFloodHead;
+}
+
+bool Element::hasExdFloodBar() const {
+	return !_exdFloodText.isEmpty();
 }
 
 void Element::overrideMedia(std::unique_ptr<Media> media) {
@@ -2329,11 +2381,20 @@ void Element::setTextWithLinks(
 				}
 			}
 		}
+		if (Extera::Bool(u"exd_link_hint"_q)) {
+			auto marked = shown ? *shown : text;
+			Exd::Safety::MarkSuspiciousLinks(marked);
+			shown = std::move(marked);
+		}
 		_text.setMarkedText(
 			st::messageTextStyle,
 			shown ? *shown : text,
 			options,
 			context);
+		if (_text.hasSpoilers()
+			&& Exd::MessageShot::Hidden(this, Exd::MessageShot::Part::Spoilers)) {
+			_text.setSpoilerRevealed(true, anim::type::instant);
+		}
 		if (!item->_text.empty() && _text.isEmpty()){
 			// If server has allowed some text that we've trim-ed entirely,
 			// just replace it with something so that UI won't look buggy.
@@ -3015,6 +3076,7 @@ void Element::refreshReactions() {
 		: Extera::Bool(u"hide_reactions_groups"_q);
 	if (reactionsData.reactions.empty()
 		|| hidden
+		|| Exd::MessageShot::Hidden(this, Exd::MessageShot::Part::Reactions)
 		|| context() == Context::MediaEditor) {
 		setReactions(nullptr);
 		return;

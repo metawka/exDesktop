@@ -1,4 +1,5 @@
 #include "extera/extera_navigation.h"
+#include "ui/wrap/padding_wrap.h"
 
 #include "base/call_delayed.h"
 
@@ -100,6 +101,9 @@ void Save(const QStringList &order, const QStringList &hidden) {
 }
 
 [[nodiscard]] object_ptr<Ui::RpWidget> MakeDivider(QWidget *parent) {
+	if (style::Md3Grouped()) {
+		return object_ptr<Ui::FixedHeightWidget>(parent, 0);
+	}
 	return object_ptr<Ui::PlainShadow>(parent);
 }
 

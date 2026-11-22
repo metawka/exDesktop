@@ -178,9 +178,7 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 		return result;
 	}
 
-	if (!_savedMessages
-		&& !_topic
-		&& Extera::Bool(u"exd_profile_music_card"_q)) {
+	if (!_savedMessages && !_topic) {
 		if (const auto user = _peer->asUser()) {
 			const auto controller = _controller;
 			auto card = CreateProfileMusicCard(
@@ -195,6 +193,7 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 				.widget = std::move(card),
 				.shown = wrap->toggledValue(),
 			});
+			stack.setCompactTop(wrap->toggledValue());
 			stack.addPlainSeparator();
 		}
 	}

@@ -616,7 +616,11 @@ bool AddForwardMessageAction(
 					: MessageIdsList{ 1, itemId }));
 		}
 	}, &st::menuIconForward);
-	Extera::AddMessageMenuActions(menu, item, list->controller());
+	Extera::AddMessageMenuActions(
+		menu,
+		item,
+		list->controller(),
+		list->getSelectedIds());
 	return true;
 }
 

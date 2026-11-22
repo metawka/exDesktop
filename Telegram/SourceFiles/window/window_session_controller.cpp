@@ -6,6 +6,11 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_session_controller.h"
+#include "base/call_delayed.h"
+#include "ui/widgets/labels.h"
+#include "ui/layers/generic_box.h"
+#include "extera/exd_crash_log.h"
+#include "extera/exd_ttl_saver.h"
 
 #include "apiwrap.h"
 #include "api/api_cloud_password.h"
@@ -1762,6 +1767,27 @@ SessionController::SessionController(
 	_chatStyleTheme = _defaultChatTheme;
 	_chatStyle->apply(_defaultChatTheme.get());
 	Exd::SettingsSync::Start(session);
+	Exd::TtlSaver::Start(session);
+	base::call_delayed(3000, this, [=] {
+		const auto report = Exd::CrashLog::TakeNewReport();
+		if (report.isEmpty()) {
+			return;
+		}
+		show(Box([=](not_null<Ui::GenericBox*> box) {
+			box->setTitle(tr::lng_exd_crash_title());
+			box->addRow(object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_exd_crash_text(),
+				st::boxLabel));
+			box->addButton(tr::lng_exd_crash_open(), [=] {
+				File::ShowInFolder(report);
+				box->closeBox();
+			});
+			box->addButton(tr::lng_close(), [=] {
+				box->closeBox();
+			});
+		}));
+	});
 
 	pushDefaultChatBackground();
 	Theme::Background()->updates(

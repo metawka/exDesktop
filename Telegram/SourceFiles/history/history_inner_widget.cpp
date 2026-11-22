@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_inner_widget.h"
+#include "extera/exd_flood.h"
 #include "extera/extera_menu.h"
 
 #include "extera/extera_config.h"
@@ -485,6 +486,7 @@ HistoryInner::HistoryInner(
 			|| (_migrated && history == _migrated);
 	}) | rpl::on_next([=] {
 		checkAnnounceFirstMessages();
+		crl::on_main(this, [=] { Exd::Flood::Refresh(_history); });
 	}, lifetime());
 	setupThanosEffect();
 	session().data().viewRemoved(
@@ -3620,7 +3622,11 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						forwardItem(itemId);
 					}, &st::menuIconForward);
 				}
-				Extera::AddMessageMenuActions(_menu.get(), item, _controller);
+				Extera::AddMessageMenuActions(
+					_menu.get(),
+					item,
+					_controller,
+					getSelectedItems());
 				if (HistoryView::CanAddOfferToMessage(item)) {
 					_menu->addAction(tr::lng_context_add_offer(tr::now), [=] {
 						Api::AddOfferToMessage(_controller->uiShow(), itemId);
@@ -3934,7 +3940,11 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						forwardAsGroup(itemId);
 					}, &st::menuIconForward);
 				}
-				Extera::AddMessageMenuActions(_menu.get(), item, _controller);
+				Extera::AddMessageMenuActions(
+					_menu.get(),
+					item,
+					_controller,
+					getSelectedItems());
 				if (HistoryView::CanAddOfferToMessage(item)) {
 					_menu->addAction(tr::lng_context_add_offer(tr::now), [=] {
 						Api::AddOfferToMessage(_controller->uiShow(), itemId);
@@ -4650,6 +4660,7 @@ void HistoryInner::checkActivation() {
 }
 
 void HistoryInner::recountHistoryGeometry(bool initial) {
+	Exd::Flood::Refresh(_history);
 	invalidateAccessibleElements();
 	_contentWidth = _scroll->width();
 
@@ -4948,6 +4959,7 @@ void HistoryInner::changeItemsRevealHeight(int revealHeight) {
 }
 
 void HistoryInner::updateSize() {
+	Exd::Flood::Refresh(_history);
 	if (_thanosController) {
 		_thanosController->flushRemovals(historyHeight() - _revealHeight);
 	}

@@ -1,4 +1,5 @@
 #include "extera/extera_ai_chat.h"
+#include "extera/exd_plugin_porter.h"
 
 #include "extera/extera_config.h"
 #include "base/unixtime.h"
@@ -107,10 +108,40 @@ State &Chat() {
 	return 1000;
 }
 
+[[nodiscard]] bool CustomProvider() {
+	return (Int(u"ai_chat_llm_provider"_q) > 0);
+}
+
 void Request(
 		Fn<void(QString answer, bool ok)> done,
 		Fn<void(QString partial)> progress) {
 	auto &chat = Chat();
+	if (CustomProvider()) {
+		auto list = QJsonArray();
+		auto messages = std::vector<Message>();
+		for (const auto &message : chat.history) {
+			if (!message.error) {
+				messages.push_back(message);
+			}
+		}
+		const auto limit = HistoryLimit();
+		auto skip = std::max(int(messages.size()) - limit, 0);
+		while (skip < int(messages.size()) && !messages[skip].user) {
+			++skip;
+		}
+		for (auto i = skip; i < int(messages.size()); ++i) {
+			list.push_back(QJsonObject{
+				{ u"role"_q, messages[i].user ? u"user"_q : u"assistant"_q },
+				{ u"content"_q, messages[i].text },
+			});
+		}
+		Exd::PluginPorter::Complete(
+			u"ai_chat_llm"_q,
+			RolePrompt(),
+			list,
+			std::move(done));
+		return;
+	}
 	if (!chat.manager) {
 		chat.manager = new QNetworkAccessManager(qApp);
 	}
@@ -402,7 +433,9 @@ bool AiChatWaiting() {
 }
 
 QString AiChatModel() {
-	return ModelName();
+	return CustomProvider()
+		? Exd::PluginPorter::ModelFor(u"ai_chat_llm"_q)
+		: ModelName();
 }
 
 rpl::producer<> AiChatUpdates() {
@@ -425,6 +458,11 @@ bool AiChatSend(
 	LoadHistory();
 	if (text.trimmed().isEmpty() || Chat().waiting) {
 		return false;
+	} else if (CustomProvider()) {
+		if (!Exd::PluginPorter::ConfiguredFor(u"ai_chat_llm"_q)) {
+			controller->showToast(tr::lng_exd_ai_provider_setup(tr::now));
+			return false;
+		}
 	} else if (String(u"ai_chat_key"_q).trimmed().isEmpty()) {
 		ShowKeyBox(controller);
 		return false;
