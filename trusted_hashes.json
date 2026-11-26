@@ -1,5 +1,5 @@
 {
-  "offset": 354810168,
+  "offset": 354810176,
   "hashes": [
     {
       "sha256": "f03663d02e67a69e61a8b06bd9c8f89afcfbe59734d0ece18eb9ca166ecd9cfd",
@@ -3186,6 +3186,54 @@
       "channel": 2189715950,
       "message": 1269,
       "name": "ios_overscroll.plugin"
+    },
+    {
+      "sha256": "e83ef3eca6e04bbcdebaa8a6e968cbc2dd32c370e189374dce71e895f5a9a9d9",
+      "channel": 2189715950,
+      "message": 1292,
+      "name": "screen_time_pill.plugin"
+    },
+    {
+      "sha256": "28e4e67658f075ffaf1a3d8ada678235fc8da0e3bc35a8795309de2c7de7d731",
+      "channel": 2189715950,
+      "message": 1293,
+      "name": "remove_from_all_folders.plugin"
+    },
+    {
+      "sha256": "f8116a8c26dd835c3cbb91d5921b5a7c94178d1505f26db5dd2f944642145004",
+      "channel": 2189715950,
+      "message": 1294,
+      "name": "auto_leave_channels.plugin"
+    },
+    {
+      "sha256": "85a5e6532ca5aab7c6e7ce3f83c2b68412885147da59fb2ce3d3bf428738b16c",
+      "channel": 2189715950,
+      "message": 1295,
+      "name": "more_music.plugin"
+    },
+    {
+      "sha256": "c713a075bc846b7191d2a86750daa7fc9121f6ee342ffa8d784b704201beb23a",
+      "channel": 2189715950,
+      "message": 1296,
+      "name": "phone_region.plugin"
+    },
+    {
+      "sha256": "07fd3e2135b7d098123ce43c564e4766d396bf9971392763db354f23c389afa5",
+      "channel": 2189715950,
+      "message": 1297,
+      "name": "download_eta.plugin"
+    },
+    {
+      "sha256": "b446c4247ec9d1244793c8938ef036e26d2e0ff1576941bc595b3ac31c37e042",
+      "channel": 2189715950,
+      "message": 1298,
+      "name": "bottom_bar_customizer.plugin"
+    },
+    {
+      "sha256": "99298d8f13014d4afd0e89822104f5d0012a6f18ee0068182a7c7c1ee4584865",
+      "channel": 2189715950,
+      "message": 1299,
+      "name": "ios_profile_v2.plugin"
     }
   ],
   "scanned": {
