@@ -60,23 +60,28 @@
     <td width="50%" valign="top">
       <h3>Appearance</h3>
       <ul>
-        <li>Material Design Expressive</li>
+        <li>Material Design 3</li>
         <li>Smooth Scrolling</li>
-        <li>Custom interface icons</li>
-        <li>Deep customization of interface elements</li>
+        <li>Interface element settings</li>
+        <li>Icon packs</li>
         <li>Hiding Telegram Desktop interface elements</li>
       </ul>
     </td>
     <td width="50%" valign="top">
       <h3>Messages</h3>
       <ul>
+        <li>Quick messages panel</li>
+        <li>Chat settings</li>
         <li>Quick actions panel</li>
-        <li>Message sending settings</li>
         <li>Built-in QuoteReply</li>
-        <li>Scheduled sending for the maximum period for channel editors</li>
+        <li>Quick scheduled sending for the maximum period for channel editors</li>
         <li>Forwarding messages from other accounts</li>
         <li>Message appearance settings</li>
-        <li>Message translation with formatting preserved</li>
+        <li>Message accent color settings</li>
+        <li>Custom left and right click actions for messages</li>
+        <li>Pinning quick reactions</li>
+        <li>Unlimited recent stickers / GIFs</li>
+        <li>Ping word settings</li>
       </ul>
     </td>
   </tr>
@@ -84,24 +89,29 @@
     <td width="50%" valign="top">
       <h3>Input and media</h3>
       <ul>
-        <li>Calculations in the input field</li>
+        <li>Inline Results</li>
         <li>Character counter</li>
-        <li>Favorite emoji</li>
-        <li>Local premium emoji and Telegram Premium features</li>
+        <li>Inline preview of .txt / .md and code files</li>
+        <li>Favorite emoji in the list</li>
+        <li>Local premium emoji and Telegram Premium features (compatible with exteraGram, AyuGram, exteraless and other forks)</li>
         <li>Creating video messages from video files</li>
+        <li>Resizing video messages and stickers</li>
       </ul>
     </td>
     <td width="50%" valign="top">
       <h3>Privacy</h3>
       <ul>
         <li>AyuGram features: ghost mode, saving deleted messages and edit history</li>
+        <li>Local Telegram Premium</li>
+        <li>Deeply configurable Streamer Mode</li>
         <li>No limit on the number of accounts</li>
         <li>Removal of Telegram restrictions</li>
         <li>Hiding the phone number</li>
         <li>Showing user IDs</li>
         <li>Showing registration date</li>
-        <li>Deeply configurable Streamer Mode</li>
         <li>Showing hidden group members</li>
+        <li>Warning when pasting passwords / keys</li>
+        <li>Auto-detection of spoofed, phishing and referral links</li>
       </ul>
     </td>
   </tr>
@@ -109,24 +119,25 @@
     <td width="50%" valign="top">
       <h3>Network and notifications</h3>
       <ul>
-        <li>Built-in tg-ws-proxy on Windows</li>
+        <li>Built-in tg-ws-proxy</li>
         <li>Faster downloads and uploads</li>
         <li>Notification appearance settings</li>
         <li>Custom notification sound</li>
-        <li>Local Telegram Premium</li>
         <li>Automatic updates</li>
       </ul>
     </td>
     <td width="50%" valign="top">
       <h3>Plugins and AI</h3>
       <ul>
-        <li>Compatible plugin engine for .plugin / .elyx / .eaf formats (in progress)</li>
-        <li>Built-in AI assistant for porting plugins</li>
+        <li>Compatible plugin engine for .plugin / .elyx / .eaf formats (under active development)</li>
+        <li>Built-in AI porting of incompatible Android plugins</li>
         <li>Local sandbox protecting against malicious plugins</li>
         <li>Global plugin permission settings</li>
-        <li>PluginGuard, a powerful vector model for plugin security checks</li>
-        <li>Built-in blocker for installing malicious plugins</li>
-        <li>AI Chat [beta]</li>
+        <li>Tracking plugin activity in the system</li>
+        <li>KPM PluginGuard, a powerful vector model for plugin security checks</li>
+        <li>AI check of plugins being installed</li>
+        <li>Automatic blocking of malicious plugin installation</li>
+        <li>AI Chat (beta)</li>
       </ul>
     </td>
   </tr>
