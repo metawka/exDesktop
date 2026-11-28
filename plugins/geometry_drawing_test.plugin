@@ -1,0 +1,218 @@
+"""
+Geometry & Drawing Hooks Test Plugin for exDesktop
+Tests onDraw, dispatchDraw, onMeasure, onLayout hooks via Android geometry translation on Desktop (Linux, Windows, macOS).
+"""
+
+_IS_MAIN = (__name__ == "__main__")
+
+__id__ = "geometry_drawing_test"
+__name__ = "Geometry & Drawing Hooks Test"
+__description__ = "Tests onDraw, dispatchDraw, onMeasure, onLayout hooks via Android geometry translation on Desktop"
+__author__ = "exDesktop"
+__version__ = "1.0.0"
+__min_version__ = "1.0.0"
+
+import sys
+import os
+
+# Ensure extera python modules can be imported if run standalone
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(_THIS_DIR)
+_EXTERA_PY = os.path.join(_REPO_ROOT, "Telegram", "SourceFiles", "extera", "python")
+if _EXTERA_PY not in sys.path:
+    sys.path.insert(0, _EXTERA_PY)
+
+try:
+    import _extera
+except ImportError:
+    import types
+    _mock_ext = types.ModuleType("_extera")
+    def _log(msg):
+        print(f"[_extera.log] {msg}")
+    def _call_native(name, *args):
+        return None
+    _mock_ext.log = _log
+    _mock_ext.call_native = _call_native
+    sys.modules["_extera"] = _mock_ext
+    _extera = _mock_ext
+
+import _compat
+_compat.install()
+
+from base_plugin import BasePlugin, MethodHook
+from android_views import (
+    View, ViewGroup, ChatMessageCell, FrameLayout, LinearLayout, TextView, ImageView,
+    MeasureSpec, GeometryTranslator, Paint, Canvas, Bitmap, Rect, RectF
+)
+from de.robv.android.xposed import XposedBridge, XC_MethodHook
+
+
+class GeometryDrawingTestPlugin(BasePlugin):
+    """
+    Test plugin validating Android drawing and geometry hooks translated to Desktop.
+    """
+
+    def on_plugin_load(self):
+        _extera.log("Starting GeometryDrawingTestPlugin verification...")
+        self.run_geometry_translation_tests()
+        self.run_view_hooks_tests()
+        self.run_xposed_bridge_tests()
+        _extera.log("ALL GEOMETRY & DRAWING HOOK TESTS PASSED SUCCESSFULLY!")
+
+    def run_geometry_translation_tests(self):
+        """Validates GeometryTranslator conversion between Android dp/specs and Desktop px."""
+        gt = GeometryTranslator
+        # Test dp to px and back
+        px = gt.dp_to_desktop(16.0, scale=1.5)
+        assert px == 24, f"Expected 24px, got {px}"
+        dp = gt.desktop_to_dp(24, scale=1.5)
+        assert abs(dp - 16.0) < 1e-3, f"Expected 16.0dp, got {dp}"
+
+        # Test bounds translation
+        x, y, w, h = gt.android_to_desktop_bounds(10, 20, 110, 80)
+        assert (x, y, w, h) == (10, 20, 100, 60), f"Unexpected bounds: {x, y, w, h}"
+        l, t, r, b = gt.desktop_to_android_bounds(10, 20, 100, 60)
+        assert (l, t, r, b) == (10, 20, 110, 80), f"Unexpected bounds: {l, t, r, b}"
+
+        # Test MeasureSpec unpacking
+        spec = MeasureSpec.makeMeasureSpec(350, MeasureSpec.EXACTLY)
+        assert MeasureSpec.getMode(spec) == MeasureSpec.EXACTLY
+        assert MeasureSpec.getSize(spec) == 350
+        _extera.log("Geometry translation tests passed.")
+
+    def run_view_hooks_tests(self):
+        """Validates onMeasure, onLayout, onDraw, and dispatchDraw hooks using BasePlugin.hook_method."""
+        # 1. onMeasure hook
+        class CustomMeasureHook(MethodHook):
+            def before_hooked_method(self, param):
+                # Clamp incoming measure specs
+                param.args[0] = MeasureSpec.makeMeasureSpec(300, MeasureSpec.EXACTLY)
+                param.args[1] = MeasureSpec.makeMeasureSpec(150, MeasureSpec.EXACTLY)
+
+            def after_hooked_method(self, param):
+                # Enforce desktop minimum size
+                param.thisObject.setMeasuredDimension(400, 180)
+
+        self.hook_method(View, "onMeasure", CustomMeasureHook())
+
+        v = View()
+        v.measure(
+            MeasureSpec.makeMeasureSpec(100, MeasureSpec.AT_MOST),
+            MeasureSpec.makeMeasureSpec(100, MeasureSpec.AT_MOST)
+        )
+        assert v.getMeasuredWidth() == 400, f"Expected 400, got {v.getMeasuredWidth()}"
+        assert v.getMeasuredHeight() == 180, f"Expected 180, got {v.getMeasuredHeight()}"
+        _extera.log("onMeasure hook verified.")
+
+        # 2. onLayout hook
+        layout_events = []
+
+        class CustomLayoutHook(MethodHook):
+            def after_hooked_method(self, param):
+                view = param.thisObject
+                layout_events.append((view.getWidth(), view.getHeight()))
+
+        self.hook_method(View, "onLayout", CustomLayoutHook())
+        v.layout(20, 30, 420, 210)
+        assert v.getWidth() == 400
+        assert v.getHeight() == 180
+        assert len(layout_events) == 1
+        assert layout_events[0] == (400, 180)
+        _extera.log("onLayout hook verified.")
+
+        # 3. onDraw hook
+        class CustomDrawHook(MethodHook):
+            def before_hooked_method(self, param):
+                canvas = param.args[0]
+                paint = Paint()
+                paint.setColor(0xFF2196F3)
+                canvas.drawRect(5, 5, 55, 35, paint)
+
+            def after_hooked_method(self, param):
+                canvas = param.args[0]
+                paint = Paint()
+                paint.setColor(0xFFFFFFFF)
+                canvas.drawText("EXD", 10, 20, paint)
+
+        self.hook_method(View, "onDraw", CustomDrawHook())
+        bmp = Bitmap(400, 180)
+        canvas = Canvas(bmp)
+        v.draw(canvas)
+
+        op_names = [op["op"] for op in bmp.ops]
+        assert "rect" in op_names, f"Expected 'rect' in draw ops: {op_names}"
+        assert "text" in op_names, f"Expected 'text' in draw ops: {op_names}"
+        _extera.log("onDraw hook verified.")
+
+        # 4. dispatchDraw hook on ViewGroup
+        container = FrameLayout()
+        child = TextView(text="Hello ExDesktop")
+        container.addView(child)
+
+        class ContainerDrawHook(MethodHook):
+            def before_hooked_method(self, param):
+                canvas = param.args[0]
+                canvas.drawColor(0xFF222222)
+
+            def after_hooked_method(self, param):
+                canvas = param.args[0]
+                p = Paint()
+                p.setColor(0xFFFF9800)
+                canvas.drawCircle(50, 50, 20, p)
+
+        self.hook_method(ViewGroup, "dispatchDraw", ContainerDrawHook())
+
+        container.measure(
+            MeasureSpec.makeMeasureSpec(300, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(150, MeasureSpec.EXACTLY)
+        )
+        container.layout(0, 0, 300, 150)
+
+        bmp_group = Bitmap(300, 150)
+        c_group = Canvas(bmp_group)
+        container.draw(c_group)
+
+        group_ops = [op["op"] for op in bmp_group.ops]
+        assert "rect" in group_ops, f"Expected 'rect' in ops: {group_ops}"
+        assert "circle" in group_ops, f"Expected 'circle' in ops: {group_ops}"
+        _extera.log("dispatchDraw hook verified.")
+
+    def run_xposed_bridge_tests(self):
+        """Validates XposedBridge.hookMethod on ChatMessageCell."""
+        cell_draw_called = []
+
+        class CellXposedHook(XC_MethodHook):
+            def beforeHookedMethod(self, param):
+                canvas = param.args[0]
+                paint = Paint()
+                paint.setColor(0xFF4CAF50)
+                canvas.drawRoundRect(RectF(10, 10, 110, 50), 8, 8, paint)
+                cell_draw_called.append("before")
+
+            def afterHookedMethod(self, param):
+                canvas = param.args[0]
+                paint = Paint()
+                paint.setColor(0xFF000000)
+                canvas.drawText("Verified", 15, 30, paint)
+                cell_draw_called.append("after")
+
+        m = ChatMessageCell.getMethod("onDraw")
+        XposedBridge.hookMethod(m, CellXposedHook())
+
+        cell = ChatMessageCell()
+        cell.layout(0, 0, 450, 120)
+        bmp_cell = Bitmap(450, 120)
+        canvas_cell = Canvas(bmp_cell)
+        cell.draw(canvas_cell)
+
+        assert cell_draw_called == ["before", "after"], f"Unexpected call trace: {cell_draw_called}"
+        ops = [op["op"] for op in bmp_cell.ops]
+        assert "rrect" in ops, f"Expected rrect in ops: {ops}"
+        assert "text" in ops, f"Expected text in ops: {ops}"
+        _extera.log("XposedBridge ChatMessageCell hooks verified.")
+
+
+if _IS_MAIN:
+    plugin = GeometryDrawingTestPlugin()
+    plugin.on_plugin_load()
+    print("Standalone test execution passed successfully!")
