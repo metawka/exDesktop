@@ -259,6 +259,9 @@ void Members::setupList() {
 		this,
 		_listController.get());
 	Ui::SetupGroupedRowBackground(_list.data());
+	if (style::Md3Enabled()) {
+		_list->setProperty("exdCardList", true);
+	}
 	_list->scrollToRequests(
 	) | rpl::on_next([this](Ui::ScrollToRequest request) {
 		auto addmin = (request.ymin < 0 || !_header)

@@ -192,4 +192,16 @@ introQrStepMargins: margins(20px, 8px, 0px, 0px);
 introQrSkipTop: 360px;
 introQrCenterSize: 44px;
 introQrPlane: icon {{ "intro_qr_plane", activeButtonFg }};
-exdIntroFieldRadius: 12px;
+exdIntroFieldRadius: 16px;
+exdIntroCountry: InputField(introCountry) {
+	border: 0px;
+	borderActive: 0px;
+}
+exdIntroCountryCode: InputField(introCountryCode) {
+	border: 0px;
+	borderActive: 0px;
+}
+exdIntroPhone: InputField(introPhone) {
+	border: 0px;
+	borderActive: 0px;
+}

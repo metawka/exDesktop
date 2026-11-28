@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_top_bar_widget.h"
+#include "boxes/peers/edit_participants_box.h"
+#include "history/admin_log/history_admin_log_section.h"
 
 #include "history/history.h"
 #include "history/view/history_view_send_action.h"
@@ -127,12 +129,15 @@ TopBarWidget::TopBarWidget(
 , _forward(this, tr::lng_selected_forward(), st::defaultActiveButton)
 , _sendNow(this, tr::lng_selected_send_now(), st::defaultActiveButton)
 , _delete(this, tr::lng_selected_delete(), st::defaultActiveButton)
+, _exdShot(this, tr::lng_ayu_MessageShotTopBarText(), st::defaultActiveButton)
 , _back(this, st::historyTopBarBack)
 , _cancelChoose(this, st::topBarCloseChoose)
 , _call(this, st::topBarCall)
 , _groupCall(this, st::topBarGroupCall)
 , _search(this, st::topBarSearch)
 , _exdPlugins(this, st::exdTopBarPlugins)
+, _exdRecentActions(this, st::exdTopBarRecentActions)
+, _exdAdmins(this, st::exdTopBarAdmins)
 , _infoToggle(this, st::topBarInfo)
 , _menuToggle(this, st::topBarMenuToggle)
 , _titlePeerText(st::windowMinWidth / 3)
@@ -143,6 +148,7 @@ TopBarWidget::TopBarWidget(
 	_forward->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
 	_sendNow->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
 	_delete->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
+	_exdShot->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
 
 	Lang::Updated(
 	) | rpl::on_next([=] {
@@ -155,6 +161,8 @@ TopBarWidget::TopBarWidget(
 	_sendNow->setWidthChangedCallback([=] { updateControlsGeometry(); });
 	_delete->setClickedCallback([=] { _deleteSelection.fire({}); });
 	_delete->setWidthChangedCallback([=] { updateControlsGeometry(); });
+	_exdShot->setClickedCallback([=] { _exdShotSelection.fire({}); });
+	_exdShot->setWidthChangedCallback([=] { updateControlsGeometry(); });
 	_clear->setClickedCallback([=] { _clearSelection.fire({}); });
 	_call->setClickedCallback([=] { call({}); });
 	_call->setAcceptBoth(true, true);
@@ -269,6 +277,22 @@ TopBarWidget::TopBarWidget(
 	_call->setAccessibleName(tr::lng_profile_action_short_call(tr::now));
 	_groupCall->setAccessibleName(tr::lng_group_call_title(tr::now));
 	_search->setAccessibleName(tr::lng_shortcuts_search(tr::now));
+	_exdRecentActions->setClickedCallback([=] {
+		if (const auto peer = _activeChat.key.peer()) {
+			if (const auto channel = peer->asChannel()) {
+				_controller->showSection(
+					std::make_shared<AdminLog::SectionMemento>(channel));
+			}
+		}
+	});
+	_exdAdmins->setClickedCallback([=] {
+		if (const auto peer = _activeChat.key.peer()) {
+			ParticipantsBoxController::Start(
+				_controller,
+				peer,
+				ParticipantsBoxController::Role::Admins);
+		}
+	});
 	_exdPlugins->setAccessibleName(tr::lng_exd_plugins_actions(tr::now));
 	_exdPlugins->setClickedCallback([=] {
 		const auto peer = _activeChat.key.peer();
@@ -1241,6 +1265,16 @@ void TopBarWidget::updateSearchVisibility() {
 	_exdPlugins->setVisible(searchAllowedMode
 		&& !_chooseForReportReason
 		&& pluginActions > 0);
+	const auto exdChannel = (_activeChat.section != Section::ChatsList
+		&& _activeChat.key.peer())
+		? _activeChat.key.peer()->asChannel()
+		: nullptr;
+	const auto exdAdmin = exdChannel
+		&& (exdChannel->hasAdminRights() || exdChannel->amCreator());
+	_exdRecentActions->setVisible(!_chooseForReportReason && exdAdmin);
+	_exdAdmins->setVisible(!_chooseForReportReason
+		&& exdChannel
+		&& (exdChannel->isMegagroup() || exdAdmin));
 }
 
 void TopBarWidget::updateInfoButtonVisibility() {
@@ -1281,6 +1315,7 @@ void TopBarWidget::updateControlsGeometry() {
 	auto buttonsWidth = (_forward->isHidden() ? 0 : _forward->contentWidth())
 		+ (_sendNow->isHidden() ? 0 : _sendNow->contentWidth())
 		+ (_delete->isHidden() ? 0 : _delete->contentWidth())
+		+ (_exdShot->isHidden() ? 0 : _exdShot->contentWidth())
 		+ _clear->width();
 	buttonsWidth += buttonsLeft + st::topBarActionSkip * 3 + exdInset;
 
@@ -1291,6 +1326,7 @@ void TopBarWidget::updateControlsGeometry() {
 	_forward->setFullWidth(buttonFullWidth);
 	_sendNow->setFullWidth(buttonFullWidth);
 	_delete->setFullWidth(buttonFullWidth);
+	_exdShot->setFullWidth(buttonFullWidth);
 
 	selectedButtonsTop += (height() - _forward->height()) / 2;
 
@@ -1305,6 +1341,11 @@ void TopBarWidget::updateControlsGeometry() {
 	}
 
 	_delete->moveToLeft(buttonsLeft, selectedButtonsTop);
+	if (!_delete->isHidden()) {
+		buttonsLeft += _delete->width() + st::topBarActionSkip;
+	}
+
+	_exdShot->moveToLeft(buttonsLeft, selectedButtonsTop);
 	{
 		const auto large = st::topBarActionButtonLargeRadius;
 		const auto &buttonSt = st::defaultActiveButton;
@@ -1315,6 +1356,7 @@ void TopBarWidget::updateControlsGeometry() {
 			_forward.data(),
 			_sendNow.data(),
 			_delete.data(),
+			_exdShot.data(),
 		};
 		auto first = (Ui::RoundButton*)(nullptr);
 		auto last = (Ui::RoundButton*)(nullptr);
@@ -1426,6 +1468,14 @@ void TopBarWidget::updateControlsGeometry() {
 		_groupCall->moveToRight(_rightTaken, otherButtonsTop);
 		_rightTaken += _call->width();
 	}
+	_exdRecentActions->moveToRight(_rightTaken, otherButtonsTop);
+	if (!_exdRecentActions->isHidden()) {
+		_rightTaken += _exdRecentActions->width();
+	}
+	_exdAdmins->moveToRight(_rightTaken, otherButtonsTop);
+	if (!_exdAdmins->isHidden()) {
+		_rightTaken += _exdAdmins->width();
+	}
 	_exdPlugins->moveToRight(_rightTaken, otherButtonsTop);
 	if (!_exdPlugins->isHidden()) {
 		_rightTaken += _exdPlugins->width();
@@ -1468,6 +1518,7 @@ void TopBarWidget::updateControlsVisibility() {
 	_delete->setVisible(_canDelete && visible);
 	_forward->setVisible(_canForward && visible);
 	_sendNow->setVisible(_canSendNow && visible);
+	_exdShot->setVisible(visible && !_chooseForReportReason);
 
 
 	const auto isOneColumn = _controller->adaptive().isOneColumn();
@@ -1617,15 +1668,14 @@ void TopBarWidget::updateMembersShowArea() {
 }
 
 bool TopBarWidget::showSelectedState() const {
-	return (_selectedCount > 0)
-		&& (_canDelete || _canForward || _canSendNow);
+	return (_selectedCount > 0);
 }
 
 void TopBarWidget::showSelected(SelectedState state) {
 	auto canDelete = (state.count > 0 && state.count == state.canDeleteCount);
 	auto canForward = (state.count > 0 && state.count == state.canForwardCount);
 	auto canSendNow = (state.count > 0 && state.count == state.canSendNowCount);
-	auto count = (!canDelete && !canForward && !canSendNow) ? 0 : state.count;
+	auto count = state.count;
 	if (_selectedCount == count
 		&& _canDelete == canDelete
 		&& _canForward == canForward
@@ -1652,10 +1702,12 @@ void TopBarWidget::showSelected(SelectedState state) {
 		_forward->setNumbersText(_selectedCount);
 		_sendNow->setNumbersText(_selectedCount);
 		_delete->setNumbersText(_selectedCount);
+		_exdShot->setNumbersText(_selectedCount);
 		if (!wasSelectedState) {
 			_forward->finishNumbersAnimation();
 			_sendNow->finishNumbersAnimation();
 			_delete->finishNumbersAnimation();
+			_exdShot->finishNumbersAnimation();
 		}
 	}
 	if (visibilityChanged

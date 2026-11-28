@@ -84,6 +84,7 @@ public:
 		return (_mode == Mode::Grid) && isRoundedInBubbleBottom();
 	}
 	void updateNeedBubbleState() override;
+	void revealSpoilers() override;
 	bool needsBubble() const override;
 	bool customInfoLayout() const override {
 		return (_mode != Mode::Column);

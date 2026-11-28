@@ -482,9 +482,7 @@ std::unique_ptr<Ui::Text::CustomEmoji> CustomEmojiManager::create(
 		SizeTag tag,
 		int sizeOverride,
 		LoaderFactory factory) {
-	auto &instances = _instances[SizeIndex(tag)];
-	auto i = instances.find(documentId);
-	if (i == end(instances)) {
+	const auto make = [&] {
 		using Loading = Ui::CustomEmoji::Loading;
 		const auto repaint = [=](
 				not_null<Ui::CustomEmoji::Instance*> instance,
@@ -492,19 +490,38 @@ std::unique_ptr<Ui::Text::CustomEmoji> CustomEmojiManager::create(
 			repaintLater(instance, request);
 		};
 		auto [loader, setId, colored] = factory();
-		i = instances.emplace(
-			documentId,
-			std::make_unique<Ui::CustomEmoji::Instance>(Loading{
-				std::move(loader),
-				prepareNonExactPreview(documentId, tag, sizeOverride)
-			}, std::move(repaint))).first;
+		auto result = std::make_unique<Ui::CustomEmoji::Instance>(Loading{
+			std::move(loader),
+			prepareNonExactPreview(documentId, tag, sizeOverride)
+		}, std::move(repaint));
 		if (colored) {
-			i->second->setColored();
+			result->setColored();
 		}
-	} else if (!i->second->hasImagePreview()) {
+		return result;
+	};
+	auto instance = (Ui::CustomEmoji::Instance*)nullptr;
+	if (sizeOverride) {
+		const auto key = std::make_tuple(
+			SizeIndex(tag),
+			documentId,
+			sizeOverride);
+		auto i = _sizedInstances.find(key);
+		if (i == end(_sizedInstances)) {
+			i = _sizedInstances.emplace(key, make()).first;
+		}
+		instance = i->second.get();
+	} else {
+		auto &instances = _instances[SizeIndex(tag)];
+		auto i = instances.find(documentId);
+		if (i == end(instances)) {
+			i = instances.emplace(documentId, make()).first;
+		}
+		instance = i->second.get();
+	}
+	if (!instance->hasImagePreview()) {
 		auto preview = prepareNonExactPreview(documentId, tag, sizeOverride);
 		if (preview.isImage()) {
-			i->second->updatePreview(std::move(preview));
+			instance->updatePreview(std::move(preview));
 		}
 	}
 	const auto defaultWidth = st::emojiSize + 2 * st::emojiPadding;
@@ -514,7 +531,7 @@ std::unique_ptr<Ui::Text::CustomEmoji> CustomEmojiManager::create(
 			Ui::Emoji::GetCustomSizeNormal())
 		: defaultWidth;
 	return std::make_unique<Ui::CustomEmoji::Object>(
-		i->second.get(),
+		instance,
 		std::move(update),
 		width);
 }
@@ -810,6 +827,11 @@ void CustomEmojiManager::fillColoredFlags(not_null<DocumentData*> document) {
 			const auto i = instances.find(id);
 			if (i != end(instances)) {
 				i->second->setColored();
+			}
+		}
+		for (auto &[key, instance] : _sizedInstances) {
+			if (std::get<1>(key) == id) {
+				instance->setColored();
 			}
 		}
 	}

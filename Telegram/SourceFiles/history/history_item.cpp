@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_item.h"
+#include "ayu/features/message_shot/message_shot.h"
 #include "extera/exd_radar.h"
 #include "extera/extera_config.h"
 #include "extera/extera_emoji.h"
@@ -3999,11 +4000,15 @@ void HistoryItem::updateReactionsUnknown() {
 
 const std::vector<Data::MessageReaction> &HistoryItem::reactions() const {
 	static const auto kEmpty = std::vector<Data::MessageReaction>();
-	return _reactions ? _reactions->list() : kEmpty;
+	return (_reactions
+		&& !AyuFeatures::MessageShot::ignoreRender(AyuFeatures::MessageShot::RenderPart::Reactions))
+		? _reactions->list()
+		: kEmpty;
 }
 
 std::vector<Data::MessageReaction> HistoryItem::reactionsWithLocal() const {
-	if (!_reactions) {
+	if (!_reactions
+		|| AyuFeatures::MessageShot::ignoreRender(AyuFeatures::MessageShot::RenderPart::Reactions)) {
 		return {};
 	}
 	auto result = _reactions->list();

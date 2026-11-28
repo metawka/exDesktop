@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_forum_topic.h"
 
+#include "extera/exd_hidden_topics.h"
 #include "data/data_channel.h"
 #include "data/data_changes.h"
 #include "data/data_forum.h"
@@ -234,6 +235,9 @@ ForumTopic::ForumTopic(not_null<Forum*> forum, MsgId rootId)
 , _creationDate(creating() ? base::unixtime::now() : 0)
 , _flags(creating() ? Flag::My : Flag()) {
 	Thread::setMuted(owner().notifySettings().isMuted(this));
+	_exdHidden = Exd::HiddenTopics::Contains(
+		forum->history()->peer->id,
+		rootId);
 
 	_sendActionPainter->setTopic(this);
 	subscribeToUnreadChanges();
@@ -734,7 +738,24 @@ int ForumTopic::fixedOnTopIndex() const {
 	return 0;
 }
 
+bool ForumTopic::exdHidden() const {
+	return _exdHidden;
+}
+
+void ForumTopic::exdSetHidden(bool hidden) {
+	if (_exdHidden == hidden) {
+		return;
+	}
+	const auto was = chatListUnreadState();
+	_exdHidden = hidden;
+	notifyUnreadStateChange(was);
+	updateChatListExistence();
+}
+
 bool ForumTopic::shouldBeInChatList() const {
+	if (_exdHidden) {
+		return false;
+	}
 	return isPinnedDialog(FilterId())
 		|| !lastMessageKnown()
 		|| (lastMessage() != nullptr);
@@ -917,6 +938,9 @@ Dialogs::BadgesState ForumTopic::chatListBadgesState() const {
 		chatListUnreadState(),
 		Dialogs::CountInBadge::Messages,
 		Dialogs::IncludeInBadge::All);
+	if (_exdHidden) {
+		return result;
+	}
 	if (!result.unread && _replies->inboxReadTillId() < 2) {
 		result.unread = (bot() || (channel() && channel()->amIn()))
 			&& (_lastKnownServerMessageId > history()->inboxReadTillId());
@@ -929,6 +953,10 @@ Dialogs::UnreadState ForumTopic::unreadStateFor(
 		int count,
 		bool known) const {
 	auto result = Dialogs::UnreadState();
+	if (_exdHidden) {
+		result.known = known;
+		return result;
+	}
 	const auto muted = this->muted();
 	result.messages = count;
 	result.chats = count ? 1 : 0;

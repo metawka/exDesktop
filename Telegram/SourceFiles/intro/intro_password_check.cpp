@@ -32,9 +32,9 @@ PasswordCheckWidget::PasswordCheckWidget(
 	not_null<Data*> data)
 : Step(parent, account, data)
 , _passwordState(getData()->pwdState)
-, _pwdField(this, st::introPassword, tr::lng_signin_password())
+, _pwdField(this, style::Md3Enabled() ? st::exdIntroCountry : st::introPassword, tr::lng_signin_password())
 , _pwdHint(this, st::introPasswordHint)
-, _codeField(this, st::introPassword, tr::lng_signin_code())
+, _codeField(this, style::Md3Enabled() ? st::exdIntroCountry : st::introPassword, tr::lng_signin_code())
 , _toRecover(this, tr::lng_signin_recover(tr::now))
 , _toPassword(this, tr::lng_signin_try_password(tr::now)) {
 	Expects(_passwordState.hasPassword);

@@ -128,6 +128,20 @@ HighlightOverlay::HighlightOverlay(
 		p.setPen(Qt::NoPen);
 		p.setBrush(color);
 
+		const auto button = style::Md3Grouped()
+			? dynamic_cast<Ui::SettingsButton*>(_target.data())
+			: nullptr;
+		if (button && button->width() > style::ConvertScale(10) * 20) {
+			auto dummy = QImage(1, 1, QImage::Format_ARGB32_Premultiplied);
+			auto dp = QPainter(&dummy);
+			auto path = Ui::PaintGroupedRow(dp, button, QColor(0, 0, 0), 0.);
+			dp.end();
+			path.translate(button->pos() - pos());
+			PainterHighQualityEnabler hq(p);
+			p.fillPath(path, color);
+			return;
+		}
+
 		const auto r = rect();
 		switch (_args.shape) {
 		case HighlightShape::Rect:

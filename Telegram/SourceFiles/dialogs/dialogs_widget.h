@@ -422,6 +422,7 @@ private:
 	QString _lastSearchText;
 	bool _searchSuggestionsLocked = false;
 	bool _searchHasFocus = false;
+	crl::time _exdChatOpenedAt = 0;
 	bool _searchEngaged = false;
 	bool _processingSearch = false;
 

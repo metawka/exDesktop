@@ -280,6 +280,12 @@ Widget::Widget(
 , _searchTimer([=] { search(); })
 , _peerSearch(&controller->session(), Api::PeerSearch::Type::WithSponsored)
 , _singleMessageSearch(&controller->session()) {
+	controller->activeChatChanges(
+	) | rpl::on_next([=](Dialogs::Key key) {
+		if (key) {
+			_exdChatOpenedAt = crl::now();
+		}
+	}, lifetime());
 	if (st::dialogsFilterIconLeft > 0) {
 		const auto icon = Ui::CreateChild<Ui::RpWidget>(_search.data());
 		icon->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -1938,6 +1944,22 @@ void Widget::updateHasFocus(
 	const auto has = (focused == _search.data())
 		|| (focused == _search->rawTextEdit());
 	if (has && !_searchHasFocus) {
+		const auto justOpened = controller()->activeChatCurrent()
+			&& _exdChatOpenedAt
+			&& (crl::now() - _exdChatOpenedAt < crl::time(1500))
+			&& (reason != Qt::MouseFocusReason)
+			&& (reason != Qt::ShortcutFocusReason);
+		if (justOpened
+			&& _search->getLastText().isEmpty()
+			&& !_searchState.inChat
+			&& !_childList) {
+			crl::on_main(this, [=] {
+				if (_search->rawTextEdit()->hasFocus()) {
+					setFocus();
+				}
+			});
+			return;
+		}
 		if ((reason == Qt::TabFocusReason
 				|| reason == Qt::BacktabFocusReason)
 			&& _search->getLastText().isEmpty()

@@ -909,4 +909,15 @@ TodoList::~TodoList() {
 	}
 }
 
+void TodoList::revealSpoilers() {
+	if (_title.hasSpoilers()) {
+		_title.setSpoilerRevealed(true, anim::type::instant);
+	}
+	for (auto &task : _tasks) {
+		if (task.text.hasSpoilers()) {
+			task.text.setSpoilerRevealed(true, anim::type::instant);
+		}
+	}
+}
+
 } // namespace HistoryView

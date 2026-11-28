@@ -1920,6 +1920,15 @@ historyComposePillRadius: 0px;
 historyComposePillBg: historyComposeAreaBg;
 historyComposePillMargins: margins(0px, 0px, 0px, 0px);
 exdPinnedPlaqueMargins: margins(8px, 2px, 8px, 4px);
+exdTopicReopenButton: FlatButton(historyContactStatusButton) {
+	height: 40px;
+	textTop: 11px;
+	bgColor: transparent;
+	overBgColor: transparent;
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: transparent;
+	}
+}
 exdAutocompleteIslandMargins: margins(4px, 0px, 4px, 6px);
 exdAutocompleteIslandPadding: 6px;
 exdAutocompleteIslandRadius: 18px;

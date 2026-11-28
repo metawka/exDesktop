@@ -137,7 +137,9 @@ if [ "$OS" = "Linux" ]; then
 	mv "$TMP/unpack/exDesktop" "$PREFIX"
 	TGWS_DIR="$PREFIX/python/tgws"
 	mkdir -p "$HOME/.local/bin"
-	ln -sf "$PREFIX/exDesktop" "$HOME/.local/bin/exdesktop"
+	rm -f "$HOME/.local/bin/exdesktop"
+	printf '#!/bin/sh\nexec "%s/exDesktop" "$@"\n' "$PREFIX" > "$HOME/.local/bin/exdesktop"
+	chmod +x "$HOME/.local/bin/exdesktop"
 	if [ "$OPT_MENU" = 1 ]; then
 		APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 		ICONS="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"

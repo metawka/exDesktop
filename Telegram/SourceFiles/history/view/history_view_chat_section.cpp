@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_chat_section.h"
+#include "ayu/features/message_shot/message_shot.h"
 #include "styles/style_menu_icons.h"
 #include "extera/extera_config.h"
 #include "extera/exd_safety.h"
@@ -508,6 +509,10 @@ ChatWidget::ChatWidget(
 	_topBar->deleteSelectionRequest(
 	) | rpl::on_next([=] {
 		confirmDeleteSelected();
+	}, _topBar->lifetime());
+	_topBar->exdShotSelectionRequest(
+	) | rpl::on_next([=] {
+		AyuFeatures::MessageShot::Wrapper(_inner, [=] { clearSelected(); });
 	}, _topBar->lifetime());
 	_topBar->forwardSelectionRequest(
 	) | rpl::on_next([=] {
@@ -4285,6 +4290,13 @@ void ChatWidget::replyToMessage(FullReplyTo id) {
 	if (const auto item = _history->owner().message(id.messageId)) {
 		if (Extera::Plugins::InterceptClientEvent(u"reply"_q, item)) {
 			return;
+		}
+		if (Extera::Bool(u"quote_reply"_q) && id.quote.empty()) {
+			const auto text = item->originalText();
+			if (!text.empty()) {
+				id.quote = Ui::Text::Mid(text, 0, 1024);
+				id.quoteOffset = 0;
+			}
 		}
 	}
 	_composeControls->replyToMessage(std::move(id));

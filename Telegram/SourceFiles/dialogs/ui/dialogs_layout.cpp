@@ -63,6 +63,14 @@ const char kOptionDialogsMuteIcon[] = "dialogs-mute-icon";
 
 namespace {
 
+[[nodiscard]] int ExdRightPadding(const style::DialogRow &st) {
+	return Extera::Md3::RoundedSelection()
+		? std::max(
+			st.padding.right(),
+			st::dialogsRowActiveMargins.right() + st::dialogsRowActiveRadius / 2)
+		: st.padding.right();
+}
+
 base::options::toggle DialogsMuteIcon({
 	.id = kOptionDialogsMuteIcon,
 	.name = "Mute icon in dialogs",
@@ -340,7 +348,7 @@ int PaintWideCounter(
 		p,
 		context,
 		badgesState,
-		context.width - context.st->padding.right(),
+		context.width - ExdRightPadding(*context.st),
 		top,
 		displayPinnedIcon,
 		texttop,
@@ -678,11 +686,7 @@ void PaintRow(
 	}
 
 	const auto nameleft = context.st->nameLeft;
-	const auto exdRightPadding = Extera::Md3::RoundedSelection()
-		? std::max(
-			context.st->padding.right(),
-			st::dialogsRowActiveMargins.right() + st::dialogsRowActiveRadius / 2)
-		: context.st->padding.right();
+	const auto exdRightPadding = ExdRightPadding(*context.st);
 	if (context.topicsExpanded > 0.) {
 		PaintExpandedTopicsBar(p, context.topicsExpanded);
 	}
@@ -1595,7 +1599,7 @@ void PaintCollapsedRow(
 			st::dialogsUnreadHeight);
 	}
 	if (!context.narrow && unread) {
-		const auto unreadRight = context.width - context.st->padding.right();
+		const auto unreadRight = context.width - ExdRightPadding(*context.st);
 		UnreadBadgeStyle st;
 		st.muted = true;
 		PaintUnreadBadge(

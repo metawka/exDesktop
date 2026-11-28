@@ -1,6 +1,6 @@
 #include <QtWidgets/QApplication>
 #include "extera/extera_menu.h"
-#include "extera/exd_message_shot.h"
+#include "ayu/features/message_shot/message_shot.h"
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
 #include "ui/widgets/labels.h"
@@ -451,7 +451,7 @@ void AddMessageMenuActions(
 			(ids.size() > 1)
 				? tr::lng_exd_shot_menu_many(tr::now)
 				: tr::lng_exd_shot_menu(tr::now),
-			[=] { Exd::MessageShot::Show(controller, ids); },
+			[=] { AyuFeatures::MessageShot::Show(controller, ids); },
 			&st::menuIconPhoto);
 	}
 	const auto session = &item->history()->session();

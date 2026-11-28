@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_widget.h"
+#include "ayu/features/forward/ayu_forward.h"
+#include "ayu/features/message_shot/message_shot.h"
 #include "extera/extera_plugins.h"
 #include "extera/exd_md3.h"
 #include "extera/exd_safety.h"
@@ -1081,6 +1083,12 @@ HistoryWidget::HistoryWidget(
 		return update.flags;
 	}) | rpl::on_next([=](Data::PeerUpdate::Flags flags) {
 		if (flags & PeerUpdateFlag::Rights) {
+			const auto wasRestriction = _sendRestrictionKey;
+			updateSendRestriction();
+			if (wasRestriction != _sendRestrictionKey) {
+				updateControlsVisibility();
+				updateControlsGeometry();
+			}
 			updateFieldPlaceholder();
 			updateSendButtonType();
 			_preview->checkNow(false);
@@ -1225,6 +1233,12 @@ HistoryWidget::HistoryWidget(
 	_topBar->deleteSelectionRequest(
 	) | rpl::on_next([=] {
 		confirmDeleteSelected();
+	}, _topBar->lifetime());
+	_topBar->exdShotSelectionRequest(
+	) | rpl::on_next([=] {
+		if (_list) {
+			AyuFeatures::MessageShot::Wrapper(_list.data(), [=] { clearSelected(); });
+		}
 	}, _topBar->lifetime());
 	_topBar->clearSelectionRequest(
 	) | rpl::on_next([=] {
@@ -4405,7 +4419,8 @@ bool HistoryWidget::canWriteMessage() const {
 		&& !isJoinChannel()
 		&& !isMuteUnmute()
 		&& !isBotStart()
-		&& !isSearching();
+		&& !isSearching()
+		&& !(_peer && AyuForward::isForwarding(_peer->id));
 }
 
 void HistoryWidget::updateControlsVisibility() {
@@ -8854,11 +8869,20 @@ Data::SendError HistoryWidget::computeSendRestriction() const {
 
 void HistoryWidget::updateSendRestriction() {
 	const auto restriction = computeSendRestriction();
-	if (_sendRestrictionKey == restriction.text) {
+	const auto forwarding = _peer && AyuForward::isForwarding(_peer->id);
+	const auto forwardState = forwarding
+		? AyuForward::stateName(_peer->id)
+		: std::pair<QString, QString>();
+	const auto key = forwarding
+		? (u"exd_forward:"_q + forwardState.first + forwardState.second)
+		: restriction.text;
+	if (_sendRestrictionKey == key) {
 		return;
 	}
-	_sendRestrictionKey = restriction.text;
-	if (!restriction) {
+	_sendRestrictionKey = key;
+	if (forwarding) {
+		_sendRestriction = AyuForwardWriteRestriction(this, _peer->id, session());
+	} else if (!restriction) {
 		_sendRestriction = nullptr;
 	} else if (restriction.frozen) {
 		const auto show = controller()->uiShow();

@@ -28,7 +28,7 @@ struct TrustedSource {
 };
 
 void StartBadges();
-void RefreshBadges();
+void RefreshBadges(Fn<void(bool)> done = nullptr);
 [[nodiscard]] rpl::producer<> BadgesChanges();
 void PaintBadgeEmoji(
 	QPainter &p,

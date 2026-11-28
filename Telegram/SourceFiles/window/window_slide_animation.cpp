@@ -121,10 +121,8 @@ void SlideAnimation::paintContents(QPainter &p) const {
 		p.fillRect(
 			QRect(0, _topSkip, size.width(), size.height() - _topSkip),
 			_topSkip ? st::boxBg : st::windowBg);
-		const auto out = std::clamp(t / 0.35, 0., 1.);
 		const auto in = std::clamp((t - 0.2) / 0.8, 0., 1.);
-		if (out < 1.) {
-			p.setOpacity(1. - out);
+		if (in < 1.) {
 			p.drawPixmap(
 				QRect(
 					QPoint(anim::interpolate(0, -shift * sign, t), 0),

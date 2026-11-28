@@ -32,8 +32,8 @@ SignupWidget::SignupWidget(
 	data->controller,
 	Ui::UserpicButton::Role::ChoosePhoto,
 	st::defaultUserpicButton)
-, _first(this, st::introName, tr::lng_signup_firstname())
-, _last(this, st::introName, tr::lng_signup_lastname())
+, _first(this, style::Md3Enabled() ? st::exdIntroCountry : st::introName, tr::lng_signup_firstname())
+, _last(this, style::Md3Enabled() ? st::exdIntroCountry : st::introName, tr::lng_signup_lastname())
 , _invertOrder(langFirstNameGoesSecond()) {
 	_photo->showCustomOnChosen();
 	ExdSetupFieldCard(_first.data());

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_peer_menu.h"
+#include "ayu/features/forward/ayu_forward.h"
 #include "extera/extera_cross_send.h"
 #include "extera/extera_streamer.h"
 #include "extera/extera_plugins_ui.h"
@@ -128,6 +129,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/ui_integration.h"
 #include "export/export_manager.h"
 #include "boxes/peers/edit_participants_box.h"
+#include "extera/exd_hidden_topics.h"
 #include "boxes/peers/edit_peer_info_box.h"
 #include "boxes/peers/manage_community_box.h"
 #include "boxes/premium_preview_box.h"
@@ -353,6 +355,7 @@ private:
 	void addDeleteTopic();
 	void addVideoChat();
 	void addViewStatistics();
+	void addExdHiddenTopics();
 	void addBoostChat();
 	void addToggleFee();
 	void addSetPersonalChannel();
@@ -1876,6 +1879,7 @@ void Filler::fillChatsListActions() {
 	addNewMembers();
 	addBoostChat();
 	addVideoChat();
+	addExdHiddenTopics();
 	_addAction(PeerMenuCallback::Args{ .isSeparator = true });
 	addReport();
 	if (_peer->asChannel()->amIn()) {
@@ -1883,6 +1887,39 @@ void Filler::fillChatsListActions() {
 	} else {
 		addJoinChat();
 	}
+}
+
+void Filler::addExdHiddenTopics() {
+	const auto forum = _peer ? _peer->forum() : nullptr;
+	if (!forum) {
+		return;
+	}
+	const auto hidden = Exd::HiddenTopics::List(_peer->id);
+	_addAction(PeerMenuCallback::Args{
+		.text = tr::lng_exd_topics_hidden(tr::now),
+		.handler = nullptr,
+		.icon = &st::menuIconStealth,
+		.fillSubmenu = [&](not_null<Ui::PopupMenu*> menu) {
+			if (hidden.empty()) {
+				menu->addAction(
+					tr::lng_exd_topics_hidden_none(tr::now),
+					Fn<void()>([] {}))->setEnabled(false);
+				return;
+			}
+			for (const auto rootId : hidden) {
+				const auto topic = forum->topicFor(rootId);
+				const auto title = topic
+					? topic->title()
+					: (u"#"_q + QString::number(rootId.bare));
+				const auto weak = base::make_weak(forum);
+				menu->addAction(title, [=] {
+					if (const auto strong = weak.get()) {
+						Exd::HiddenTopics::Show(strong, rootId);
+					}
+				}, &st::menuIconShowInChat);
+			}
+		},
+	});
 }
 
 void Filler::addVideoChat() {
@@ -1926,6 +1963,14 @@ void Filler::fillContextMenuActions() {
 	addToggleMuteSubmenu(false);
 	addToggleUnreadMark();
 	addToggleTopicClosed();
+	if (_topic && !_topic->isGeneral()) {
+		const auto weak = base::make_weak(_topic);
+		_addAction(tr::lng_exd_topic_hide(tr::now), [=] {
+			if (const auto topic = weak.get()) {
+				Exd::HiddenTopics::Set(topic, true);
+			}
+		}, &st::menuIconStealth);
+	}
 	addToggleFolder();
 	if (const auto user = _peer->asUser()) {
 		if (!user->isContact()) {
@@ -1956,6 +2001,7 @@ void Filler::fillHistoryActions() {
 	addDirectMessages();
 	addExportChat();
 	addTranslate();
+	addExdHiddenTopics();
 	if (_peer && _request.key.history()) {
 		const auto peer = _peer;
 		const auto controller = _controller;
@@ -3741,7 +3787,12 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 			std::move(comment),
 			options,
 			forwardOptions);
-		if (!state->submit && successCallback) {
+		const auto items = history->owner().idsToItems(msgIds);
+		const auto ayuForwarding = !items.empty()
+			&& (AyuForward::isAyuForwardNeeded(items)
+				|| AyuForward::isFullAyuForwardNeeded(items.front()));
+
+		if ((!state->submit || ayuForwarding) && successCallback) {
 			successCallback();
 		}
 	};

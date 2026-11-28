@@ -80,6 +80,16 @@ void TopicIconView::paintInRect(QPainter &p, QRect rect, QColor textColor) {
 			crl::now(),
 			_paused()).image);
 		_player->markFrameShown();
+	} else if (_fallback && _topic->iconId()) {
+		const auto size = st::infoTopicCover.photo.size;
+		_fallback->paint(p, {
+			.textColor = (textColor.alpha() > 0) ? textColor : st::windowFg->c,
+			.now = crl::now(),
+			.position = QPoint(
+				rect.x() + (rect.width() - size.width()) / 2,
+				rect.y() + (rect.height() - size.height()) / 2),
+			.paused = _paused(),
+		});
 	} else if (!_topic->iconId() && !_image.isNull()) {
 		paint(_image);
 	}
@@ -91,6 +101,17 @@ void TopicIconView::setup(not_null<Data::ForumTopic*> topic) {
 }
 
 void TopicIconView::setupPlayer(not_null<Data::ForumTopic*> topic) {
+	IconIdValue(
+		topic
+	) | rpl::on_next([=](DocumentId id) {
+		_fallback = id
+			? topic->owner().customEmojiManager().create(
+				id,
+				_update,
+				Data::CustomEmojiSizeTag::Isolated,
+				st::infoTopicCover.photo.size.width())
+			: nullptr;
+	}, _lifetime);
 	IconIdValue(
 		topic
 	) | rpl::map([=](DocumentId id) -> rpl::producer<DocumentData*> {

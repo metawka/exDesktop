@@ -481,7 +481,12 @@ bool AiChatSend(
 		Chat().partial = QString();
 		Chat().history.push_back({
 			.error = !ok,
-			.text = answer,
+			.text = (!ok && CustomProvider() && !answer.isEmpty())
+				? tr::lng_exd_ai_provider_error(
+					tr::now,
+					lt_text,
+					answer)
+				: answer,
 			.date = base::unixtime::now(),
 		});
 		SaveHistory();

@@ -29,6 +29,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_specific.h"
 #include "boxes/url_auth_box.h"
 #include "ui/boxes/confirm_box.h"
+#include "ui/layers/generic_box.h"
+#include "ui/widgets/labels.h"
+#include "ui/painter.h"
+#include "styles/style_layers.h"
 #include "base/qt/qt_key_modifiers.h"
 #include "core/phone_click_handler.h"
 #include "main/main_account.h"
@@ -79,14 +83,47 @@ public:
 		}
 		const auto url = this->url();
 		const auto other = context.other;
-		show->showBox(Ui::MakeConfirmBox({
-			.text = TextWithEntities{ _warning + u"\n\n"_q + url },
-			.confirmed = [=](Fn<void()> close) {
-				close();
+		const auto warning = _warning;
+		show->showBox(Box([=](not_null<Ui::GenericBox*> box) {
+			box->setTitle(tr::lng_exd_link_hint_title());
+			box->addRow(object_ptr<Ui::FlatLabel>(
+				box,
+				warning,
+				st::boxLabel));
+			const auto padding = style::ConvertScale(12);
+			const auto card = box->addRow(
+				object_ptr<Ui::RpWidget>(box),
+				style::margins(
+					st::boxRowPadding.left(),
+					padding,
+					st::boxRowPadding.right(),
+					0));
+			const auto label = Ui::CreateChild<Ui::FlatLabel>(
+				card,
+				url,
+				st::boxLabel);
+			label->setSelectable(true);
+			card->widthValue() | rpl::on_next([=](int width) {
+				label->resizeToWidth(std::max(width - 2 * padding, 1));
+				label->moveToLeft(padding, padding, width);
+			}, card->lifetime());
+			label->heightValue() | rpl::on_next([=](int height) {
+				card->resize(card->width(), height + 2 * padding);
+			}, card->lifetime());
+			card->paintRequest() | rpl::on_next([=] {
+				auto p = QPainter(card);
+				auto hq = PainterHighQualityEnabler(p);
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::windowBgOver);
+				p.drawRoundedRect(card->rect(), padding, padding);
+			}, card->lifetime());
+			box->addButton(tr::lng_exd_link_hint_open(), [=] {
+				box->closeBox();
 				HiddenUrlClickHandler::Open(url, other);
-			},
-			.confirmText = tr::lng_exd_link_hint_open(),
-			.title = tr::lng_exd_link_hint_title(),
+			});
+			box->addButton(tr::lng_cancel(), [=] {
+				box->closeBox();
+			});
 		}));
 	}
 

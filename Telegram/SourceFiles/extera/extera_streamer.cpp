@@ -161,11 +161,15 @@ void ApplyCapture(QWidget *widget) {
 		return;
 	}
 	const auto mode = CaptureMode();
+	const auto handle = qulonglong(widget->internalWinId());
 	const auto applied = widget->property("exd_capture").toInt();
-	if (mode == applied) {
+	const auto appliedHandle = widget->property("exd_capture_hwnd")
+		.toULongLong();
+	if (mode == applied && handle == appliedHandle) {
 		return;
 	}
 	widget->setProperty("exd_capture", mode);
+	widget->setProperty("exd_capture_hwnd", handle);
 	const auto affinity = (mode == 1)
 		? DWORD(0x00000001)
 		: (mode == 2)

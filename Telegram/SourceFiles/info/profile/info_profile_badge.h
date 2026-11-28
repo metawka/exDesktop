@@ -72,6 +72,7 @@ public:
 	[[nodiscard]] Ui::RpWidget *widget() const;
 
 	void setPremiumClickCallback(Fn<void()> callback);
+	[[nodiscard]] bool exdSecondHit() const;
 	void setOverrideStyle(const style::InfoPeerBadge *st);
 	[[nodiscard]] rpl::producer<> updated() const;
 	void move(int left, int top, int bottom);
@@ -90,6 +91,7 @@ private:
 	const int _customStatusLoopsLimit = 0;
 	std::unique_ptr<Ui::Text::CustomEmoji> _emojiStatus;
 	std::unique_ptr<Ui::Text::CustomEmoji> _exdSecond;
+	int _exdSecondLeft = -1;
 	base::flags<BadgeType> _allowed;
 	Content _content;
 	Fn<void()> _premiumClickCallback;

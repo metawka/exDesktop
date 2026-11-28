@@ -41,7 +41,9 @@ void ShowInstallBox(
 	bool trusted);
 
 void ChooseAndInstall(not_null<Window::SessionController*> controller);
-void ShowPluginsWindow(not_null<Window::SessionController*> controller);
+void ShowPluginsWindow(
+	not_null<Window::SessionController*> controller,
+	bool engine = false);
 void ShowPortBox(
 	not_null<Window::SessionController*> controller,
 	const QString &path);

@@ -55,11 +55,13 @@ PhoneWidget::PhoneWidget(
 , _country(
 	this,
 	getData()->controller->uiShow(),
-	st::introCountry)
-, _code(this, st::introCountryCode)
+	style::Md3Enabled() ? st::exdIntroCountry : st::introCountry)
+, _code(
+	this,
+	style::Md3Enabled() ? st::exdIntroCountryCode : st::introCountryCode)
 , _phone(
 	this,
-	st::introPhone,
+	style::Md3Enabled() ? st::exdIntroPhone : st::introPhone,
 	[](const QString &s) { return Countries::Groups(s); })
 , _checkRequestTimer([=] { checkRequest(); }) {
 	_code->setAccessibleName(tr::lng_country_code(tr::now));

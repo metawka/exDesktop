@@ -1995,12 +1995,31 @@ PRIVATE
     extera/exd_crash_log.cpp
     extera/exd_flood.cpp
     extera/exd_flood.h
-    extera/exd_message_shot.cpp
-    extera/exd_message_shot.h
     extera/exd_radar.cpp
     extera/exd_radar.h
+    ayu/ayu_settings.h
+    ayu/utils/telegram_helpers.h
+    ayu/utils/telegram_helpers.cpp
+    ayu/features/forward/ayu_forward.cpp
+    ayu/features/forward/ayu_forward.h
+    ayu/features/forward/ayu_forward_rich.cpp
+    ayu/features/forward/ayu_forward_rich.h
+    ayu/features/forward/ayu_sync.cpp
+    ayu/features/forward/ayu_sync.h
+    ayu/features/message_shot/message_shot.cpp
+    ayu/features/message_shot/message_shot.h
+    ayu/features/message_shot/message_shot_theme_state.cpp
+    ayu/features/message_shot/message_shot_theme_state.h
+    ayu/ui/boxes/message_shot_box.cpp
+    ayu/ui/boxes/message_shot_box.h
+    ayu/ui/boxes/theme_selector_box.cpp
+    ayu/ui/boxes/theme_selector_box.h
+    ayu/ui/components/image_view.cpp
+    ayu/ui/components/image_view.h
     extera/exd_safety.cpp
     extera/exd_safety.h
+    extera/exd_hidden_topics.cpp
+    extera/exd_hidden_topics.h
     extera/exd_ttl_saver.cpp
     extera/exd_ttl_saver.h
     extera/exd_crash_log.h

@@ -954,6 +954,19 @@ exdTopBarPlugins: IconButton {
 	rippleAreaSize: 40px;
 	ripple: defaultRippleAnimationBgOver;
 }
+imageViewPadding: margins(22px, 10px, 22px, 10px);
+imageViewInnerPadding: margins(16px, 16px, 16px, 16px);
+messageShotPadding: 4px;
+exdTopBarRecentActions: IconButton(exdTopBarPlugins) {
+	icon: icon {{ "menu/exd_top_bar_recent_actions", menuIconFg }};
+	iconOver: icon {{ "menu/exd_top_bar_recent_actions", menuIconFgOver }};
+	iconPosition: point(4px, 11px);
+}
+exdTopBarAdmins: IconButton(exdTopBarPlugins) {
+	icon: icon {{ "menu/exd_top_bar_admins", menuIconFg }};
+	iconOver: icon {{ "menu/exd_top_bar_admins", menuIconFgOver }};
+	iconPosition: point(4px, 11px);
+}
 exdFeedSettings: IconButton(exdTopBarPlugins) {
 	icon: icon {{ "menu/settings", menuIconFg }};
 	iconOver: icon {{ "menu/settings", menuIconFgOver }};

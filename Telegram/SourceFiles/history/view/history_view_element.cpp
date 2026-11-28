@@ -6,7 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_element.h"
-#include "extera/exd_message_shot.h"
+#include "ayu/features/message_shot/message_shot.h"
 #include "extera/exd_safety.h"
 #include "extera/extera_plugins.h"
 
@@ -785,6 +785,9 @@ void UnreadBar::paint(
 		int y,
 		int w,
 		ElementChatMode mode) const {
+	if (AyuFeatures::MessageShot::isTakingShot()) {
+		return;
+	}
 	const auto previousTranslation = p.transform().dx();
 	if (previousTranslation != 0) {
 		p.translate(-previousTranslation, 0);
@@ -1386,6 +1389,15 @@ void Element::hideSpoilers() {
 	}
 }
 
+void Element::revealSpoilers() {
+	if (_text.hasSpoilers()) {
+		_text.setSpoilerRevealed(true, anim::type::instant);
+	}
+	if (_media) {
+		_media->revealSpoilers();
+	}
+}
+
 void Element::customEmojiRepaint() {
 	if (!(_flags & Flag::CustomEmojiRepainting)) {
 		_flags |= Flag::CustomEmojiRepainting;
@@ -1597,7 +1609,6 @@ bool Element::isTopicRootReply() const {
 
 bool Element::hidesBottomInfo() const {
 	return data()->isWelcomeTemplate()
-		|| Exd::MessageShot::Hidden(this, Exd::MessageShot::Part::Date)
 		|| (data()->isFakeHistoryItem()
 			&& context() == Context::MediaEditor);
 }
@@ -1616,6 +1627,9 @@ bool Element::hasCommentsButton() const {
 int Element::skipBlockWidth() const {
 	if (hidesBottomInfo()) {
 		return 0;
+	}
+	if (AyuFeatures::MessageShot::ignoreRender(AyuFeatures::MessageShot::RenderPart::Date)) {
+		return st::msgDateDelta.x();
 	}
 	return st::msgDateSpace + infoWidth() - st::msgDateDelta.x();
 }
@@ -2391,10 +2405,6 @@ void Element::setTextWithLinks(
 			shown ? *shown : text,
 			options,
 			context);
-		if (_text.hasSpoilers()
-			&& Exd::MessageShot::Hidden(this, Exd::MessageShot::Part::Spoilers)) {
-			_text.setSpoilerRevealed(true, anim::type::instant);
-		}
 		if (!item->_text.empty() && _text.isEmpty()){
 			// If server has allowed some text that we've trim-ed entirely,
 			// just replace it with something so that UI won't look buggy.
@@ -2621,6 +2631,9 @@ void Element::destroyUnreadBar() {
 }
 
 int Element::displayedDateHeight() const {
+	if (AyuFeatures::MessageShot::isTakingShot()) {
+		return 0;
+	}
 	if (auto date = Get<DateBadge>()) {
 		return date->height();
 	}
@@ -3076,7 +3089,6 @@ void Element::refreshReactions() {
 		: Extera::Bool(u"hide_reactions_groups"_q);
 	if (reactionsData.reactions.empty()
 		|| hidden
-		|| Exd::MessageShot::Hidden(this, Exd::MessageShot::Part::Reactions)
 		|| context() == Context::MediaEditor) {
 		setReactions(nullptr);
 		return;
@@ -3463,6 +3475,19 @@ SelectedQuote Element::FindSelectedQuote(
 			modified.to = uint16(std::max(
 				int(modified.from),
 				int(modified.to) - int(modification.added)));
+		}
+	}
+	{
+		auto shown = text.toString(selection);
+		shown.remove(QString::fromUtf8(" ⚠"));
+		const auto &full = item->originalText().text;
+		if (!shown.isEmpty()
+			&& full.mid(modified.from, modified.to - modified.from) != shown) {
+			const auto index = full.indexOf(shown);
+			if (index >= 0) {
+				modified.from = uint16(index);
+				modified.to = uint16(index + shown.size());
+			}
 		}
 	}
 	auto result = item->originalText();

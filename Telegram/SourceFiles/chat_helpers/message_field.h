@@ -214,7 +214,11 @@ enum class FrozenWriteRestrictionType {
 	MessageField,
 	DialogsList,
 };
-[[nodiscard]] std::unique_ptr<Ui::AbstractButton> FrozenWriteRestriction(
+[[nodiscard]] std::unique_ptr<Ui::AbstractButton> AyuForwardWriteRestriction(
+	not_null<QWidget *> parent,
+	const PeerId &peer,
+	const Main::Session &session);
+std::unique_ptr<Ui::AbstractButton> FrozenWriteRestriction(
 	not_null<QWidget*> parent,
 	std::shared_ptr<ChatHelpers::Show> show,
 	FrozenWriteRestrictionType type,

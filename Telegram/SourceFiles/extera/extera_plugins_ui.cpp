@@ -1,4 +1,5 @@
 #include "extera/extera_plugins_ui.h"
+#include "base/event_filter.h"
 
 #include "base/unixtime.h"
 
@@ -1117,26 +1118,32 @@ void SetupPluginIcon(
 			}
 		}
 		if (badge > 0) {
-			const auto circle = QRect(
-				rect.x() + rect.width() - badge * 2 / 3,
-				rect.y() + rect.height() - badge * 2 / 3,
-				badge,
-				badge);
+			const auto side = badge * 3 / 4;
+			const auto stroke = std::max(st::exteraInstallBadgeStroke / 2, 1);
+			const auto chip = QRect(
+				std::min(rect.x() + rect.width() - side + stroke, widget->width() - side),
+				std::min(rect.y() + rect.height() - side + stroke, widget->height() - side),
+				side,
+				side);
+			const auto radius = side / 3.;
+			p.setPen(Qt::NoPen);
 			p.setBrush(ring ? ring() : st::boxBg->c);
-			p.drawEllipse(circle);
-			const auto stroke = st::exteraInstallBadgeStroke;
-			const auto inner = circle.marginsRemoved(
+			p.drawRoundedRect(chip, radius, radius);
+			const auto inner = chip.marginsRemoved(
 				{ stroke, stroke, stroke, stroke });
-			p.setBrush(st::windowSubTextFg);
-			p.drawEllipse(inner);
-			const auto glyph = st::exteraInstallBadgeGlyph;
-			if (state->puzzle.isNull()) {
-				state->puzzle = PuzzleImage(glyph, st::boxBg->c);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(inner, radius - stroke, radius - stroke);
+			const auto glyph = std::max(inner.width() * 2 / 3, 1);
+			if (state->puzzle.isNull()
+				|| state->puzzle.width() != glyph * style::DevicePixelRatio()) {
+				state->puzzle = PuzzleImage(glyph, st::windowFg->c);
 			}
 			p.drawImage(
-				QPoint(
+				QRect(
 					inner.x() + (inner.width() - glyph) / 2,
-					inner.y() + (inner.height() - glyph) / 2),
+					inner.y() + (inner.height() - glyph) / 2,
+					glyph,
+					glyph),
 				state->puzzle);
 		}
 	}, widget->lifetime());
@@ -2410,8 +2417,20 @@ void AddDesktopPillTo(
 		const auto color = st::boxTextFgGood->c;
 		auto bg = color;
 		bg.setAlphaF(0.16);
-		const auto left = (widget->width() - width) / 2;
-		const auto rect = QRect(left, 0, width, widget->height());
+		const auto chrome = padding.left()
+			+ icon.width()
+			+ st::exteraInstallPillSkip
+			+ padding.right();
+		const auto available = widget->width();
+		const auto shortText = tr::lng_exd_plugin_desktop_short(tr::now);
+		const auto shown = (width <= available)
+			? text
+			: (chrome + font->width(shortText) <= available)
+			? shortText
+			: font->elided(shortText, std::max(available - chrome, 0));
+		const auto pill = std::min(chrome + font->width(shown), available);
+		const auto left = (available - pill) / 2;
+		const auto rect = QRect(left, 0, pill, widget->height());
 		p.setPen(Qt::NoPen);
 		p.setBrush(bg);
 		p.drawRoundedRect(rect, rect.height() / 2., rect.height() / 2.);
@@ -2426,7 +2445,7 @@ void AddDesktopPillTo(
 		p.drawText(
 			iconLeft + icon.width() + st::exteraInstallPillSkip,
 			(rect.height() - font->height) / 2 + font->ascent,
-			text);
+			shown);
 	}, widget->lifetime());
 	if (!ported.isEmpty()) {
 		container->add(
@@ -2459,8 +2478,20 @@ void AddDesktopPill(not_null<Ui::GenericBox*> box, QString ported) {
 		const auto color = st::boxTextFgGood->c;
 		auto bg = color;
 		bg.setAlphaF(0.16);
-		const auto left = (widget->width() - width) / 2;
-		const auto rect = QRect(left, 0, width, widget->height());
+		const auto chrome = padding.left()
+			+ icon.width()
+			+ st::exteraInstallPillSkip
+			+ padding.right();
+		const auto available = widget->width();
+		const auto shortText = tr::lng_exd_plugin_desktop_short(tr::now);
+		const auto shown = (width <= available)
+			? text
+			: (chrome + font->width(shortText) <= available)
+			? shortText
+			: font->elided(shortText, std::max(available - chrome, 0));
+		const auto pill = std::min(chrome + font->width(shown), available);
+		const auto left = (available - pill) / 2;
+		const auto rect = QRect(left, 0, pill, widget->height());
 		p.setPen(Qt::NoPen);
 		p.setBrush(bg);
 		p.drawRoundedRect(rect, rect.height() / 2., rect.height() / 2.);
@@ -2475,7 +2506,7 @@ void AddDesktopPill(not_null<Ui::GenericBox*> box, QString ported) {
 		p.drawText(
 			iconLeft + icon.width() + st::exteraInstallPillSkip,
 			(rect.height() - font->height) / 2 + font->ascent,
-			text);
+			shown);
 	}, widget->lifetime());
 	if (!ported.isEmpty()) {
 		box->addRow(
@@ -5532,11 +5563,16 @@ public:
 	, _text(std::move(text))
 	, _count(count)
 	, _active(std::move(active)) {
-		resize(width(), Px(38));
+		resize(width(), Px(44));
 	}
 
 	void setCount(int count) {
 		_count = count;
+		update();
+	}
+	void setGroup(bool first, bool last) {
+		_first = first;
+		_last = last;
 		update();
 	}
 
@@ -5545,17 +5581,33 @@ private:
 		auto p = QPainter(this);
 		auto hq = PainterHighQualityEnabler(p);
 		const auto active = _active();
-		const auto rect = this->rect();
-		if (active || isOver()) {
-			auto bg = active
-				? st::windowActiveTextFg->c
-				: PwSurface(0.05);
-			if (active) {
-				bg.setAlphaF(0.16);
-			}
-			p.setPen(Qt::NoPen);
-			p.setBrush(bg);
-			p.drawRoundedRect(rect, rect.height() / 2., rect.height() / 2.);
+		const auto r = QRectF(this->rect());
+		const auto t = _first ? float64(Px(16)) : float64(Px(4));
+		const auto b = _last ? float64(Px(16)) : float64(Px(4));
+		auto path = QPainterPath();
+		path.moveTo(r.left() + t, r.top());
+		path.lineTo(r.right() - t, r.top());
+		path.arcTo(QRectF(r.right() - 2 * t, r.top(), 2 * t, 2 * t), 90, -90);
+		path.lineTo(r.right(), r.bottom() - b);
+		path.arcTo(
+			QRectF(r.right() - 2 * b, r.bottom() - 2 * b, 2 * b, 2 * b),
+			0,
+			-90);
+		path.lineTo(r.left() + b, r.bottom());
+		path.arcTo(
+			QRectF(r.left(), r.bottom() - 2 * b, 2 * b, 2 * b),
+			270,
+			-90);
+		path.lineTo(r.left(), r.top() + t);
+		path.arcTo(QRectF(r.left(), r.top(), 2 * t, 2 * t), 180, -90);
+		path.closeSubpath();
+		p.fillPath(path, (isOver() && !active)
+			? PwSurface(0.09)
+			: PwSurface(0.05));
+		if (active) {
+			auto bg = st::windowActiveTextFg->c;
+			bg.setAlphaF(0.16);
+			p.fillPath(path, bg);
 		}
 		const auto fg = active ? st::windowActiveTextFg->c : st::windowFg->c;
 		_icon.paint(
@@ -5590,6 +5642,8 @@ private:
 	QString _text;
 	int _count = 0;
 	Fn<bool()> _active;
+	bool _first = true;
+	bool _last = true;
 
 };
 
@@ -6066,7 +6120,9 @@ private:
 
 } // namespace
 
-void ShowPluginsWindow(not_null<Window::SessionController*> controller) {
+void ShowPluginsWindow(
+		not_null<Window::SessionController*> controller,
+		bool engine) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		const auto computeSize = [=] {
 			const auto outer = controller->widget()->size();
@@ -6102,13 +6158,24 @@ void ShowPluginsWindow(not_null<Window::SessionController*> controller) {
 			object_ptr<Ui::RpWidget>(box),
 			style::margins());
 		root->resize(width, height);
-		controller->widget()->sizeValue(
-		) | rpl::skip(1) | rpl::on_next([=] {
+		const auto applySize = [=] {
 			const auto size = computeSize();
-			box->setWidth(size.width());
-			box->setMaxHeight(size.height());
+			if (root->size() == size) {
+				return;
+			}
 			root->resize(size);
-		}, root->lifetime());
+			box->exdResize(size.width(), size.height());
+		};
+		base::install_event_filter(
+			root,
+			controller->widget()->window(),
+			[=](not_null<QEvent*> e) {
+				if (e->type() == QEvent::Resize
+					|| e->type() == QEvent::WindowStateChange) {
+					crl::on_main(root, applySize);
+				}
+				return base::EventFilterResult::Continue;
+			});
 		const auto layers = box->lifetime().make_state<Ui::LayerManager>(
 			root);
 		layers->setHideByBackgroundClick(true);
@@ -6233,7 +6300,41 @@ void ShowPluginsWindow(not_null<Window::SessionController*> controller) {
 			engineInner->resizeToWidth(inner);
 			engineInner->moveToLeft((size.width() - inner) / 2, 0);
 		}, enginePage->lifetime());
+		const auto crossfade = [=]() -> Ui::RpWidget* {
+			if (anim::Disabled() || enginePage->width() <= 0) {
+				return nullptr;
+			}
+			const auto rect = enginePage->geometry();
+			const auto shot = Ui::GrabWidget(root, rect);
+			const auto cover = Ui::CreateChild<Ui::RpWidget>(root);
+			cover->setAttribute(Qt::WA_TransparentForMouseEvents);
+			cover->setGeometry(rect);
+			const auto animation = cover->lifetime().make_state<
+				Ui::Animations::Simple>();
+			cover->paintRequest() | rpl::on_next([=] {
+				const auto progress = animation->value(1.);
+				auto p = QPainter(cover);
+				p.setOpacity(1. - progress);
+				p.drawPixmap(
+					int(base::SafeRound(Px(16) * progress)),
+					0,
+					shot);
+			}, cover->lifetime());
+			cover->show();
+			cover->raise();
+			animation->start([=] {
+				cover->update();
+				if (!animation->animating()) {
+					crl::on_main(cover, [=] { delete cover; });
+				}
+			}, 0., 1., st::slideDuration, anim::easeOutCubic);
+			return cover;
+		};
 		const auto showEngine = [=](bool show) {
+			if (state->engineOpen == show) {
+				return;
+			}
+			const auto cover = crossfade();
 			if (show && !*engineFilled) {
 				*engineFilled = true;
 				::Settings::FillExteraPluginsEngine(engineInner, controller);
@@ -6246,6 +6347,9 @@ void ShowPluginsWindow(not_null<Window::SessionController*> controller) {
 			}
 			state->engineOpen = show;
 			state->changes.fire({});
+			if (cover) {
+				cover->raise();
+			}
 		};
 		engineBack->setClickedCallback([=] { showEngine(false); });
 		engineSettings->setClickedCallback([=] { showEngine(true); });
@@ -6303,10 +6407,19 @@ void ShowPluginsWindow(not_null<Window::SessionController*> controller) {
 						&& (state->section == section);
 				},
 				[=] {
+					if (!state->engineOpen
+						&& state->section == section
+						&& state->source == PwSource::None) {
+						return;
+					}
+					const auto cover = crossfade();
 					state->engineOpen = false;
 					state->section = section;
 					state->source = PwSource::None;
 					state->changes.fire({});
+					if (cover) {
+						cover->raise();
+					}
 				});
 		};
 		const auto addSource = [&](
@@ -6323,12 +6436,16 @@ void ShowPluginsWindow(not_null<Window::SessionController*> controller) {
 					return !state->engineOpen && (state->source == source);
 				},
 				[=] {
+					const auto cover = crossfade();
 					state->source = (state->source == source)
 						? PwSource::None
 						: source;
 					state->section = PwSection::All;
 					state->engineOpen = false;
 					state->changes.fire({});
+					if (cover) {
+						cover->raise();
+					}
 				});
 		};
 		addSection(
@@ -6369,6 +6486,11 @@ void ShowPluginsWindow(not_null<Window::SessionController*> controller) {
 			st::menuIconDownload,
 			tr::lng_exd_pw_other(tr::now),
 			PwSource::Other);
+		for (auto i = 0; i != int(navButtons.size()); ++i) {
+			const auto first = (i == 0) || (i == 5);
+			const auto last = (i == 4) || (i + 1 == int(navButtons.size()));
+			navButtons[i].first->setGroup(first, last);
+		}
 		const auto navList = box->lifetime().make_state<std::vector<
 			std::pair<not_null<PwNavButton*>, Fn<int()>>>>(
 				std::move(navButtons));

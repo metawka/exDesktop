@@ -36,7 +36,8 @@ void ShowExteraBadgeBox(
 	not_null<Window::SessionController*> controller,
 	not_null<PeerData*> peer,
 	const QString &text,
-	bool supporter);
+	bool supporter,
+	bool second = false);
 void ShowExteraAppIconBox(not_null<Window::SessionController*> controller);
 
 } // namespace Settings

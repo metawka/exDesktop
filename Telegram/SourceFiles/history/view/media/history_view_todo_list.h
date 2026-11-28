@@ -39,6 +39,7 @@ public:
 		return true;
 	}
 
+	void revealSpoilers() override;
 	bool needsBubble() const override {
 		return true;
 	}

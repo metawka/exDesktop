@@ -153,6 +153,9 @@ private:
 			DocumentId,
 			std::unique_ptr<Ui::CustomEmoji::Instance>>,
 		kSizeCount> _instances;
+	std::map<
+		std::tuple<int, DocumentId, int>,
+		std::unique_ptr<Ui::CustomEmoji::Instance>> _sizedInstances;
 	std::array<
 		base::flat_map<
 			DocumentId,

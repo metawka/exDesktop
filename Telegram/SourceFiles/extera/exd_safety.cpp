@@ -314,7 +314,11 @@ namespace {
 				u"startapp"_q,
 				u"startgroup"_q,
 				u"startattach"_q }) {
-			if (!query.queryItemValue(key).isEmpty()) {
+			static const auto refLike = QRegularExpression(
+				u"^(r|inv|invite|aff|partner|promo|bonus)([_-]|$)|ref|^[0-9]{5,}$"_q,
+				QRegularExpression::CaseInsensitiveOption);
+			const auto value = query.queryItemValue(key);
+			if (!value.isEmpty() && refLike.match(value).hasMatch()) {
 				return true;
 			}
 		}
@@ -362,7 +366,9 @@ QString LinkWarning(const QString &text, const QString &url) {
 			warnings.push_back(tr::lng_exd_link_hint_mention(tr::now));
 		}
 	}
-	if (HasReferral(parsed)) {
+	const auto visible = !shown.isEmpty()
+		&& (Normalized(shown) == Normalized(url));
+	if (!visible && HasReferral(parsed)) {
 		warnings.push_back(tr::lng_exd_link_hint_referral(tr::now));
 	}
 	return warnings.join('\n');

@@ -838,18 +838,29 @@ void View::mouseReleaseEvent(QMouseEvent *e) {
 		Core::App().saveSettingsDelayed();
 		update();
 	} break;
-	case Button::ShowMessage:
-		if (const auto item = _controller->session().data().message(
-				_context)) {
-			_controller->showMessage(item);
-			for (auto w = parentWidget(); w; w = w->parentWidget()) {
-				if (const auto box = dynamic_cast<Ui::BoxContent*>(w)) {
-					box->closeBox();
-					break;
-				}
+	case Button::ShowMessage: {
+		const auto id = _context;
+		const auto weak = base::make_weak(_controller.get());
+		if (!_controller->session().data().message(id)) {
+			break;
+		}
+		for (auto w = parentWidget(); w; w = w->parentWidget()) {
+			if (const auto box = dynamic_cast<Ui::BoxContent*>(w)) {
+				box->closeBox();
+				break;
 			}
 		}
-		break;
+		crl::on_main([=] {
+			const auto controller = weak.get();
+			if (!controller) {
+				return;
+			}
+			if (const auto item = controller->session().data().message(id)) {
+				controller->showMessage(item);
+			}
+		});
+		return;
+	}
 	case Button::CopyLyrics:
 		if (!_lines.empty()) {
 			auto text = QStringList();

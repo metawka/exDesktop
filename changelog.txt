@@ -1,3 +1,37 @@
+7.4.4.3 (28.11.26)
+Added:
+- "Recent actions" and "Administrators" buttons in the chat top bar. Thanks to AyuGram Desktop
+- Hiding forum topics and the "Hidden topics" menu, from our users' ideas in feedback
+- Context menu actions in settings search
+- Video message size preview
+- Redesigned user badge window, fixed related bugs
+- Logically reorganized and improved grouping of features in settings
+- MD3: login screen with registration and password fields, "Reopen Topic", join request and business bot bars, suspicious link window, setting highlight when opened by link, member highlight inside the card, aligned counter and pin in the chat list
+
+Improved:
+- Message SHOT now works not only for one message but for several at once. Thanks to AyuGram Desktop
+- Forwarding from chats with forwarding restricted, with download and resend
+- Animated transitions between sections in Plugins
+- Improved visual style of the new plugins window
+- The old plugins page is removed completely to optimize the build
+
+Fixed:
+- Plugins opened the Settings section by default instead of All
+- Broken plugins window proportions after a screen resolution change
+- Crash of the eye button in the player
+- Overlapping emoji pack and the icon in the badge window
+- Second badge and the number of trusted users
+- Main badge on a light profile cover
+- Emoji in "Topic info" no longer appears with a delay
+- Reply with quote
+- False warnings for suspicious links
+- Hiding from screen capture after the window is recreated
+- Custom provider errors in AI Chat
+- Large round videos with "Forwarded from"
+- Invisible "Mute forever" item
+- Slide animation without the theme background
+- install.sh on Linux
+
 7.4.4.2 beta (22.11.26)
 Added:
 - Redesigned and improved plugins window

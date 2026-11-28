@@ -6,7 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_message.h"
-#include "extera/exd_message_shot.h"
+#include "ayu/features/message_shot/message_shot.h"
 #include "extera/exd_flood.h"
 
 #include "extera/extera_feed.h"
@@ -1120,16 +1120,18 @@ void Message::initPaidInformation() {
 }
 
 void Message::refreshRightBadge() {
-	if (Exd::MessageShot::Hidden(this, Exd::MessageShot::Part::Badges)) {
+	if (const auto badge = Get<RightBadge>(); badge && badge->overridden) {
+		return;
+	}
+	if ((hasOutLayout() && !AyuFeatures::MessageShot::isTakingShot())
+		|| context() == Context::WelcomeMessages) {
 		if (Has<RightBadge>()) {
 			RemoveComponents(RightBadge::Bit());
 		}
 		return;
 	}
-	if (const auto badge = Get<RightBadge>(); badge && badge->overridden) {
-		return;
-	}
-	if (hasOutLayout() || context() == Context::WelcomeMessages) {
+	if (AyuFeatures::MessageShot::ignoreRender(
+			AyuFeatures::MessageShot::RenderPart::HeaderDecorations)) {
 		if (Has<RightBadge>()) {
 			RemoveComponents(RightBadge::Bit());
 		}
@@ -1799,13 +1801,15 @@ int Message::marginTop() const {
 	}
 	result += displayedDateHeight();
 	if (const auto bar = Get<UnreadBar>()) {
-		result += bar->height();
+		if (!AyuFeatures::MessageShot::isTakingShot()) {
+			result += bar->height();
+		}
 	}
 	if (const auto bar = Get<ForumThreadBar>()) {
 		result += bar->height();
 	}
 	if (const auto service = Get<ServicePreMessage>()) {
-		if (!service->below) {
+		if (!service->below && !AyuFeatures::MessageShot::isTakingShot()) {
 			result += service->height;
 		}
 	}
@@ -1900,7 +1904,7 @@ void Message::draw(Painter &p, const PaintContext &context) const {
 	auto mediaOnBottom = (mediaDisplayed && media->isBubbleBottom()) || check || (entry/* && entry->isBubbleBottom()*/);
 	auto mediaOnTop = (mediaDisplayed && media->isBubbleTop()) || (entry && entry->isBubbleTop());
 
-	const auto displayInfo = needInfoDisplay();
+	const auto displayInfo = needInfoDisplay() && !AyuFeatures::MessageShot::ignoreRender(AyuFeatures::MessageShot::RenderPart::Date);
 	const auto reactionsInBubble = _reactions && embedReactionsInBubble();
 
 	// We need to count geometry without keyboard and reactions
@@ -2426,6 +2430,9 @@ void Message::paintCommentsButton(
 		Painter &p,
 		QRect &g,
 		const PaintContext &context) const {
+	if (AyuFeatures::MessageShot::isTakingShot()) {
+		return;
+	}
 	if (!hasCommentsButton()) {
 		return;
 	}
@@ -6179,6 +6186,9 @@ bool Message::displayRightActionComments() const {
 }
 
 std::optional<QSize> Message::rightActionSize() const {
+	if (AyuFeatures::MessageShot::isTakingShot()) {
+		return std::nullopt;
+	}
 	if (context() == Context::MediaEditor) {
 		return std::nullopt;
 	} else if (exdFloodHead()) {
@@ -7140,7 +7150,9 @@ int Message::resizeContentGetHeight(int newWidth) {
 		}
 
 		if (hasCommentsButton()) {
-			newHeight += st::historyCommentsButtonHeight;
+			if (!AyuFeatures::MessageShot::isTakingShot()) {
+				newHeight += st::historyCommentsButtonHeight;
+			}
 		} else if (_comments) {
 			_comments = nullptr;
 			checkHeavyPart();

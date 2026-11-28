@@ -535,7 +535,9 @@ TopBar::TopBar(
 		});
 	}
 	if (_verified) {
-		_verified->setPremiumClickCallback([controller, peer = _peer] {
+		const auto verified = _verified.get();
+		_verified->setPremiumClickCallback([controller, peer = _peer, verified] {
+			const auto second = verified->exdSecondHit();
 			using Kind = Extera::BadgeKind;
 			const auto custom = Extera::BadgeCustomText(peer);
 			const auto name = peer->name();
@@ -548,7 +550,8 @@ TopBar::TopBar(
 					controller,
 					peer,
 					text,
-					supporter);
+					supporter,
+					second);
 			};
 			if (Extera::PluginTrust::IsTrustedChannel(peer)) {
 				exdToast(tr::lng_exd_badge_trusted(tr::now, lt_name, name));

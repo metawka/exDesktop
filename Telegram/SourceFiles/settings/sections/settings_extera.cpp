@@ -1,4 +1,7 @@
 #include "settings/sections/settings_extera.h"
+#include "core/deep_links/deep_links_settings.h"
+#include "ui/widgets/shadow.h"
+#include "styles/style_chat_style.h"
 
 #include <QtCore/QRegularExpression>
 
@@ -201,7 +204,8 @@ void AddChoice(
 		std::vector<const Phrase*> options,
 		QStringList keywords = {},
 		Fn<void(QPainter&, QRect, int)> paintOption = nullptr,
-		const style::icon *icon = nullptr) {
+		const style::icon *icon = nullptr,
+		rpl::producer<bool> shown = nullptr) {
 	const auto controller = builder.controller();
 	const auto optionText = [=](int index) {
 		return (index >= 0 && index < int(options.size()))
@@ -265,6 +269,7 @@ void AddChoice(
 			}));
 		},
 		.keywords = std::move(keywords),
+		.shown = std::move(shown),
 	});
 }
 
@@ -726,6 +731,100 @@ void PaintFolderTabsPreview(QPainter &p, QRect frame) {
 	return HistoryView::Sticker::Size().height()
 		+ st::exteraPreviewBubble
 		+ st::exteraPreviewSkip * 3;
+}
+
+[[nodiscard]] int RoundPreviewSide(int mode) {
+	const auto full = (mode == 1)
+		? style::ConvertScale(320)
+		: (mode == 2)
+		? style::ConvertScale(400)
+		: int(st::maxVideoMessageSize);
+	return full / 2;
+}
+
+[[nodiscard]] int RoundPreviewHeight() {
+	return RoundPreviewSide(Extera::Int(u"exd_round_size"_q))
+		+ st::exteraPreviewSkip * 2;
+}
+
+void PaintRoundPreview(QPainter &p, QRect frame) {
+	static const auto image = QImage(u":/gui/art/exd_round_preview.jpg"_q);
+	const auto skip = st::exteraPreviewSkip;
+	const auto side = RoundPreviewSide(Extera::Int(u"exd_round_size"_q));
+	const auto circle = QRect(
+		frame.x() + frame.width() - skip - side,
+		frame.y() + skip,
+		side,
+		side);
+	auto hq = PainterHighQualityEnabler(p);
+	{
+		auto path = QPainterPath();
+		path.addEllipse(circle);
+		p.save();
+		p.setClipPath(path);
+		p.drawImage(circle, image);
+		p.restore();
+	}
+	const auto line = std::max(style::ConvertScale(3), 2);
+	auto pen = QPen(QColor(255, 255, 255, 220), line);
+	pen.setCapStyle(Qt::RoundCap);
+	p.setPen(pen);
+	p.setBrush(Qt::NoBrush);
+	const auto arc = QRectF(circle).marginsRemoved(
+		{ line * 1.5, line * 1.5, line * 1.5, line * 1.5 });
+	p.drawArc(arc, 90 * 16, -130 * 16);
+	p.setPen(Qt::NoPen);
+
+	const auto &font = st::msgDateFont;
+	const auto padding = style::ConvertScale(7);
+	const auto gap = style::ConvertScale(4);
+	const auto &mute = st::historyVideoMessageMute;
+	const auto label = u"0:12"_q;
+	const auto dot = style::ConvertScale(4);
+	const auto height = std::max(font->height, mute.height()) + 4;
+	const auto width = padding
+		+ font->width(label)
+		+ gap + dot
+		+ gap + mute.width()
+		+ padding;
+	const auto pill = QRect(
+		circle.x(),
+		circle.y() + circle.height() - height,
+		width,
+		height);
+	p.setBrush(st::msgServiceBg);
+	p.drawRoundedRect(pill, height / 2., height / 2.);
+	p.setPen(st::msgServiceFg);
+	p.setFont(font);
+	auto x = pill.x() + padding;
+	p.drawText(
+		QRect(x, pill.y(), font->width(label), pill.height()),
+		Qt::AlignCenter,
+		label);
+	x += font->width(label) + gap;
+	p.setPen(Qt::NoPen);
+	p.setBrush(st::msgServiceFg);
+	p.drawEllipse(QRect(x, pill.y() + (pill.height() - dot) / 2, dot, dot));
+	x += dot + gap;
+	mute.paint(
+		p,
+		x,
+		pill.y() + (pill.height() - mute.height()) / 2,
+		frame.width(),
+		st::msgServiceFg->c);
+
+	const auto time = QLocale().toString(QTime(12, 30), QLocale::ShortFormat);
+	const auto timeWidth = font->width(time) + padding * 2;
+	const auto timeRect = QRect(
+		circle.x() - timeWidth - skip / 2,
+		circle.y() + circle.height() - height,
+		timeWidth,
+		height);
+	p.setBrush(st::msgServiceBg);
+	p.drawRoundedRect(timeRect, height / 2., height / 2.);
+	p.setPen(st::msgServiceFg);
+	p.drawText(timeRect, Qt::AlignCenter, time);
+	p.setPen(Qt::NoPen);
 }
 
 void PaintStickerPreview(QPainter &p, QRect frame, int value) {
@@ -1804,11 +1903,6 @@ void PartGeneral6(SectionBuilder &builder) {
 	builder.card([&] {
 		AddToggle(
 			builder,
-			u"profile_music_cover"_q,
-			tr::lng_exd_profile_music_cover(),
-			{ u"music"_q, u"profile"_q });
-		AddToggle(
-			builder,
 			u"relative_last_seen"_q,
 			tr::lng_extera_relative_last_seen(),
 			{},
@@ -1867,18 +1961,18 @@ void PartGeneral7(SectionBuilder &builder) {
 				session->saveSettingsDelayed();
 			}, hideArchive->lifetime());
 		}
-	});
-	AddAbout(builder, tr::lng_extera_hide_archive_about());
-
-	builder.addSkip();
-	builder.card([&] {
 		AddToggle(
 			builder,
 			u"capture_protection"_q,
 			tr::lng_exd_capture_protection(),
 			{ u"screenshot"_q, u"capture"_q });
 	});
-	AddAbout(builder, tr::lng_exd_capture_protection_about());
+	AddAbout(builder, rpl::combine(
+		tr::lng_extera_hide_archive_about(),
+		tr::lng_exd_capture_protection_about()
+	) | rpl::map([](const QString &a, const QString &b) {
+		return a + u"\n\n"_q + b;
+	}));
 }
 
 void PartAppearance0(SectionBuilder &builder) {
@@ -1892,6 +1986,12 @@ void PartAppearance0(SectionBuilder &builder) {
 			.icon = { &st::exteraIconAppearance },
 			.onClick = [=] { Extera::Md3::ShowSettingsBox(controller); },
 			.keywords = { u"material"_q, u"md3"_q, u"design"_q },
+		});
+		builder.addButton({
+			.id = u"extera/app_icon"_q,
+			.title = tr::lng_extera_app_icon(),
+			.icon = { &st::exteraIconAppearance },
+			.onClick = [=] { ShowAppIconBox(controller); },
 		});
 	});
 	if (controller
@@ -2005,22 +2105,6 @@ void PartAppearance2(SectionBuilder &builder) {
 	});
 }
 
-void PartAppearance3(SectionBuilder &builder) {
-	[[maybe_unused]] const auto controller = builder.controller();
-
-	builder.addSkip();
-	builder.card([&] {
-		builder.addButton({
-			.id = u"extera/app_icon"_q,
-			.title = tr::lng_extera_app_icon(),
-			.icon = { &st::exteraIconAppearance },
-			.onClick = [=] { ShowAppIconBox(controller); },
-		});
-	});
-
-	builder.addDivider();
-}
-
 void PartAppearance4(SectionBuilder &builder) {
 	[[maybe_unused]] const auto controller = builder.controller();
 
@@ -2075,6 +2159,25 @@ void PartChats0(SectionBuilder &builder) {
 
 	builder.addSkip();
 	builder.card([&] {
+		const auto rounds = std::vector<const Phrase*>{
+			&tr::lng_exd_round_size_small,
+			&tr::lng_exd_round_size_medium,
+			&tr::lng_exd_round_size_large,
+		};
+		AddSlider(
+			builder,
+			u"exd_round_size"_q,
+			tr::lng_exd_round_size,
+			{ 0, 1, 2 },
+			{ &tr::lng_exd_round_size_small, &tr::lng_exd_round_size_large },
+			[=](int value) { return (*rounds[value])(tr::now); });
+		AddLivePreview(
+			builder,
+			RoundPreviewHeight,
+			[](QPainter &p, QRect frame) {
+				PaintRoundPreview(p, frame);
+			},
+			{ u"exd_round_size"_q });
 		auto sizes = std::vector<int>();
 		for (auto i = 4; i <= 20; ++i) {
 			sizes.push_back(i);
@@ -2292,15 +2395,6 @@ void PartChats4(SectionBuilder &builder) {
 				&tr::lng_extera_bottom_discuss,
 				&tr::lng_extera_bottom_hidden,
 			});
-		AddChoice(
-			builder,
-			u"exd_round_size"_q,
-			tr::lng_exd_round_size,
-			{
-				&tr::lng_exd_round_size_small,
-				&tr::lng_exd_round_size_medium,
-				&tr::lng_exd_round_size_large,
-			});
 		AddSwitchGroup(
 			builder,
 			u"wide_posts_group"_q,
@@ -2327,6 +2421,23 @@ void PartChats4(SectionBuilder &builder) {
 			tr::lng_extera_comma_mention());
 		AddToggle(
 			builder,
+			u"select_service"_q,
+			tr::lng_exd_select_service(),
+			{ u"select"_q, u"service"_q },
+			tr::lng_exd_select_service_about(),
+			true);
+		AddToggle(
+			builder,
+			u"full_members"_q,
+			tr::lng_exd_full_members(),
+			{ u"members"_q, u"participants"_q },
+			tr::lng_exd_full_members_about(),
+			true);
+	});
+	builder.addSkip();
+	builder.card([&] {
+		AddToggle(
+			builder,
 			u"quote_reply"_q,
 			tr::lng_exd_quote_reply(),
 			{ u"quote"_q, u"reply"_q },
@@ -2340,20 +2451,6 @@ void PartChats4(SectionBuilder &builder) {
 			builder,
 			u"chars_counter"_q,
 			tr::lng_exd_chars_counter());
-		AddToggle(
-			builder,
-			u"select_service"_q,
-			tr::lng_exd_select_service(),
-			{ u"select"_q, u"service"_q },
-			tr::lng_exd_select_service_about(),
-			true);
-		AddToggle(
-			builder,
-			u"full_members"_q,
-			tr::lng_exd_full_members(),
-			{ u"members"_q, u"participants"_q },
-			tr::lng_exd_full_members_about(),
-			true);
 		AddToggle(
 			builder,
 			u"name_accent"_q,
@@ -2401,10 +2498,9 @@ void PartChats5(SectionBuilder &builder) {
 			builder,
 			u"disable_colorful_replies"_q,
 			tr::lng_exd_disable_colorful_replies());
-		AddToggle(
-			builder,
-			u"translucent_deleted"_q,
-			tr::lng_exd_translucent_deleted());
+	});
+	builder.addSkip();
+	builder.card([&] {
 		AddToggle(
 			builder,
 			u"online_indicator"_q,
@@ -2429,6 +2525,9 @@ void PartChats5(SectionBuilder &builder) {
 			{ u"poll"_q },
 			tr::lng_extera_poll_results_about(),
 			true);
+	});
+	builder.addSkip();
+	builder.card([&] {
 		AddSwitchGroup(
 			builder,
 			u"message_menu"_q,
@@ -2455,24 +2554,6 @@ void PartChats5(SectionBuilder &builder) {
 			.onClick = [=] { ShowQuickActionsBox(controller); },
 			.keywords = { u"menu"_q },
 		});
-	});
-	builder.addDivider();
-}
-
-void PartChats6(SectionBuilder &builder) {
-	[[maybe_unused]] const auto actions = std::vector<const Phrase*>{
-		&tr::lng_extera_action_reply,
-		&tr::lng_extera_action_reaction,
-		&tr::lng_extera_action_edit,
-		&tr::lng_extera_action_copy,
-		&tr::lng_extera_action_forward,
-		&tr::lng_extera_action_none,
-	};
-
-	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_extera_photos());
-	builder.card([&] {
-		AddToggle(builder, u"always_send_hd"_q, tr::lng_extera_send_hd());
 	});
 	builder.addDivider();
 }
@@ -2550,8 +2631,9 @@ void PartChats7(SectionBuilder &builder) {
 	};
 
 	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_extera_videos());
+	builder.addSubsectionTitle(tr::lng_exd_photos_videos());
 	builder.card([&] {
+		AddToggle(builder, u"always_send_hd"_q, tr::lng_extera_send_hd());
 		AddValueChoice(
 			builder,
 			u"video_seek_step"_q,
@@ -2843,76 +2925,6 @@ void PartPluginsPort(SectionBuilder &builder) {
 	AddAbout(builder, tr::lng_exd_port_about());
 }
 
-void PartPlugins0(SectionBuilder &builder) {
-	[[maybe_unused]] const auto controller = builder.controller();
-
-	builder.addSkip();
-	builder.card([&] {
-		const auto engine = builder.addButton({
-			.id = u"extera/plugins_enabled"_q,
-			.title = tr::lng_extera_plugins_engine(),
-			.st = &st::settingsButtonNoIcon,
-			.toggled = rpl::single(Extera::Bool(u"plugins_enabled"_q)),
-			.keywords = { u"plugins"_q },
-		});
-		if (engine) {
-			engine->toggledValue(
-			) | rpl::filter([](bool value) {
-				return value != Extera::Bool(u"plugins_enabled"_q);
-			}) | rpl::on_next([=](bool value) {
-				Config().setBool(u"plugins_enabled"_q, value);
-				controller->show(Ui::MakeConfirmBox({
-					.text = tr::lng_extera_restart_required(),
-					.confirmed = [] { Core::Restart(); },
-					.confirmText = tr::lng_extera_restart(),
-				}));
-			}, engine->lifetime());
-		}
-		builder.addSectionButton({
-			.title = tr::lng_extera_plugins_engine_title(),
-			.targetSection = ExteraPluginsEngineId(),
-			.icon = { &st::menuIconSettings },
-		});
-		builder.addButton({
-			.id = u"extera/plugins_install"_q,
-			.title = tr::lng_extera_plugins_install_file(),
-			.icon = { &st::menuIconDownload },
-			.onClick = [=] {
-				if (Extera::Plugins::Started()) {
-					Extera::Plugins::ChooseAndInstall(controller);
-				} else {
-					controller->showToast(
-						tr::lng_extera_plugins_not_running(tr::now));
-				}
-			},
-		});
-	});
-}
-
-void PartPlugins1(SectionBuilder &builder) {
-	[[maybe_unused]] const auto controller = builder.controller();
-
-	if (!Extera::Plugins::Available()) {
-		AddAbout(builder, tr::lng_extera_plugins_runtime_missing());
-	} else if (!Extera::Plugins::RuntimeError().isEmpty()) {
-		AddAbout(builder, rpl::single(Extera::Plugins::RuntimeError()));
-	} else {
-		builder.addDivider();
-	}
-}
-
-void PartPlugins2(SectionBuilder &builder) {
-	[[maybe_unused]] const auto controller = builder.controller();
-
-	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_extera_plugins());
-	builder.add([=](const WidgetContext &ctx) {
-		auto list = object_ptr<Ui::VerticalLayout>(ctx.container);
-		Extera::Plugins::FillPluginsList(list.data(), controller);
-		return SectionBuilder::WidgetToAdd{ .widget = std::move(list) };
-	});
-}
-
 void PartOther0(SectionBuilder &builder) {
 	[[maybe_unused]] const auto controller = builder.controller();
 
@@ -2928,6 +2940,10 @@ void PartOther0(SectionBuilder &builder) {
 		});
 	});
 	AddAbout(builder, tr::lng_exd_badge_about());
+}
+
+void PartOtherClient(SectionBuilder &builder) {
+	[[maybe_unused]] const auto controller = builder.controller();
 
 	builder.addSkip();
 	builder.card([&] {
@@ -3012,9 +3028,11 @@ void PartOther2(SectionBuilder &builder) {
 			.title = tr::lng_exd_refresh_badges(),
 			.icon = { &st::menuIconRestore },
 			.onClick = [=] {
-				Extera::RefreshBadges();
-				controller->showToast(
-					tr::lng_exd_refresh_badges_done(tr::now));
+				Extera::RefreshBadges(crl::guard(controller, [=](bool ok) {
+					controller->showToast(ok
+						? tr::lng_exd_refresh_badges_done(tr::now)
+						: tr::lng_exd_refresh_badges_failed(tr::now));
+				}));
 			},
 			.keywords = { u"badges"_q, u"refresh"_q },
 		});
@@ -3430,11 +3448,49 @@ void FillSearchResults(
 		} else {
 			button->setClickedCallback([=] {
 				crl::on_main(controller, [=] {
+					if (entry.section == ExteraPluginsId()
+						|| entry.section == ExteraPluginsEngineId()) {
+						Extera::Plugins::ShowPluginsWindow(controller);
+						return;
+					}
 					controller->setHighlightControlId(entry.id);
 					showOther(entry.section);
 				});
 			});
 		}
+		const auto menu = button->lifetime().make_state<
+			base::unique_qptr<Ui::PopupMenu>>();
+		base::install_event_filter(button, [=](not_null<QEvent*> e) {
+			if (e->type() != QEvent::ContextMenu) {
+				return base::EventFilterResult::Continue;
+			}
+			*menu = base::make_unique_q<Ui::PopupMenu>(
+				button,
+				st::popupMenuWithIcons);
+			(*menu)->addAction(tr::lng_exd_search_go(tr::now), [=] {
+				crl::on_main(controller, [=] {
+					if (entry.section == ExteraPluginsId()
+						|| entry.section == ExteraPluginsEngineId()) {
+						Extera::Plugins::ShowPluginsWindow(controller);
+						return;
+					}
+					controller->setHighlightControlId(entry.id);
+					showOther(entry.section);
+				});
+			}, &st::menuIconSettings);
+			(*menu)->addAction(tr::lng_context_copy_link(tr::now), [=] {
+				const auto link = Core::DeepLinks::SettingsDeepLink(
+					entry.section,
+					entry.id);
+				if (!link.isEmpty()) {
+					QGuiApplication::clipboard()->setText(link);
+					controller->showToast(tr::lng_exd_search_link_copied(
+						tr::now));
+				}
+			}, &st::menuIconLink);
+			(*menu)->popup(QCursor::pos());
+			return base::EventFilterResult::Cancel;
+		});
 	}
 	container->resizeToWidth(container->width());
 }
@@ -3504,6 +3560,7 @@ const char *kCardSvgs[] = {
 	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path fill="#ffffff" d="M246.78-62.48q-43.72 0-74.86-31.14-31.14-31.13-31.14-74.86v-386.43q0-43.73 31.14-74.87 31.14-31.13 74.86-31.13h24.74v-63.61q0-87.52 60.76-148.85T480-934.7q86.96 0 147.72 61.33 60.76 61.33 60.76 148.85v63.61h24.74q43.72 0 74.86 31.13 31.14 31.14 31.14 74.87v386.43q0 43.73-31.14 74.86-31.14 31.14-74.86 31.14H246.78ZM536.5-305.2q23.5-23.5 23.5-56.5t-23.5-56.5Q513-441.7 480-441.7t-56.5 23.5Q400-394.7 400-361.7t23.5 56.5q23.5 23.5 56.5 23.5t56.5-23.5ZM377.52-660.91h204.96v-63.61q0-43.41-29.63-73.79Q523.22-828.7 480-828.7t-72.85 30.39q-29.63 30.38-29.63 73.79v63.61Z"/></svg>)exd",
 	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path fill="#ffffff" d="M409-149q-29-29-29-71t29-71q29-29 71-29t71 29q29 29 29 71t-29 71q-29 29-71 29t-71-29Zm209.83-388.13q65.52 22.87 119.95 62.61 22.26 16.13 23.05 44.02.78 27.89-19.48 48.15-19.83 19.83-48.22 21.18-28.39 1.34-51.78-13.79-35.18-22.6-75.81-35.06T480-422.48q-45.35 0-85.7 12.18-40.34 12.17-75.52 34.78-23.95 15.13-52.63 13.85-28.67-1.29-48.5-21.11-19.82-20.26-19.26-47.87.57-27.61 22.83-43.74 54.43-39.74 119.95-62.68Q406.7-560 480-560q73.3 0 138.83 22.87Zm92.43-223q108.52 39.87 195.96 112.04 22.82 18.7 24.39 46.81 1.56 28.11-19.26 48.93-19.83 19.83-48.22 20.61-28.39.78-51.78-16.91-69.74-54.48-153.59-84.15-83.85-29.68-178.76-29.68T301.24-632.8q-83.85 29.67-153.59 84.15-23.39 17.69-51.5 16.91-28.11-.78-47.93-20.61-20.83-20.82-19.55-48.93 1.29-28.11 24.11-46.81 87.44-72.17 195.96-112.04Q357.26-800 480-800t231.26 39.87Z"/></svg>)exd",
 	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path fill="#ffffff" d="M193.78-100.78q-39.08 0-66.32-27.24-27.24-27.24-27.24-66.33v-121.61q0-15.52 10.54-26.84 10.54-11.33 26.07-15.03 36.73-9.69 61.47-36.78 24.74-27.09 24.74-64.26 0-37.3-24.45-63.89-24.46-26.59-61.2-36.72-14.96-4.13-25.78-15.74-10.83-11.61-10.83-26.56v-124.44q0-38.65 27.18-65.82 27.17-27.18 66.39-27.18h114.08q10.96-51 53.07-87.19 42.11-36.2 97.37-36.2 58.22 0 100.89 36.2 42.68 36.19 50.11 87.19h115.78q38.65 0 66.11 27.18 27.46 27.17 27.46 65.82v131.74q36 20.26 58.85 56.52 22.84 36.26 22.84 79.09 0 44.96-22.84 82.07-22.85 37.1-58.85 53.54v128.91q0 39.09-27.46 66.33-27.46 27.24-66.11 27.24H193.78Z"/></svg>)exd",
+	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path fill="#ffffff" d="M11 3.5c.7 4.4 2.9 6.6 7.3 7.3-4.4.7-6.6 2.9-7.3 7.3-.7-4.4-2.9-6.6-7.3-7.3 4.4-.7 6.6-2.9 7.3-7.3Z"/><path fill="#ffffff" d="M18.2 15c.3 1.7 1 2.4 2.7 2.7-1.7.3-2.4 1-2.7 2.7-.3-1.7-1-2.4-2.7-2.7 1.7-.3 2.4-1 2.7-2.7Z"/></svg>)exd",
 	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path fill="#ffffff" d="M480.57-100.78q-78.4 0-147.57-29.91-69.17-29.92-120.5-81.24-51.33-51.33-81.24-120.5-29.91-69.18-29.91-147.57 0-78.39 29.91-147.57 29.91-69.17 81.24-120.5 51.33-51.32 120.5-81.24 69.17-29.91 147.57-29.91 83.13 0 157.19 33.87 74.07 33.87 127.89 96.74v-41.56q0-18.7 12.92-31.33 12.91-12.63 31.6-12.63 18.7 0 31.33 12.63 12.63 12.63 12.63 31.33V-613q0 22.09-15.46 37.54Q823.22-560 801.13-560H643.96q-18.7 0-31.89-13.2-13.2-13.19-13.2-31.89 0-18.69 12.91-31.61 12.92-12.91 31.61-12.91h49.65q-39.3-49.22-94.78-76.41-55.48-27.2-117.69-27.2-114.18 0-193.7 79.52-79.52 79.53-79.52 193.7 0 114.17 79.52 193.7 79.52 79.52 193.7 79.52 89.91 0 160.67-52.2 70.76-52.19 97.59-135.41 6.69-19.96 24.5-30.5 17.8-10.54 38.89-7.41 22.08 3.13 35.48 19.3 13.39 16.17 7.69 35.7-32.95 121.26-133.91 198.89-100.96 77.63-230.91 77.63ZM524.52-496l94.91 94.35q12.7 12.69 12.7 31.39 0 18.69-12.7 31.39-12.69 12.7-31.39 12.7-18.69 0-31.39-12.7L451.43-444.09q-7.69-7.69-11.54-17.17-3.85-9.48-3.85-20.31v-154.47q0-18.7 12.92-31.33Q461.87-680 480.57-680q18.69 0 31.32 12.63 12.63 12.63 12.63 31.33V-496Z"/></svg>)exd",
 	R"exd(<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path fill="#ffffff" d="M441.61-137.02q-18.74-6.98-33.7-21.37l-70.13-64.13Q232.91-317.83 146.85-415.3 60.78-512.78 60.78-634q0-102.48 68.09-171.13 68.09-68.65 170.56-68.65 51.87 0 98.31 19.95 46.43 19.96 81.69 56.7 35.27-36.74 81.7-56.7 46.44-19.95 98.3-19.95 102.48 0 171.42 68.65 68.93 68.65 68.93 171.13 0 121.22-86.41 219.2-86.41 97.97-193.28 193.84l-68.57 63.13q-14.95 14.4-33.98 21.09-19.02 6.7-38.11 6.7-19.08 0-37.82-6.98Z"/></svg>)exd",
 };
@@ -3555,6 +3612,11 @@ void AddCategoryGrid(SectionBuilder &builder) {
 				&st::exteraIconPlugins,
 				ExteraPluginsId,
 				QColor(0xE2, 0x55, 0x7B) },
+			{ [] { return tr::lng_extera_ai_chat(); },
+				[] { return tr::lng_exd_cat_ai_about(); },
+				&st::exdMenuIconAi,
+				ExteraAiChatId,
+				QColor(0x9B, 0x5C, 0xE6) },
 			{ [] { return tr::lng_exd_cat_updates(); },
 				[] { return tr::lng_exd_cat_updates_about(); },
 				&st::menuIconRestore,
@@ -3609,10 +3671,11 @@ void AddCategoryGrid(SectionBuilder &builder) {
 		}
 		const auto cardRect = [=](int index) {
 			const auto width = (grid->width() - skip) / 2;
+			const auto wide = (count % 2) && (index == count - 1);
 			return QRect(
-				(index % 2) * (width + skip),
+				wide ? 0 : (index % 2) * (width + skip),
 				(index / 2) * (cardHeight + skip),
-				width,
+				wide ? grid->width() : width,
 				cardHeight);
 		};
 		const auto cardAt = [=](QPoint point) {
@@ -3709,7 +3772,9 @@ void AddCategoryGrid(SectionBuilder &builder) {
 					image.setDevicePixelRatio(ratio);
 					{
 						auto q = QPainter(&image);
-						QSvgRenderer(QByteArray(kCardSvgs[i])).render(
+						QSvgRenderer(QByteArray(kCardSvgs[std::min(
+							i,
+							int(std::size(kCardSvgs)) - 1)])).render(
 							&q,
 							QRectF(0, 0, iconSize, iconSize));
 						if (md3) {
@@ -4047,6 +4112,11 @@ void BuildAiChat(SectionBuilder &builder) {
 			},
 			.keywords = { u"ai"_q, u"gemini"_q },
 		});
+		AddToggle(
+			builder,
+			u"ai_chat_main"_q,
+			tr::lng_exd_ai_main_button(),
+			{ u"ai"_q, u"main"_q, u"button"_q });
 		AddChoice(
 			builder,
 			u"ai_chat_llm_provider"_q,
@@ -4148,7 +4218,11 @@ void BuildAiChat(SectionBuilder &builder) {
 				&tr::lng_extera_ai_model_flash,
 				&tr::lng_extera_ai_model_pro,
 				&tr::lng_extera_ai_model_lite,
-			});
+			},
+			{},
+			nullptr,
+			nullptr,
+			aiCustom() | rpl::map([](bool custom) { return !custom; }));
 		AddChoice(
 			builder,
 			u"ai_chat_role"_q,
@@ -4228,10 +4302,9 @@ void BuildMessages(SectionBuilder &builder) {
 		PartChats4(builder);
 		PartChats5(builder);
 		PartChats3(builder);
-		PartChats2(builder);
-		PartChats6(builder);
-		PartChats7(builder);
 		PartChats8(builder);
+		PartChats2(builder);
+		PartChats7(builder);
 	});
 }
 
@@ -4245,7 +4318,6 @@ void BuildAppearance(SectionBuilder &builder) {
 		PartAppearance0(builder);
 		PartAppearance1(builder);
 		PartAppearance2(builder);
-		PartAppearance3(builder);
 		PartAppearance4(builder);
 		PartGeneral3(builder);
 		PartChats0(builder);
@@ -4272,13 +4344,7 @@ void BuildPlugins(SectionBuilder &builder) {
 		ExteraPluginsId(),
 		ExteraPluginsEngineId(),
 		ExteraAiChatId(),
-	}, [&] {
-		PartPlugins0(builder);
-		PartPlugins1(builder);
-		PartPlugins2(builder);
-		if (!Extera::Bool(u"ai_chat_main"_q)) {
-			PartChats1(builder);
-		}
+	}, [] {
 	});
 }
 
@@ -4286,23 +4352,30 @@ void PartAyuInner(SectionBuilder &builder);
 
 void PartAyu(SectionBuilder &builder) {
 	builder.addSkip();
+	builder.addSubsectionTitle(rpl::single(u"AyuGram"_q));
 	builder.card([&] {
 		AddToggle(
 			builder,
 			u"ayu_features"_q,
 			tr::lng_exd_ayu_features(),
-			{ u"ayugram"_q, u"ghost"_q, u"deleted"_q });
+			{ u"ayugram"_q, u"ghost"_q, u"deleted"_q },
+			tr::lng_exd_ayu_features_about(),
+			true,
+			&st::menuIconStealth);
+		builder.scope(
+			[&] { PartAyuInner(builder); },
+			Extera::Config::Instance().boolChanges(u"ayu_features"_q));
 	});
-	AddAbout(builder, tr::lng_exd_ayu_features_about());
-	builder.scope(
-		[&] { PartAyuInner(builder); },
-		Extera::Config::Instance().boolChanges(u"ayu_features"_q));
+	AddAbout(builder, rpl::combine(
+		tr::lng_exd_ayu_ghost_about(),
+		tr::lng_exd_ayu_about()
+	) | rpl::map([](const QString &a, const QString &b) {
+		return a + u"\n\n"_q + b;
+	}));
 }
 
 void PartAyuInner(SectionBuilder &builder) {
-	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_exd_ayu_ghost());
-	builder.card([&] {
+	{
 		AddSwitchGroup(
 			builder,
 			u"ghost_mode"_q,
@@ -4318,12 +4391,6 @@ void PartAyuInner(SectionBuilder &builder) {
 			builder,
 			u"ayu_ghost_read_after"_q,
 			tr::lng_exd_ayu_ghost_read_after());
-	});
-	AddAbout(builder, tr::lng_exd_ayu_ghost_about());
-
-	builder.addSkip();
-	builder.addSubsectionTitle(tr::lng_exd_ayu_spy());
-	builder.card([&] {
 		AddToggle(
 			builder,
 			u"ayu_keep_deleted"_q,
@@ -4478,8 +4545,7 @@ void PartAyuInner(SectionBuilder &builder) {
 				}));
 			},
 		});
-	});
-	AddAbout(builder, tr::lng_exd_ayu_about());
+	}
 }
 
 void PartPremium(SectionBuilder &builder) {
@@ -4826,10 +4892,7 @@ void BuildOther(SectionBuilder &builder) {
 	if (!builder.controller()) {
 		return;
 	}
-	PartOther0(builder);
-	PartOther1(builder);
-	PartOther2(builder);
-	PartOther3(builder);
+	PartOtherClient(builder);
 	PartOtherSync(builder);
 }
 
@@ -4933,7 +4996,7 @@ const auto kNavigationMeta = BuildHelper({
 
 const auto kAiChatMeta = BuildHelper({
 	.id = ExteraAiChat::Id(),
-	.parentId = ExteraPlugins::Id(),
+	.parentId = ExteraMain::Id(),
 	.title = &tr::lng_extera_ai_chat,
 	.icon = &st::exdMenuIconAi,
 }, BuildAiChat);
@@ -5012,6 +5075,12 @@ ExteraSection<Index>::ExteraSection(
 	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
 	this->build(content, Meta(Index).build);
 	Ui::ResizeFitChild(this, content);
+	if constexpr (Index == 4 || Index == 6) {
+		crl::on_main(controller, [=] {
+			controller->showBackFromStack();
+			Extera::Plugins::ShowPluginsWindow(controller);
+		});
+	}
 }
 
 template <int Index>
@@ -5176,12 +5245,12 @@ void ShowExteraBadgeBox(
 		not_null<Window::SessionController*> controller,
 		not_null<PeerData*> peer,
 		const QString &text,
-		bool supporter) {
+		bool supporter,
+		bool second) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setStyle(st::exteraInstallBox);
 		box->setWidth(st::exteraInstallWidth);
 		box->setNoContentMargin(true);
-		box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); });
 		const auto session = &controller->session();
 		const auto own = peer->isSelf();
 		const auto bot = peer->isUser() && peer->asUser()->isBot();
@@ -5190,80 +5259,6 @@ void ShowExteraBadgeBox(
 		const auto emojiId = Extera::BadgeEmoji(peer);
 
 		const auto size = st::exteraBadgeLogoSize;
-		const auto top = box->addRow(
-			object_ptr<Ui::VerticalLayout>(box),
-			st::exdBadgeInfoPadding,
-			style::al_justify);
-		const auto infoGap = style::ConvertScale(20);
-		const auto info = top->add(
-			object_ptr<Ui::VerticalLayout>(top),
-			style::margins(size + infoGap, 0, 0, 0),
-			style::al_justify);
-		const auto spacer = top->add(object_ptr<Ui::RpWidget>(top));
-		const auto badge = Ui::CreateChild<Ui::RpWidget>(top);
-		badge->setGeometry(0, 0, size, size);
-		struct State {
-			std::unique_ptr<Ui::Text::CustomEmoji> emoji;
-		};
-		const auto state = badge->lifetime().make_state<State>();
-		if (emojiId) {
-			state->emoji = session->data().customEmojiManager().create(
-				emojiId,
-				[=] { badge->update(); },
-				Data::CustomEmojiManager::SizeTag::Isolated,
-				size);
-		}
-		badge->paintRequest() | rpl::on_next([=] {
-			auto p = QPainter(badge);
-			auto hq = PainterHighQualityEnabler(p);
-			if (state->emoji && state->emoji->ready()) {
-				state->emoji->paint(p, {
-					.textColor = st::windowFg->c,
-					.now = crl::now(),
-					.position = QPoint(0, 0),
-				});
-			} else if (!state->emoji) {
-				static const auto image = QImage(u":/gui/art/logo_256.png"_q);
-				p.drawImage(QRect(0, 0, size, size), image);
-			}
-		}, badge->lifetime());
-
-		info->add(
-			object_ptr<Ui::FlatLabel>(
-				info,
-				(number
-					? tr::lng_exd_badge_box_number(
-						lt_number,
-						rpl::single(QString::number(number)))
-					: tr::lng_exd_badge_box_plain()),
-				st::exdBadgeInfoTitle),
-			style::margins());
-		if (!text.isEmpty()) {
-			info->add(
-				object_ptr<Ui::FlatLabel>(
-					info,
-					rpl::single(text),
-					st::exdBadgeInfoText),
-				style::margins(0, st::exdBadgeInfoSkip, 0, 0));
-		}
-		const auto line = [&](QString value, rpl::producer<QString> label) {
-			if (value.isEmpty()) {
-				return;
-			}
-			info->add(
-				object_ptr<Ui::FlatLabel>(
-					info,
-					rpl::single(value),
-					st::exdBadgeInfoText),
-				style::margins(0, st::exdBadgeInfoLineSkip, 0, 0));
-			info->add(
-				object_ptr<Ui::FlatLabel>(
-					info,
-					std::move(label),
-					st::exteraBadgeStepText),
-				style::margins());
-		};
-		line(peer->name(), tr::lng_exd_badge_info_owner());
 		const auto kind = [&]() -> QString {
 			using Kind = Extera::BadgeKind;
 			switch (Extera::BadgeKindFor(peer)) {
@@ -5290,23 +5285,182 @@ void ShowExteraBadgeBox(
 			}
 			return QString();
 		}();
-		line(kind, tr::lng_exd_badge_info_type());
-		if (holders > 0) {
-			line(
-				(holders == 1)
-					? tr::lng_exd_badge_unique(tr::now)
-					: tr::lng_exd_badge_holders(
-						tr::now,
-						lt_count_decimal,
-						float64(holders)),
-				tr::lng_exd_badge_info_rarity());
+		struct Row {
+			QString label;
+			QString value;
+			bool accent = false;
+		};
+		const auto addSection = [&](
+				DocumentId emojiId,
+				QString title,
+				QString description,
+				std::vector<Row> rows,
+				bool first) {
+			const auto top = box->addRow(
+				object_ptr<Ui::FixedHeightWidget>(box, size),
+				first
+					? st::exdBadgeInfoPadding
+					: style::margins(
+						st::exdBadgeInfoPadding.left(),
+						style::ConvertScale(20),
+						st::exdBadgeInfoPadding.right(),
+						st::exdBadgeInfoPadding.bottom()));
+			const auto badge = Ui::CreateChild<Ui::RpWidget>(top);
+			badge->setGeometry(0, 0, size, size);
+			struct State {
+				std::unique_ptr<Ui::Text::CustomEmoji> emoji;
+			};
+			const auto state = badge->lifetime().make_state<State>();
+			if (emojiId) {
+				state->emoji = session->data().customEmojiManager().create(
+					emojiId,
+					[=] { badge->update(); },
+					Data::CustomEmojiManager::SizeTag::Isolated,
+					size);
+			}
+			badge->paintRequest() | rpl::on_next([=] {
+				auto p = QPainter(badge);
+				auto hq = PainterHighQualityEnabler(p);
+				if (state->emoji && state->emoji->ready()) {
+					state->emoji->paint(p, {
+						.textColor = st::windowFg->c,
+						.now = crl::now(),
+						.position = QPoint(0, 0),
+					});
+				} else if (!state->emoji) {
+					static const auto image = QImage(
+						u":/gui/art/logo_256.png"_q);
+					p.drawImage(QRect(0, 0, size, size), image);
+				}
+			}, badge->lifetime());
+			const auto titleLabel = Ui::CreateChild<Ui::FlatLabel>(
+				top,
+				rpl::single(title),
+				st::exdBadgeInfoTitle);
+			const auto subLabel = Ui::CreateChild<Ui::FlatLabel>(
+				top,
+				rpl::single(u"exDesktop"_q),
+				st::exteraBadgeStepText);
+			top->widthValue() | rpl::on_next([=](int width) {
+				const auto left = size + style::ConvertScale(18);
+				const auto available = std::max(width - left, 1);
+				titleLabel->resizeToWidth(available);
+				subLabel->resizeToWidth(available);
+				const auto total = titleLabel->height()
+					+ style::ConvertScale(2)
+					+ subLabel->height();
+				const auto y = std::max((size - total) / 2, 0);
+				titleLabel->moveToLeft(left, y);
+				subLabel->moveToLeft(
+					left,
+					y + titleLabel->height() + style::ConvertScale(2));
+			}, top->lifetime());
+			if (!description.isEmpty()) {
+				box->addRow(
+					object_ptr<Ui::FlatLabel>(
+						box,
+						rpl::single(description),
+						st::exdBadgeInfoText),
+					style::margins(
+						st::exdBadgeInfoPadding.left(),
+						style::ConvertScale(4),
+						st::exdBadgeInfoPadding.right(),
+						style::ConvertScale(4)));
+			}
+			rows.erase(ranges::remove_if(rows, [](const Row &row) {
+				return row.value.isEmpty();
+			}), end(rows));
+			if (rows.empty()) {
+				return;
+			}
+			const auto rowHeight = style::ConvertScale(46);
+			const auto table = box->addRow(
+				object_ptr<Ui::FixedHeightWidget>(
+					box,
+					rowHeight * int(rows.size())),
+				style::margins(
+					st::exdBadgeInfoPadding.left(),
+					style::ConvertScale(10),
+					st::exdBadgeInfoPadding.right(),
+					style::ConvertScale(4)));
+			table->paintRequest() | rpl::on_next([=] {
+				auto p = QPainter(table);
+				auto hq = PainterHighQualityEnabler(p);
+				const auto r = QRectF(table->rect()).marginsRemoved(
+					{ 0.5, 0.5, 0.5, 0.5 });
+				const auto radius = style::ConvertScale(14.);
+				p.setPen(st::shadowFg);
+				p.setBrush(st::windowBgOver);
+				p.drawRoundedRect(r, radius, radius);
+				const auto split = int(table->width() * 0.36);
+				p.setPen(st::shadowFg);
+				p.drawLine(QPointF(split, r.top()), QPointF(split, r.bottom()));
+				const auto pad = style::ConvertScale(14);
+				for (auto i = 0; i != int(rows.size()); ++i) {
+					const auto y = i * rowHeight;
+					if (i) {
+						p.setPen(st::shadowFg);
+						p.drawLine(
+							QPointF(r.left(), y),
+							QPointF(r.right(), y));
+					}
+					const auto &row = rows[i];
+					p.setFont(st::semiboldFont);
+					p.setPen(st::windowFg);
+					p.drawText(
+						QRect(pad, y, split - pad * 2, rowHeight),
+						Qt::AlignVCenter | Qt::AlignLeft,
+						st::semiboldFont->elided(row.label, split - pad * 2));
+					p.setFont(st::normalFont);
+					p.setPen(row.accent
+						? st::windowActiveTextFg->c
+						: st::windowFg->c);
+					const auto valueWidth = table->width() - split - pad * 2;
+					p.drawText(
+						QRect(split + pad, y, valueWidth, rowHeight),
+						Qt::AlignVCenter | Qt::AlignLeft,
+						st::normalFont->elided(row.value, valueWidth));
+				}
+			}, table->lifetime());
+		};
+		const auto mainTitle = number
+			? tr::lng_exd_badge_box_number(
+				tr::now,
+				lt_number,
+				QString::number(number))
+			: tr::lng_exd_badge_box_plain(tr::now);
+		const auto secondEmoji = Extera::BadgeSecondEmoji(peer);
+		const auto secondText = Extera::BadgeSecondText(peer);
+		const auto showSecond = second
+			&& (secondEmoji || !secondText.isEmpty());
+		if (!showSecond) addSection(
+			emojiId,
+			mainTitle,
+			text,
+			{
+				{ tr::lng_exd_badge_info_owner(tr::now), peer->name(), true },
+				{ tr::lng_exd_badge_info_type(tr::now), kind },
+				{
+					tr::lng_exd_badge_info_holders(tr::now),
+					(holders > 0) ? QString::number(holders) : QString(),
+					true,
+				},
+			},
+			true);
+		if (showSecond) {
+			addSection(
+				secondEmoji,
+				mainTitle + u" \u00B7 "_q + tr::lng_exd_badge_second_suffix(tr::now),
+				secondText,
+				{
+					{ tr::lng_exd_badge_info_owner(tr::now), peer->name(), true },
+					{
+						tr::lng_exd_badge_info_type(tr::now),
+						tr::lng_exd_badge_kind_second(tr::now),
+					},
+				},
+				true);
 		}
-		line(Extera::BadgeSecondText(peer), tr::lng_exd_badge_info_second());
-
-		info->heightValue() | rpl::on_next([=](int height) {
-			spacer->resize(spacer->width(), std::max(size - height, 0));
-			badge->raise();
-		}, spacer->lifetime());
 
 		const auto buttons = box->addRow(
 			object_ptr<Ui::FixedHeightWidget>(
@@ -5346,28 +5500,28 @@ void ShowExteraBadgeBox(
 				});
 		} else if (!own) {
 			add(
-				(supporter
-					? tr::lng_exd_badge_box_support()
-					: tr::lng_exd_badge_get()),
+				((supporter || second)
+					? tr::lng_exd_badge_box_support_dev()
+					: tr::lng_exd_badge_box_want()),
 				st::exteraInstallButton,
 				[=] {
 					box->closeBox();
-					UrlClickHandler::Open(
-						u"https://t.me/exDesktop_bot?start=support"_q);
+					ShowExteraSupportBox(controller);
 				});
 		}
 		buttons->widthValue() | rpl::on_next([=](int width) {
 			const auto gap = st::exteraInstallCancelMargin.top();
+			const auto height = st::exteraInstallButton.height;
 			if (list.size() == 1) {
 				list.front()->setFullWidth(width);
 				list.front()->moveToLeft(0, 0);
 				return;
 			}
-			const auto first = (width - gap) / 3;
-			list.front()->setFullWidth(first);
-			list.front()->moveToLeft(0, 0);
-			list.back()->setFullWidth(width - gap - first);
-			list.back()->moveToLeft(first + gap, 0);
+			buttons->resize(width, height * 2 + gap);
+			list.back()->setFullWidth(width);
+			list.back()->moveToLeft(0, 0);
+			list.front()->setFullWidth(width);
+			list.front()->moveToLeft(0, height + gap);
 		}, buttons->lifetime());
 	}));
 }

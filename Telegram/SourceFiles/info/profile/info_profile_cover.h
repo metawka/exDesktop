@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "ui/abstract_button.h"
+#include "ui/text/text_custom_emoji.h"
 
 namespace Window {
 class SessionController;
@@ -54,6 +55,7 @@ private:
 	Fn<bool()> _paused;
 	Fn<void()> _update;
 	std::shared_ptr<StickerPlayer> _player;
+	std::unique_ptr<Ui::Text::CustomEmoji> _fallback;
 	bool _playerUsesTextColor = false;
 	QImage _image;
 	rpl::lifetime _lifetime;

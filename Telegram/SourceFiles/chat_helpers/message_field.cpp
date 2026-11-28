@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "chat_helpers/message_field.h"
+#include "ayu/features/forward/ayu_forward.h"
 #include "extera/extera_config.h"
 #include "extera/exd_safety.h"
 
@@ -1418,6 +1419,70 @@ std::unique_ptr<Ui::AbstractButton> BoostsToLiftWriteRestriction(
 		const auto window = show->resolveWindow();
 		window->resolveBoostState(peer->asChannel(), boosts);
 	});
+	return result;
+}
+
+std::unique_ptr<Ui::AbstractButton> AyuForwardWriteRestriction(
+	not_null<QWidget *> parent,
+	const PeerId &peer,
+	const Main::Session &session) {
+	using namespace Ui;
+
+	const auto pair = AyuForward::stateName(peer);
+
+	auto result = std::make_unique<FlatButton>(
+		parent,
+		QString(),
+		st::historyComposeButton);
+	const auto raw = result.get();
+
+	const auto title = CreateChild<FlatLabel>(
+		raw,
+		pair.first,
+		st::frozenRestrictionTitle);
+	title->setTextColorOverride(st::historyComposeButton.color->c);
+
+
+	title->setAttribute(Qt::WA_TransparentForMouseEvents);
+	title->show();
+	const auto subtitle = CreateChild<FlatLabel>(
+		raw,
+		pair.second,
+		st::frozenRestrictionSubtitle);
+	subtitle->setAttribute(Qt::WA_TransparentForMouseEvents);
+	subtitle->show();
+
+
+	raw->sizeValue() | rpl::on_next([=](QSize size) {
+
+		const auto toggle = [&](auto &&widget, bool shown) {
+			if (widget->isHidden() == shown) {
+				widget->setVisible(shown);
+			}
+		};
+		const auto small = 2 * st::defaultDialogRow.photoSize;
+		const auto shown = (size.width() > small);
+
+		toggle(title, shown);
+		toggle(subtitle, shown);
+
+		const auto skip = st::defaultDialogRow.padding.left();
+		const auto available = size.width() - skip * 2;
+		title->resizeToWidth(available);
+		subtitle->resizeToWidth(available);
+		const auto height = title->height() + subtitle->height();
+		const auto top = (size.height() - height) / 2;
+		title->moveToLeft(skip, top, size.width());
+		subtitle->moveToLeft(skip, top + title->height(), size.width());
+
+	}, title->lifetime());
+
+	const auto peerId = peer;
+	const auto sessionPtr = &session;
+	raw->setClickedCallback([=] {
+		AyuForward::cancelForward(peerId, *sessionPtr);
+	});
+
 	return result;
 }
 

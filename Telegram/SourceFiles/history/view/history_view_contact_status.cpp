@@ -52,6 +52,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "base/timer.h"
 #include "base/unixtime.h"
+#include "ui/painter.h"
 #include "boxes/peers/edit_contact_box.h"
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
@@ -703,10 +704,15 @@ void SlidingBar::setup(not_null<Ui::RpWidget*> parent) {
 	_shadow.showOn(rpl::combine(
 		_wrapped.shownValue(),
 		_wrapped.heightValue(),
-		rpl::mappers::_1 && rpl::mappers::_2 > 0
+		_shadowHidden.value(),
+		rpl::mappers::_1 && rpl::mappers::_2 > 0 && !rpl::mappers::_3
 	) | rpl::filter([=](bool shown) {
 		return (shown == _shadow.isHidden());
 	}));
+}
+
+void SlidingBar::setShadowHidden(bool hidden) {
+	_shadowHidden = hidden;
 }
 
 void SlidingBar::toggleContent(bool visible) {
@@ -1214,34 +1220,59 @@ void BusinessBotStatus::Bar::showMenu() {
 
 void BusinessBotStatus::Bar::paintEvent(QPaintEvent *e) {
 	QPainter p(this);
-	p.fillRect(e->rect(), st::historyContactStatusButton.bgColor);
+	if (!style::Md3Enabled()) {
+		p.fillRect(e->rect(), st::historyContactStatusButton.bgColor);
+		return;
+	}
+	const auto plaque = QRectF(rect()).marginsRemoved(
+		QMarginsF(st::exdPinnedPlaqueMargins));
+	const auto radius = std::min(
+		float64(st::exdPinnedPlaqueRadius),
+		plaque.height() / 2.);
+	auto hq = PainterHighQualityEnabler(p);
+	p.setPen(Qt::NoPen);
+	p.setBrush(st::topBarBg);
+	p.drawRoundedRect(plaque, radius, radius);
 }
 
 int BusinessBotStatus::Bar::resizeGetHeight(int newWidth) {
 	const auto &st = st::defaultPeerList.item;
-	_settings->moveToRight(0, 0, newWidth);
+	const auto margins = style::Md3Enabled()
+		? st::exdPinnedPlaqueMargins
+		: style::margins();
+	const auto left = margins.left();
+	const auto top = margins.top();
+	const auto right = margins.right();
+	_settings->moveToRight(right, top, newWidth);
 	if (_userpic) {
 		_userpic->moveToLeft(
-			st.photoPosition.x(),
-			st.photoPosition.y(),
+			left + st.photoPosition.x(),
+			top + st.photoPosition.y(),
 			newWidth);
 	}
-	auto available = newWidth - _settings->width() - st.namePosition.x();
+	auto available = newWidth
+		- left
+		- right
+		- _settings->width()
+		- st.namePosition.x();
 	if (!_togglePaused->isHidden()) {
 		_togglePaused->moveToRight(
-			_settings->width(),
-			(st.height - _togglePaused->height()) / 2,
+			right + _settings->width(),
+			top + (st.height - _togglePaused->height()) / 2,
 			newWidth);
 		available -= _togglePaused->width();
 	}
 	_name->resizeToWidth(available);
-	_name->moveToLeft(st.namePosition.x(), st.namePosition.y(), newWidth);
+	_name->moveToLeft(
+		left + st.namePosition.x(),
+		top + st.namePosition.y(),
+		newWidth);
 	_status->resizeToWidth(available);
 	_status->moveToLeft(
-		st.statusPosition.x(),
-		st.statusPosition.y(),
+		left + st.statusPosition.x(),
+		top + st.statusPosition.y(),
 		newWidth);
-	return st.height;
+	return top + st.height + margins.bottom();
 }
 
 BusinessBotStatus::BusinessBotStatus(
@@ -1251,6 +1282,7 @@ BusinessBotStatus::BusinessBotStatus(
 : _controller(window)
 , _inner(Ui::CreateChild<Bar>(parent.get()))
 , _bar(parent, object_ptr<Bar>::fromRaw(_inner)) {
+	_bar.setShadowHidden(style::Md3Enabled());
 	setupState(peer);
 	setupHandlers(peer);
 }
@@ -1329,15 +1361,53 @@ void BusinessBotStatus::hide() {
 	_bar.hide();
 }
 
+[[nodiscard]] object_ptr<Ui::RpWidget> MakeTopicReopenContent(
+		not_null<Ui::RpWidget*> parent,
+		QPointer<Ui::FlatButton> *button) {
+	if (!style::Md3Enabled()) {
+		auto result = object_ptr<Ui::FlatButton>(
+			parent.get(),
+			tr::lng_forum_topic_reopen(tr::now),
+			st::historyContactStatusButton);
+		*button = result.data();
+		return result;
+	}
+	auto result = object_ptr<Ui::RpWidget>(parent.get());
+	const auto raw = result.data();
+	const auto margins = st::exdPinnedPlaqueMargins;
+	const auto reopen = Ui::CreateChild<Ui::FlatButton>(
+		raw,
+		tr::lng_forum_topic_reopen(tr::now),
+		st::exdTopicReopenButton);
+	*button = reopen;
+	raw->resize(
+		raw->width(),
+		st::exdTopicReopenButton.height + margins.top() + margins.bottom());
+	raw->widthValue() | rpl::on_next([=](int width) {
+		reopen->setGeometry(
+			QRect(0, 0, width, raw->height()).marginsRemoved(margins));
+	}, raw->lifetime());
+	raw->paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(raw);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto plaque = QRectF(raw->rect()).marginsRemoved(
+			QMarginsF(margins));
+		const auto radius = std::min(
+			float64(st::exdPinnedPlaqueRadius),
+			plaque.height() / 2.);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::topBarBg);
+		p.drawRoundedRect(plaque, radius, radius);
+	}, raw->lifetime());
+	return result;
+}
+
 TopicReopenBar::TopicReopenBar(
 	not_null<Ui::RpWidget*> parent,
 	not_null<Data::ForumTopic*> topic)
 : _topic(topic)
-, _reopen(Ui::CreateChild<Ui::FlatButton>(
-	parent.get(),
-	tr::lng_forum_topic_reopen(tr::now),
-	st::historyContactStatusButton))
-, _bar(parent, object_ptr<Ui::FlatButton>::fromRaw(_reopen)) {
+, _bar(parent, MakeTopicReopenContent(parent, &_reopen)) {
+	_bar.setShadowHidden(style::Md3Enabled());
 	setupState();
 	setupHandler();
 }

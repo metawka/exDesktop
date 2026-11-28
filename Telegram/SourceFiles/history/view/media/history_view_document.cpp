@@ -811,7 +811,7 @@ QSize Document::countOptimalSize() {
 		auto previeww = maxWidth
 			- st::msgPadding.left()
 			- st::msgPadding.right();
-		minHeight += _textPreview.countHeight(previeww, true);
+		minHeight += _textPreview.countHeight(previeww);
 		if (isBubbleBottom() && !hasTranscribe) {
 			minHeight += st::msgPadding.bottom();
 			if (!Get<HistoryDocumentCaptioned>()) {
@@ -872,7 +872,7 @@ QSize Document::countCurrentSize(int newWidth) {
 	}
 	auto captionw = newWidth - st::msgPadding.left() - st::msgPadding.right();
 	if (preview) {
-		newHeight += _textPreview.countHeight(captionw, true);
+		newHeight += _textPreview.countHeight(captionw);
 		if (captioned || hasTranscribe) {
 			newHeight += st::mediaCaptionSkip;
 		} else if (isBubbleBottom()) {
@@ -1288,7 +1288,7 @@ void Document::draw(
 			.now = context.now,
 			.useFullWidth = true,
 		});
-		captiontop += _textPreview.countHeight(captionw, true)
+		captiontop += _textPreview.countHeight(captionw)
 			+ st::mediaCaptionSkip;
 	}
 	if (voice && !voice->transcribeText.isEmpty()) {
@@ -1640,7 +1640,7 @@ TextState Document::textState(
 		const auto previeww = width
 			- st::msgPadding.left()
 			- st::msgPadding.right();
-		const auto previewHeight = _textPreview.countHeight(previeww, true);
+		const auto previewHeight = _textPreview.countHeight(previeww);
 		if (point.y() >= bottom && point.y() < bottom + previewHeight) {
 			const auto inner = _textPreview.getState(
 				point - QPoint(st::msgPadding.left(), bottom),
@@ -2352,6 +2352,12 @@ rpl::producer<> TTLVoiceStops(FullMsgId fullId) {
 		}) | rpl::to_empty,
 		::Media::Player::instance()->stops(AudioMsgId::Type::Voice)
 	);
+}
+
+void Document::revealSpoilers() {
+	if (const auto captioned = Get<HistoryDocumentCaptioned>()) {
+		captioned->caption.setSpoilerRevealed(true, anim::type::instant);
+	}
 }
 
 } // namespace HistoryView

@@ -374,6 +374,9 @@ public:
 		crl::time duration,
 		bool video,
 		const SendAction &action);
+	[[nodiscard]] TaskQueue *fileLoader() const {
+		return _fileLoader.get();
+	}
 	void sendFiles(
 		Ui::PreparedList &&list,
 		SendMediaType type,

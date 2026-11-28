@@ -34,11 +34,27 @@ RequestsBar::RequestsBar(
 	_wrap.hide(anim::type::instant);
 	_shadow->hide();
 
+	const auto md3 = style::Md3Enabled();
 	_wrap.entity()->paintRequest(
 	) | rpl::on_next([=](QRect clip) {
-		QPainter(_wrap.entity()).fillRect(clip, st::historyPinnedBg);
+		auto p = QPainter(_wrap.entity());
+		if (!md3) {
+			p.fillRect(clip, st::historyPinnedBg);
+			return;
+		}
+		const auto plaque = QRectF(_wrap.entity()->rect()).marginsRemoved(
+			QMarginsF(st::exdPinnedPlaqueMargins));
+		const auto radius = std::min(
+			float64(st::exdPinnedPlaqueRadius),
+			plaque.height() / 2.);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::topBarBg);
+		p.drawRoundedRect(plaque, radius, radius);
 	}, lifetime());
-	_wrap.setAttribute(Qt::WA_OpaquePaintEvent);
+	if (!md3) {
+		_wrap.setAttribute(Qt::WA_OpaquePaintEvent);
+	}
 
 	auto copy = std::move(
 		content
@@ -135,17 +151,24 @@ void RequestsBar::setupInner() {
 }
 
 void RequestsBar::paint(Painter &p) {
-	p.fillRect(_inner->rect(), st::historyComposeAreaBg);
-
+	const auto md3 = style::Md3Enabled();
+	const auto margins = md3 ? st::exdPinnedPlaqueMargins : style::margins();
+	if (!md3) {
+		p.fillRect(_inner->rect(), st::historyComposeAreaBg);
+	}
+	const auto barHeight = st::historyRequestsHeight
+		- margins.top()
+		- margins.bottom();
 	const auto userpicsSize = st::historyRequestsUserpics.size;
-	const auto userpicsTop = st::lineWidth + (st::historyRequestsHeight
+	const auto userpicsTop = margins.top() + st::lineWidth + (barHeight
 		- st::lineWidth
 		- userpicsSize) / 2;
-	const auto userpicsLeft = userpicsTop * 2;
-	const auto textTop = st::lineWidth + (st::historyRequestsHeight
+	const auto userpicsLeft = margins.left()
+		+ (userpicsTop - margins.top()) * 2;
+	const auto textTop = margins.top() + st::lineWidth + (barHeight
 		- st::lineWidth
 		- st::semiboldFont->height) / 2;
-	const auto width = _inner->width();
+	const auto width = _inner->width() - margins.right();
 	const auto &font = st::defaultMessageBar.title.font;
 	p.setPen(st::defaultMessageBar.titleFg);
 	p.setFont(font);
@@ -165,7 +188,9 @@ void RequestsBar::paint(Painter &p) {
 }
 
 void RequestsBar::updateControlsGeometry(QRect wrapGeometry) {
-	const auto hidden = _wrap.isHidden() || !wrapGeometry.height();
+	const auto hidden = _wrap.isHidden()
+		|| !wrapGeometry.height()
+		|| style::Md3Enabled();
 	if (_shadow->isHidden() != hidden) {
 		_shadow->setVisible(!hidden);
 	}
@@ -194,7 +219,7 @@ void RequestsBar::show() {
 	_forceHidden = false;
 	if (_shouldBeShown) {
 		_wrap.show(anim::type::instant);
-		_shadow->show();
+		_shadow->setVisible(!style::Md3Enabled());
 	}
 }
 

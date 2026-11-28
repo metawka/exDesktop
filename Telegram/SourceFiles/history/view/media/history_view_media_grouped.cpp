@@ -900,6 +900,12 @@ void GroupedMedia::parentTextUpdated() {
 	}
 }
 
+void GroupedMedia::revealSpoilers() {
+	for (const auto &part : _parts) {
+		part.content->revealSpoilers();
+	}
+}
+
 bool GroupedMedia::needsBubble() const {
 	return _needBubble;
 }

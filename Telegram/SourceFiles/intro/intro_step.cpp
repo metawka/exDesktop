@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_step.h"
 
+#include <QtWidgets/QApplication>
+
 #include "intro/intro_widget.h"
 #include "intro/intro_signup.h"
 #include "storage/localstorage.h"
@@ -70,6 +72,8 @@ void ExdSetupFieldCard(not_null<QWidget*> field) {
 			|| type == QEvent::Show
 			|| type == QEvent::Hide) {
 			sync();
+		} else if (type == QEvent::FocusIn || type == QEvent::FocusOut) {
+			back->update();
 		}
 		return base::EventFilterResult::Continue;
 	});
@@ -78,13 +82,21 @@ void ExdSetupFieldCard(not_null<QWidget*> field) {
 		auto hq = PainterHighQualityEnabler(p);
 		const auto r = QRectF(back->rect());
 		const auto radius = float64(st::exdIntroFieldRadius);
-		auto path = QPainterPath();
-		path.setFillRule(Qt::WindingFill);
-		path.addRoundedRect(r, radius, radius);
-		path.addRect(r.adjusted(0, r.height() / 2., 0, 0));
-		p.fillPath(
-			path.simplified(),
-			anim::color(st::windowBg, st::windowFg, 0.06));
+		const auto focused = field->hasFocus()
+			|| (field->focusProxy() && field->focusProxy()->hasFocus())
+			|| field->isAncestorOf(QApplication::focusWidget());
+		p.setPen(Qt::NoPen);
+		p.setBrush(anim::color(st::windowBg, st::windowFg, 0.06));
+		p.drawRoundedRect(r, radius, radius);
+		if (focused) {
+			const auto width = float64(st::lineWidth * 2);
+			p.setPen(QPen(st::windowActiveTextFg, width));
+			p.setBrush(Qt::NoBrush);
+			p.drawRoundedRect(
+				r.marginsRemoved({ width / 2, width / 2, width / 2, width / 2 }),
+				radius - width / 2,
+				radius - width / 2);
+		}
 	}, back->lifetime());
 }
 namespace {

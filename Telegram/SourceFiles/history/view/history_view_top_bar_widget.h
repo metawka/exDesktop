@@ -118,6 +118,9 @@ public:
 	[[nodiscard]] rpl::producer<> deleteSelectionRequest() const {
 		return _deleteSelection.events();
 	}
+	[[nodiscard]] rpl::producer<> exdShotSelectionRequest() const {
+		return _exdShotSelection.events();
+	}
 	[[nodiscard]] rpl::producer<> clearSelectionRequest() const {
 		return _clearSelection.events();
 	}
@@ -238,7 +241,7 @@ private:
 	Ui::Animations::Simple _searchShown;
 
 	object_ptr<Ui::RoundButton> _clear;
-	object_ptr<Ui::RoundButton> _forward, _sendNow, _delete;
+	object_ptr<Ui::RoundButton> _forward, _sendNow, _delete, _exdShot;
 	object_ptr<Ui::InputField> _searchField = { nullptr };
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _chooseFromUser
 		= { nullptr };
@@ -261,6 +264,8 @@ private:
 	object_ptr<Ui::IconButton> _groupCall;
 	object_ptr<Ui::IconButton> _search;
 	object_ptr<Ui::IconButton> _exdPlugins;
+	object_ptr<Ui::IconButton> _exdRecentActions;
+	object_ptr<Ui::IconButton> _exdAdmins;
 	base::unique_qptr<Ui::PopupMenu> _exdPluginsMenu;
 	object_ptr<Ui::IconButton> _infoToggle;
 	object_ptr<Ui::IconButton> _menuToggle;
@@ -292,6 +297,7 @@ private:
 	rpl::event_stream<> _forwardSelection;
 	rpl::event_stream<> _sendNowSelection;
 	rpl::event_stream<> _deleteSelection;
+	rpl::event_stream<> _exdShotSelection;
 	rpl::event_stream<> _clearSelection;
 	rpl::event_stream<> _cancelChooseForReport;
 

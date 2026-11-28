@@ -372,11 +372,19 @@ QSize Gif::countThumbSize(int &inOutWidthMax) const {
 		} else if (_data->isVideoFile()) {
 			return st::maxMediaSize;
 		} else if (_data->isVideoMessage()) {
-			switch (Extera::Int(u"exd_round_size"_q)) {
-			case 1: return style::ConvertScale(320);
-			case 2: return style::ConvertScale(400);
+			const auto mode = Extera::Int(u"exd_round_size"_q);
+			if (mode != 1 && mode != 2) {
+				return st::maxVideoMessageSize;
 			}
-			return st::maxVideoMessageSize;
+			auto size = style::ConvertScale((mode == 1) ? 320 : 400);
+			if (isUnwrapped()) {
+				if (const auto additional = additionalWidth()) {
+					size = std::max(
+						int(st::maxVideoMessageSize),
+						std::min(size, st::msgMaxWidth - additional));
+				}
+			}
+			return size;
 		}
 		return st::maxGifSize;
 	}();
@@ -2116,6 +2124,12 @@ bool Gif::uploading() const {
 void Gif::hideSpoilers() {
 	if (_spoiler) {
 		_spoiler->revealed = false;
+	}
+}
+
+void Gif::revealSpoilers() {
+	if (_spoiler) {
+		_spoiler->revealed = true;
 	}
 }
 

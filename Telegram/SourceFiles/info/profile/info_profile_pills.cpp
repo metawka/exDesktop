@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/info_profile_pills.h"
+#include "styles/style_menu_icons.h"
 
 #include "extera/extera_streamer.h"
 #include "data/data_saved_music.h"
@@ -55,7 +56,8 @@ void ShowMusicViewMenu(not_null<QWidget*> parent, bool toCard) {
 			Extera::Config::Instance().setBool(
 				u"exd_profile_music_card"_q,
 				toCard);
-		});
+		},
+		toCard ? &st::menuIconShowAll : &st::menuIconCustomize);
 	menu->popup(QCursor::pos());
 }
 

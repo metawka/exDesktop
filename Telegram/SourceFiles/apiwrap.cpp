@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "apiwrap.h"
+#include "ayu/features/forward/ayu_forward.h"
 #include "extera/extera_config.h"
 #include "extera/extera_emoji.h"
 #include "extera/extera_plugins.h"
@@ -3952,6 +3953,22 @@ FullMsgId ApiWrap::forwardMessages(
 		Fn<void(const MessageIdsList&)> sentCallback) {
 	Expects(!draft.items.empty());
 
+	const auto fullAyuForward = AyuForward::isFullAyuForwardNeeded(draft.items.front());
+	if (fullAyuForward) {
+		crl::async([=] {
+			AyuForward::forwardMessages(_session, action, false, draft);
+		});
+		return {};
+	}
+
+	const auto ayuIntelligentForwardNeeded = AyuForward::isAyuForwardNeeded(draft.items);
+	if (ayuIntelligentForwardNeeded) {
+		crl::async([=] {
+			AyuForward::intelligentForward(_session, action, draft);
+		});
+		return {};
+	}
+
 	auto &histories = _session->data().histories();
 
 	for (auto i = begin(draft.items); i != end(draft.items);) {
@@ -4867,7 +4884,8 @@ void ApiWrap::sendMessage(
 	const auto topic = peer->forumTopicFor(topicRootId);
 	const auto ephemeral = _session->ephemeralMessages().wouldSend(message);
 	if (!ephemeral
-		&& !(topic ? Data::CanSendTexts(topic) : Data::CanSendTexts(peer))) {
+		&& !(topic ? Data::CanSendTexts(topic) : Data::CanSendTexts(peer))
+		&& !AyuForward::isForwarding(peer->id)) {
 		return;
 	} else if (_session->ephemeralMessages().trySend(message)) {
 		if (clearCloudDraft) {

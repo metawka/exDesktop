@@ -153,6 +153,7 @@ void Badge::setContent(Content content) {
 					sizeTag()),
 				std::max(_customStatusLoopsLimit, 1));
 		}
+		_exdSecondLeft = _exdSecond ? (emoji + secondGap / 2) : -1;
 		const auto width = emoji
 			+ (_exdSecond ? (emoji + secondGap) : 0)
 			+ (icon ? icon->width() : 0);
@@ -170,13 +171,17 @@ void Badge::setContent(Content content) {
 				if (!_emojiStatusPanel
 					|| !_emojiStatusPanel->paintBadgeFrame(check)) {
 					Painter p(check);
+					auto badgeArgs = args;
+					badgeArgs.textColor = _overrideSt
+						? st::groupCallMembersFg->c
+						: st().premiumFg->c;
 					if (Extera::IsBadgeEmoji(id.documentId)) {
-						Extera::PaintBadgeEmoji(p, _emojiStatus.get(), args);
+						Extera::PaintBadgeEmoji(p, _emojiStatus.get(), badgeArgs);
 					} else {
 						_emojiStatus->paint(p, args);
 					}
 					if (_exdSecond) {
-						auto second = args;
+						auto second = badgeArgs;
 						second.position = QPoint(emoji + secondGap, 0);
 						Extera::PaintBadgeEmoji(p, _exdSecond.get(), second);
 					}
@@ -263,6 +268,13 @@ void Badge::setContent(Content content) {
 	}
 
 	_updated.fire({});
+}
+
+bool Badge::exdSecondHit() const {
+	if (!_view || _exdSecondLeft < 0) {
+		return false;
+	}
+	return _view->mapFromGlobal(QCursor::pos()).x() >= _exdSecondLeft;
 }
 
 void Badge::setPremiumClickCallback(Fn<void()> callback) {
@@ -357,6 +369,7 @@ rpl::producer<Badge::Content> VerifiedContentForPeer(
 					return Badge::Content{
 						BadgeType::Premium,
 						EmojiStatusId{ .documentId = emoji },
+						(extera != emoji) ? extera : DocumentId(),
 					};
 				}
 				return Badge::Content{ BadgeType::Trusted };

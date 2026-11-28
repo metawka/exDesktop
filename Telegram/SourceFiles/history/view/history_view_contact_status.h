@@ -40,6 +40,7 @@ public:
 	[[nodiscard]] int height() const;
 	[[nodiscard]] rpl::producer<int> heightValue() const;
 	void toggleContent(bool visible);
+	void setShadowHidden(bool hidden);
 
 	void show() {
 		setVisible(true);
@@ -57,6 +58,7 @@ private:
 
 	Ui::SlideWrap<Ui::RpWidget> _wrapped;
 	Ui::PlainShadow _shadow;
+	rpl::variable<bool> _shadowHidden = false;
 	bool _shown = false;
 	bool _contentShown = false;
 

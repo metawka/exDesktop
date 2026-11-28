@@ -7,6 +7,7 @@
 #include "data/data_peer.h"
 #include "settings.h"
 
+#include <QtCore/QDateTime>
 #include <QtCore/QFile>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
@@ -45,6 +46,7 @@ struct OwnBadge {
 	QString text;
 	DocumentId secondDocumentId = 0;
 	QString secondText;
+	QString secondType;
 };
 
 struct OwnLists {
@@ -170,6 +172,7 @@ bool Apply(const QByteArray &bytes) {
 			badge.secondDocumentId = DocumentId(
 				ReadId(second.value(u"emoji"_q)));
 			badge.secondText = second.value(u"text"_q).toString();
+			badge.secondType = second.value(u"type"_q).toString();
 		}
 		result.emplace(id, std::move(badge));
 	}
@@ -278,20 +281,65 @@ void RefreshHashes(QNetworkAccessManager *manager, bool fresh = false) {
 	return result;
 }
 
-void RefreshOwnFromRepo(QNetworkAccessManager *manager, bool fresh) {
+void RefreshOwnFromSite(
+	QNetworkAccessManager *manager,
+	Fn<void(bool)> done);
+
+void RefreshOwnFromRepo(
+		QNetworkAccessManager *manager,
+		bool fresh,
+		Fn<void(bool)> done = nullptr,
+		bool siteFallback = false) {
 	auto request = FileRequest(u"badges.json"_q, fresh);
+	request.setTransferTimeout(10000);
 	const auto reply = manager->get(request);
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		reply->deleteLater();
-		if (reply->error() != QNetworkReply::NoError) {
-			return;
-		}
-		const auto bytes = reply->readAll();
-		if (ApplyOwn(bytes)) {
+		const auto bytes = (reply->error() == QNetworkReply::NoError)
+			? reply->readAll()
+			: QByteArray();
+		if (!bytes.isEmpty() && ApplyOwn(bytes)) {
 			auto file = QFile(OwnCachePath());
 			if (file.open(QIODevice::WriteOnly)) {
 				file.write(bytes);
 			}
+			if (done) {
+				done(true);
+			}
+		} else if (siteFallback) {
+			RefreshOwnFromSite(manager, done);
+		} else if (done) {
+			done(false);
+		}
+	});
+}
+
+void RefreshOwnFromSite(
+		QNetworkAccessManager *manager,
+		Fn<void(bool)> done) {
+	auto request = QNetworkRequest(QUrl(u"https://exdesktop.xyz/api/badges/?t="_q
+		+ QString::number(QDateTime::currentSecsSinceEpoch())));
+	request.setRawHeader("User-Agent", "exDesktop");
+	request.setRawHeader("Cache-Control", "no-cache");
+	request.setAttribute(
+		QNetworkRequest::CacheLoadControlAttribute,
+		QNetworkRequest::AlwaysNetwork);
+	request.setTransferTimeout(10000);
+	const auto reply = manager->get(request);
+	QObject::connect(reply, &QNetworkReply::finished, [=] {
+		reply->deleteLater();
+		const auto bytes = (reply->error() == QNetworkReply::NoError)
+			? reply->readAll()
+			: QByteArray();
+		const auto ok = !bytes.isEmpty() && ApplyOwn(bytes);
+		if (ok) {
+			auto file = QFile(OwnCachePath());
+			if (file.open(QIODevice::WriteOnly)) {
+				file.write(bytes);
+			}
+		}
+		if (done) {
+			done(ok);
 		}
 	});
 }
@@ -442,10 +490,12 @@ void StartBadges() {
 	timer->start(kRefreshInterval);
 }
 
-void RefreshBadges() {
+void RefreshBadges(Fn<void(bool)> done) {
 	if (const auto manager = Manager()) {
-		RefreshOwn(manager, true);
+		RefreshOwnFromRepo(manager, true, done, true);
 		RefreshHashes(manager, true);
+	} else if (done) {
+		done(false);
 	}
 }
 
@@ -541,16 +591,26 @@ DocumentId BadgeEmoji(not_null<PeerData*> peer) {
 
 DocumentId BadgeSecondEmoji(not_null<PeerData*> peer) {
 	if (const auto own = FindOwn(peer)) {
-		return (own->secondDocumentId != BadgeEmoji(peer))
-			? own->secondDocumentId
-			: DocumentId();
+		if (own->secondDocumentId) {
+			return own->secondDocumentId;
+		} else if (!own->secondType.isEmpty()) {
+			const auto i = Own().typeEmoji.find(own->secondType);
+			if (i != end(Own().typeEmoji)) {
+				return i->second;
+			}
+		}
+		return DocumentId();
 	}
 	return DocumentId();
 }
 
 QString BadgeSecondText(not_null<PeerData*> peer) {
 	if (const auto own = FindOwn(peer)) {
-		return own->secondText;
+		if (!own->secondText.isEmpty() || own->secondType.isEmpty()) {
+			return own->secondText;
+		}
+		const auto i = Own().typeText.find(own->secondType);
+		return (i != end(Own().typeText)) ? i->second : QString();
 	}
 	return QString();
 }
@@ -581,6 +641,14 @@ int BadgeHolders(not_null<PeerData*> peer) {
 int BadgeNumber(not_null<PeerData*> peer) {
 	if (const auto own = FindOwn(peer)) {
 		return own->number;
+	}
+	if (const auto &trusted = Own().trusted) {
+		const auto id = BareId(peer);
+		for (auto i = 0; i != int(trusted->size()); ++i) {
+			if ((*trusted)[i].id == id) {
+				return i + 1;
+			}
+		}
 	}
 	return 0;
 }

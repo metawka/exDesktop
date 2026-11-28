@@ -732,6 +732,7 @@ public:
 	[[nodiscard]] virtual QRect innerGeometry() const = 0;
 	[[nodiscard]] virtual QPoint mediaTopLeft() const;
 
+	void revealSpoilers();
 	void customEmojiRepaint();
 	void prepareCustomEmojiPaint(
 		Painter &p,

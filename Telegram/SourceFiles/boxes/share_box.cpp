@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/share_box.h"
+#include "ayu/features/forward/ayu_forward.h"
 
 #include "api/api_premium.h"
 #include "base/call_delayed.h"
@@ -1891,6 +1892,41 @@ ShareBox::SubmitCallback ShareBox::DefaultForwardCallback(
 		const auto showRecentForwardsToSelf = result.size() == 1
 			&& result.front()->peer()->isSelf()
 			&& history->session().premium();
+
+		const auto dismiss = [=]
+		{
+			if (show->valid()) {
+				show->hideLayer();
+			}
+		};
+
+		if (AyuForward::isFullAyuForwardNeeded(items.front())) {
+			crl::async([=]{
+				for (const auto thread : result) {
+					AyuForward::forwardMessages(
+					&history->owner().session(),
+					Api::SendAction(thread, options),
+					false,
+					Data::ResolvedForwardDraft(items, forwardOptions));
+				}
+			});
+
+			dismiss();
+			return;
+		} else if (AyuForward::isAyuForwardNeeded(items)) {
+			crl::async([=]
+			{
+				for (const auto thread : result) {
+					AyuForward::intelligentForward(
+						&history->owner().session(),
+						Api::SendAction(thread, options),
+						Data::ResolvedForwardDraft(items, forwardOptions));
+				}
+			});
+
+			dismiss();
+			return;
+		}
 		for (const auto &thread : result) {
 			const auto peer = thread->peer();
 			const auto threadHistory = thread->owningHistory();

@@ -2,6 +2,7 @@
   <qresource prefix="/gui">
     <file alias="art/devpfpprew.jpg">../../art/devpfpprew.jpg</file>
     <file alias="art/exteradesktop.png">../../art/exteradesktop.png</file>
+    <file alias="art/exd_round_preview.jpg">../../art/exd_round_preview.jpg</file>
     <file alias="art/background.tgv">../../art/background.tgv</file>
     <file alias="art/bg_thumbnail.png">../../art/bg_thumbnail.png</file>
     <file alias="art/bg_initial.jpg">../../art/bg_initial.jpg</file>

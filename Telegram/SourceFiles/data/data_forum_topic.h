@@ -129,6 +129,8 @@ public:
 
 	int fixedOnTopIndex() const override;
 	bool shouldBeInChatList() const override;
+	[[nodiscard]] bool exdHidden() const;
+	void exdSetHidden(bool hidden);
 	Dialogs::UnreadState chatListUnreadState() const override;
 	Dialogs::BadgesState chatListBadgesState() const override;
 	HistoryItem *chatListMessage() const override;
@@ -219,6 +221,7 @@ private:
 		int count,
 		bool known) const;
 
+	bool _exdHidden = false;
 	const not_null<Forum*> _forum;
 	const not_null<Dialogs::MainList*> _list;
 	std::shared_ptr<RepliesList> _replies;

@@ -46,6 +46,55 @@ constexpr auto kReportDeliveriesPerRequest = 50;
 
 } // namespace
 
+namespace {
+
+void ExdFixQuote(not_null<Data::Session*> owner, FullReplyTo &replyTo) {
+	if (!replyTo.messageId
+		|| replyTo.richQuote
+		|| replyTo.quote.text.isEmpty()) {
+		return;
+	}
+	const auto item = owner->message(replyTo.messageId);
+	if (!item) {
+		return;
+	}
+	const auto &original = item->originalText().text;
+	auto quote = replyTo.quote.text;
+	const auto mark = QString::fromUtf8(" \xE2\x9A\xA0");
+	const auto marked = quote.contains(mark) && !original.contains(mark);
+	if (marked) {
+		quote.remove(mark);
+	}
+	const auto offset = replyTo.quoteOffset;
+	if (!marked
+		&& offset >= 0
+		&& original.mid(offset, quote.size()) == quote) {
+		return;
+	}
+	const auto clear = [&] {
+		replyTo.quote = TextWithEntities();
+		replyTo.quoteOffset = 0;
+	};
+	auto index = original.indexOf(quote);
+	if (index < 0) {
+		const auto trimmed = quote.trimmed();
+		index = trimmed.isEmpty() ? -1 : original.indexOf(trimmed);
+		if (index >= 0) {
+			quote = trimmed;
+		}
+	}
+	if (index < 0) {
+		clear();
+		return;
+	}
+	if (marked || quote != replyTo.quote.text) {
+		replyTo.quote = TextWithEntities{ quote };
+	}
+	replyTo.quoteOffset = index;
+}
+
+} // namespace
+
 MTPInputReplyTo ReplyToForMTP(
 		not_null<History*> history,
 		FullReplyTo replyTo) {
@@ -57,6 +106,7 @@ MTPInputReplyTo ReplyToForMTP(
 				MTP_int(replyTo.storyId.story));
 		}
 	} else if (replyTo.messageId || replyTo.topicRootId) {
+		ExdFixQuote(owner, replyTo);
 		const auto to = LookupReplyTo(history, replyTo.messageId);
 		const auto replyingToTopic = replyTo.topicRootId
 			? history->peer->forumTopicFor(replyTo.topicRootId)

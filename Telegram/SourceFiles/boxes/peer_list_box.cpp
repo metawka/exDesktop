@@ -2213,7 +2213,25 @@ void PeerListContent::paintRowContent(
 		}
 	});
 
-	if (!(style::Md3Grouped()
+	const auto exdCard = (style::Md3Grouped()
+			&& property("md3GroupedRow").toBool()
+			&& !property("exdGroupedList").toBool())
+		|| property("exdCardList").toBool();
+	const auto exdInset = style::ConvertScale(10);
+	const auto exdRow = QRect(
+		exdInset,
+		0,
+		std::max(outerWidth - 2 * exdInset, 0),
+		_rowHeight);
+	if (exdCard) {
+		if (selected) {
+			auto hq = PainterHighQualityEnabler(p);
+			const auto radius = style::ConvertScale(12);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st.button.textBgOver);
+			p.drawRoundedRect(exdRow, radius, radius);
+		}
+	} else if (!(style::Md3Grouped()
 			&& property("exdGroupedList").toBool())) {
 		p.fillRect(0, 0, outerWidth, _rowHeight, bg);
 	} else if (selected) {
@@ -2226,7 +2244,17 @@ void PeerListContent::paintRowContent(
 			radius,
 			radius);
 	}
-	row->paintRipple(p, st, 0, 0, outerWidth);
+	if (exdCard) {
+		auto path = QPainterPath();
+		const auto radius = style::ConvertScale(12);
+		path.addRoundedRect(QRectF(exdRow), radius, radius);
+		p.save();
+		p.setClipPath(path, Qt::IntersectClip);
+		row->paintRipple(p, st, 0, 0, outerWidth);
+		p.restore();
+	} else {
+		row->paintRipple(p, st, 0, 0, outerWidth);
+	}
 	row->paintUserpic(
 		p,
 		st,
